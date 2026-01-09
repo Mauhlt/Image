@@ -1,0 +1,4 @@
+# Dirs
+.git/
+.zig-cache/
+zig-out/
