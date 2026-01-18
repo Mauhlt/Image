@@ -1,5 +1,11 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
+const pdq = std.sort.pdq;
+
+// image reperesentations matter:
+// bool, int, float, complex
+// is data linear or matrix
+// does it have width, height, depth (videos)
 
 pub fn run_length_encoding_v1(
     comptime T: type,
@@ -344,16 +350,123 @@ test "Sub 2 Index or Index 2 Sub" {
     // index2Subindex(i: u8);
 }
 
+fn computeNumberOfUniques(comptime T: type, data: []T) usize {
+    // assumes:
+    //   data is sorted
+    //   0 <= data.len < 2^32
+    var n_uniques: usize = 0;
+    if (data.len < 2) return data.len;
+    for (data[0 .. data.len - 1], data[1..data.len]) |d1, d2|
+        n_uniques += @intFromBool(d1 != d2);
+    n_uniques += @intFromBool(data[data.len - 2] == data[data.len - 1]);
+    return n_uniques;
+}
+
+fn computeFrequenciesBuffer(
+    comptime T: type,
+    data: []T,
+    symbols_buffer: []T,
+    count_buffer: []usize,
+) !void {
+    // assumes:
+    //   data is sorted
+    //   0 < data.len < 2^32
+    //   symbol_buffer + count_buffer = list of 0s
+    // computes frequencies of each symbol using a buffer
+    const n_uniques = computeNumberOfUniques(T, data);
+    if (n_uniques > symbols_buffer.len or n_uniques > count_buffer.len) return error.NumUniquesGTBufferLen;
+    if (n_uniques == 0) return;
+    symbols_buffer[0] = data[0];
+    count_buffer[0] = 1;
+    var i: usize = 0;
+    for (data[0 .. data.len - 1], data[1..data.len]) |d1, d2| {
+        if (d1 != d2) {
+            i += 1;
+            symbols_buffer[i] = d2;
+            count_buffer[i] = 1;
+        } else {
+            count_buffer[i] += 1;
+        }
+    }
+}
+
+fn createFrequenciesStruct(comptime T: type) type {
+    return struct {
+        symbols: []T,
+        count: []T,
+
+        pub fn init(allo: std.mem.Allocator, n: usize) !@This() {
+            return .{
+                .symbols = try allo.alloc(T, n),
+                .count = try allo.alloc(T, n),
+            };
+        }
+
+        pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
+            allo.free(self.symbols);
+            allo.free(self.count);
+        }
+    };
+}
+
+fn computeFrequenciesAllo(
+    comptime T: type,
+    allo: std.mem.Allocator,
+    data: []T,
+) !createFrequenciesStruct(T) {
+    // assumes:
+    //   data is sorted
+    //   0 <= data.len < 2^32
+    // compute frequencies of each symbol using an arraylist
+    const n_uniques = computeNumberOfUniques(T, data);
+    if (n_uniques == 0) return .{ .symbol = &.{128}, .count = &.{0} };
+    const freqs: createFrequenciesStruct(T) = try .init(allo, n_uniques);
+    freqs.symbols[0] = data[0];
+    freqs.count[0] = 1;
+    var i: usize = 0;
+    for (data[0 .. data.len - 1], data[1..data.len]) |d1, d2| {
+        if (d1 != d2) {
+            i += 1;
+            freqs.symbols[i] = d2;
+            freqs.count[i] = 1;
+        } else {
+            freqs.count[i] += 1;
+        }
+    }
+    return freqs;
+}
+
+fn min(comptime T: type, a: T, b: T) bool {
+    return a < b;
+}
+
+const Node = struct {
+    freq: usize,
+    sym: ?u8,
+    left: ?*Node,
+    right: ?*Node,
+};
+
 fn huffmanEncoding(
     comptime T: type,
     allo: std.mem.Allocator,
-    data: []const T,
-    buffer: []T,
-) !void {
-    var map = std.AutoArrayHashMap(T, T).init(allo);
-    defer map.deinit();
-    for (data) |ch| {
-        if (map.get(ch)) |value| {} else {}
-    }
+    data: []T,
+) !std.AutoArrayHashMap(T, T) {
+    // assumptions:
+    //   data is not sorted
+    //   0 < data.len < 2^32; avg = 1920x1080
+    // steps:
+    //   symbols: all unique symbols
+    //   count: # of unique symbols
+    std.mem.sort(T, data, null, min);
+    const frequencies = try computeFrequenciesAllo(T, allo, data);
+    defer allo.free(frequencies.symbols);
+    defer allo.free(frequencies.count);
 }
-fn huffmanDecoding() void {}
+
+fn huffmanDecoding(
+    comptime T: type,
+    map: std.AutoArrayHashMap(T, T),
+) !void {
+    _ = map;
+}
