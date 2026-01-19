@@ -1,6 +1,5 @@
 const std = @import("std");
 const expectEqual = std.testing.expectEqual;
-const pdq = std.sort.pdq;
 
 // image reperesentations matter:
 // bool, int, float, complex
@@ -163,9 +162,11 @@ test "Run Length Encoding/Decoding" {
     };
     var buffer4 = [_]i16{0} ** 64;
     const output = try run_length_encoding_v2(@TypeOf(data[0]), &data, &buffer4);
+    const expected_output = [_]i16{ 140, 1, -14, 2, -3, 1, -1, 1, 0, 3, -10, 1, -8, 1, 14, 1, 4, 1, 2, 1, 0, 3, 14, 1, -4, 2, -1, 2, 0, 4, -2, 2, 0, 38 };
     var i: usize = 0;
     while (i < output.len) : (i += 2) {
-        std.debug.print("{}:{}\n", .{ output[i], output[i + 1] });
+        try std.testing.expectEqual(output[i], expected_output[i]);
+        try std.testing.expectEqual(output[i + 1], expected_output[i + 1]);
     }
 }
 
@@ -350,15 +351,17 @@ test "Sub 2 Index or Index 2 Sub" {
     // index2Subindex(i: u8);
 }
 
-fn computeNumberOfUniques(comptime T: type, data: []T) usize {
+fn computeNumberOfUniques(comptime T: type, data: []const T) usize {
     // assumes:
     //   data is sorted
     //   0 <= data.len < 2^32
-    var n_uniques: usize = 0;
     if (data.len < 2) return data.len;
-    for (data[0 .. data.len - 1], data[1..data.len]) |d1, d2|
-        n_uniques += @intFromBool(d1 != d2);
-    n_uniques += @intFromBool(data[data.len - 2] == data[data.len - 1]);
+    var n_uniques: usize = 1;
+    for (data[0 .. data.len - 1], data[1..data.len]) |d1, d2| {
+        if (d1 != d2) {
+            n_uniques += 1;
+        }
+    }
     return n_uniques;
 }
 
@@ -391,18 +394,27 @@ fn computeFrequenciesBuffer(
 }
 
 fn createFrequenciesStruct(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .int => {},
+        else => @compileError("Incorrect input type."),
+    }
+
     return struct {
         symbols: []T,
         count: []T,
 
         pub fn init(allo: std.mem.Allocator, n: usize) !@This() {
+            var symbols = try allo.alloc(T, n);
+            @memset(symbols[0..n], 0);
+            var count = try allo.alloc(T, n);
+            @memset(count[0..n], 0);
             return .{
-                .symbols = try allo.alloc(T, n),
-                .count = try allo.alloc(T, n),
+                .symbols = symbols,
+                .count = count,
             };
         }
 
-        pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
+        pub fn deinit(self: *const @This(), allo: std.mem.Allocator) void {
             allo.free(self.symbols);
             allo.free(self.count);
         }
@@ -412,14 +424,19 @@ fn createFrequenciesStruct(comptime T: type) type {
 fn computeFrequenciesAllo(
     comptime T: type,
     allo: std.mem.Allocator,
-    data: []T,
+    data: []const T,
 ) !createFrequenciesStruct(T) {
     // assumes:
     //   data is sorted
     //   0 <= data.len < 2^32
     // compute frequencies of each symbol using an arraylist
+    // sort = O(nlog(n))
     const n_uniques = computeNumberOfUniques(T, data);
-    if (n_uniques == 0) return .{ .symbol = &.{128}, .count = &.{0} };
+    if (n_uniques == 0) {
+        var freqs: createFrequenciesStruct(T) = try .init(allo, 1);
+        freqs.count[0] = 0;
+        return freqs;
+    }
     const freqs: createFrequenciesStruct(T) = try .init(allo, n_uniques);
     freqs.symbols[0] = data[0];
     freqs.count[0] = 1;
@@ -436,37 +453,123 @@ fn computeFrequenciesAllo(
     return freqs;
 }
 
-fn min(comptime T: type, a: T, b: T) bool {
-    return a < b;
+fn computeFrequenciesMapAllo(
+    comptime T: type,
+    allo: std.mem.Allocator,
+    data: []const T,
+) !std.AutoArrayHashMap(T, usize) {
+    // assumes:
+    //   0 <= data.len < 2^32
+    // map = O(1) insert
+    const n_uniques = computeNumberOfUniques(T, data);
+    var maps: std.AutoArrayHashMap(T, usize) = .init(allo);
+    if (n_uniques == 0) return maps;
+    for (data) |d| {
+        const gp = try maps.getOrPut(d);
+        if (gp.found_existing) {
+            gp.value_ptr.* += 1;
+        } else {
+            try maps.put(d, 1);
+        }
+    }
+    return maps;
 }
-
-const Node = struct {
-    freq: usize,
-    sym: ?u8,
-    left: ?*Node,
-    right: ?*Node,
-};
 
 fn huffmanEncoding(
     comptime T: type,
     allo: std.mem.Allocator,
-    data: []T,
-) !std.AutoArrayHashMap(T, T) {
+    data: []const T,
+) !void {
     // assumptions:
     //   data is not sorted
     //   0 < data.len < 2^32; avg = 1920x1080
     // steps:
-    //   symbols: all unique symbols
-    //   count: # of unique symbols
-    std.mem.sort(T, data, null, min);
-    const frequencies = try computeFrequenciesAllo(T, allo, data);
-    defer allo.free(frequencies.symbols);
-    defer allo.free(frequencies.count);
+    //  - compute freqs
+    //  - sort data
+    //  - create nodes
+    //  - return tree
+
+    // compute freqs
+    var freqs = try computeFrequenciesMapAllo(T, allo, data);
+    defer freqs.deinit();
+
+    // // sort data - can i sort data using a min heap instead
+    // const Context = struct {
+    //     keys: []T,
+    //     values: []usize,
+    //
+    //     pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
+    //         return ctx.values[a] < ctx.values[b];
+    //     }
+    //
+    //     pub fn swap(ctx: @This(), a: usize, b: usize) void {
+    //         std.mem.swap(T, &ctx.keys[a], &ctx.keys[b]);
+    //         std.mem.swap(usize, &ctx.values[a], &ctx.values[b]);
+    //     }
+    // };
+    // const ctx: Context = .{ .keys = freqs.keys(), .values = freqs.values() };
+    // std.sort.pdqContext(0, ctx.keys.len, ctx);
+    // for (ctx.keys, ctx.values) |key, value| std.debug.print("{c} - {}\n", .{ key, value });
+
+    // min-heap
+    // - add each symbol to min heap
+    // - while heap.size > 1
+    // heap.pop()
+    // heap.pop()
+    // parent = new Node(a.freq + b.freq, null, a, b)
+    // heap.push(parent)
+    // root = heap.pop()
+    // codes = {}
+    // dfs(root, "")
+    // create nodes
+    const Node = struct {
+        freq: usize = 0,
+        sym: ?T = null,
+        left: ?*@This() = null,
+        right: ?*@This() = null,
+    };
+
+    const Context = struct {
+        nodes: []Node,
+        fn lessThan(ctx: @This(), a: usize, b: usize) std.math.Order {
+            return std.math.order(ctx.nodes[a].freq, ctx.nodes[b].freq);
+        }
+    };
+
+    var ctx: Context = undefined;
+    ctx.nodes = try allo.alloc(Node, freqs.count());
+    defer allo.free(ctx.nodes);
+    for (ctx.nodes, freqs.keys(), freqs.values()) |*node, key, freq| {
+        node.freq = freq;
+        node.sym = key;
+    }
+    var pq = std.PriorityQueue(T, Context, Context.lessThan).init(allo, ctx);
+    defer pq.deinit();
+    for (ctx.keys()) |key| {
+        pq.add(key);
+    }
+    for (pq.items) |item| {
+        std.debug.print("{}\n", .{item});
+    }
 }
 
-fn huffmanDecoding(
-    comptime T: type,
-    map: std.AutoArrayHashMap(T, T),
-) !void {
-    _ = map;
+// fn huffmanDecoding(
+//     comptime T: type,
+//     map: std.AutoArrayHashMap(T, T),
+// ) !void {
+//     _ = map;
+// }
+
+test "Test Huffman Encoding" {
+    const data: []const u8 = "HelloWorld";
+    // sort
+    const allo = std.testing.allocator;
+    const new_data = try allo.dupe(u8, data);
+    defer allo.free(new_data);
+    std.mem.sort(u8, new_data, {}, comptime std.sort.asc(u8));
+    // compute uniques
+    const n_uniques = computeNumberOfUniques(@TypeOf(new_data[0]), new_data);
+    try std.testing.expectEqual(7, n_uniques);
+    // huffman encoding
+    try huffmanEncoding(@TypeOf(data[0]), allo, data);
 }
