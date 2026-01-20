@@ -6,7 +6,7 @@ const expectEqual = std.testing.expectEqual;
 // is data linear or matrix
 // does it have width, height, depth (videos)
 
-pub fn run_length_encoding_v1(
+pub fn runLengthEncodingV1(
     comptime T: type,
     data: []const T,
     buffer: []T,
@@ -42,7 +42,7 @@ pub fn run_length_encoding_v1(
     return buffer[0..k];
 }
 
-pub fn run_length_decoding_v1(
+pub fn runLengthDecodingV1(
     comptime T: type,
     data: []const T,
     buffer: []T,
@@ -76,12 +76,11 @@ pub fn run_length_decoding_v1(
     return buffer[0..k];
 }
 
-pub fn run_length_encoding_v2(
+pub fn runLengthEncodingV2(
     comptime T: type,
     data: []const T,
     buffer: []T,
 ) ![]const T {
-    // use vector to speed up
     switch (@typeInfo(T)) {
         .int => {},
         else => @compileError("Fn only accepts ints."),
@@ -119,37 +118,37 @@ pub fn run_length_encoding_v2(
 }
 
 test "Run Length Encoding/Decoding" {
-    // // Encoding
-    // const T: type = i16;
-    // const data = [64]T{
-    //     140, -14, -14, -3, -1, 0, 0, 0,
-    //     -10, -8,  14,  4,  2,  0, 0, 0,
-    //     14,  -4,  -4,  -1, -1, 0, 0, 0,
-    //     0,   -2,  -2,  0,  0,  0, 0, 0,
-    //     0,   0,   0,   0,  0,  0, 0, 0,
-    //     0,   0,   0,   0,  0,  0, 0, 0,
-    //     0,   0,   0,   0,  0,  0, 0, 0,
-    //     0,   0,   0,   0,  0,  0, 0, 0,
-    // };
-    // var buffer = [_]T{0} ** 64;
-    // const encoded_data = try run_length_encoding_v1(@TypeOf(data[0]), &data, &buffer);
-    // const expected_encoded_data = [_]T{ 140, 1, -14, 2, -3, 1, -1, 1, 0, 3, -10, 1, -8, 1, 14, 1, 4, 1, 2, 1, 0, 3, 14, 1, -4, 2, -1, 2, 0, 4, -2, 2, 0, 37 };
-    // for (encoded_data, expected_encoded_data) |ed, eed| try expectEqual(eed, ed);
-    // var buffer1 = [_]T{0} ** 64;
-    // const decode_data = try run_length_decoding_v1(@TypeOf(encoded_data[0]), encoded_data, &buffer1);
-    // for (data, decode_data) |d, dd| try expectEqual(d, dd);
-    //
-    // const data2 = [_]u8{ 'A', 'A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'D', 'A', 'A' };
-    // var buffer2 = [_]u8{0} ** 64;
-    // const encoded_data_2 = try run_length_encoding_v1(@TypeOf(data2[0]), &data2, &buffer2);
-    // const expected_encoded_data_2 = [_]u8{ 'A', 4, 'B', 3, 'C', 2, 'D', 1, 'A', 2 };
-    // for (expected_encoded_data_2, encoded_data_2) |eed, ed| try expectEqual(eed, ed);
-    // var buffer3 = [_]u8{0} ** 64;
-    // const decode_data_2 = try run_length_decoding_v1(@TypeOf(encoded_data_2[0]), encoded_data_2, &buffer3);
-    // for (data2, decode_data_2) |d, dd| try expectEqual(d, dd);
+    // Encoding
+    const T: type = i16;
+    const data = [64]T{
+        140, -14, -14, -3, -1, 0, 0, 0,
+        -10, -8,  14,  4,  2,  0, 0, 0,
+        14,  -4,  -4,  -1, -1, 0, 0, 0,
+        0,   -2,  -2,  0,  0,  0, 0, 0,
+        0,   0,   0,   0,  0,  0, 0, 0,
+        0,   0,   0,   0,  0,  0, 0, 0,
+        0,   0,   0,   0,  0,  0, 0, 0,
+        0,   0,   0,   0,  0,  0, 0, 0,
+    };
+    var buffer = [_]T{0} ** 64;
+    const encoded_data = try runLengthEncodingV1(@TypeOf(data[0]), &data, &buffer);
+    const expected_encoded_data = [_]T{ 140, 1, -14, 2, -3, 1, -1, 1, 0, 3, -10, 1, -8, 1, 14, 1, 4, 1, 2, 1, 0, 3, 14, 1, -4, 2, -1, 2, 0, 4, -2, 2, 0, 37 };
+    for (encoded_data, expected_encoded_data) |ed, eed| try expectEqual(eed, ed);
+    var buffer1 = [_]T{0} ** 64;
+    const decode_data = try runLengthDecodingV1(@TypeOf(encoded_data[0]), encoded_data, &buffer1);
+    for (data, decode_data) |d, dd| try expectEqual(d, dd);
+
+    const data2 = [_]u8{ 'A', 'A', 'A', 'A', 'B', 'B', 'B', 'C', 'C', 'D', 'A', 'A' };
+    var buffer2 = [_]u8{0} ** 64;
+    const encoded_data_2 = try runLengthEncodingV1(@TypeOf(data2[0]), &data2, &buffer2);
+    const expected_encoded_data_2 = [_]u8{ 'A', 4, 'B', 3, 'C', 2, 'D', 1, 'A', 2 };
+    for (expected_encoded_data_2, encoded_data_2) |eed, ed| try expectEqual(eed, ed);
+    var buffer3 = [_]u8{0} ** 64;
+    const decode_data_2 = try runLengthDecodingV1(@TypeOf(encoded_data_2[0]), encoded_data_2, &buffer3);
+    for (data2, decode_data_2) |d, dd| try expectEqual(d, dd);
 
     // run length encoding v2
-    const data = [65]i16{
+    const data3 = [65]i16{
         140, -14, -14, -3, -1, 0, 0, 0,
         -10, -8,  14,  4,  2,  0, 0, 0,
         14,  -4,  -4,  -1, -1, 0, 0, 0,
@@ -161,7 +160,7 @@ test "Run Length Encoding/Decoding" {
         0,
     };
     var buffer4 = [_]i16{0} ** 64;
-    const output = try run_length_encoding_v2(@TypeOf(data[0]), &data, &buffer4);
+    const output = try runLengthEncodingV2(@TypeOf(data3[0]), &data3, &buffer4);
     const expected_output = [_]i16{ 140, 1, -14, 2, -3, 1, -1, 1, 0, 3, -10, 1, -8, 1, 14, 1, 4, 1, 2, 1, 0, 3, 14, 1, -4, 2, -1, 2, 0, 4, -2, 2, 0, 38 };
     var i: usize = 0;
     while (i < output.len) : (i += 2) {
@@ -294,7 +293,7 @@ pub fn undoZigZag() void {
             // list_of_actions[i] = .downleft;
             s.row += 1;
             s.col -= 1;
-            j = s.subindex2Index();
+            j = s.subIndex2Index();
             if (s.row == 7) {
                 continue :outer .left;
             } else if (s.col == 0) {
@@ -308,7 +307,7 @@ pub fn undoZigZag() void {
             i -= 1;
             // list_of_actions[i] = .down;
             s.row -= 1;
-            j = s.subindex2Index();
+            j = s.subIndex2Index();
             if (s.col == 7) {
                 continue :outer .downleft;
             } else if (s.col == 0) {
@@ -333,12 +332,12 @@ const SubIndex = struct {
     row: usize = 0,
     col: usize = 0,
 
-    fn subindex2Index(s: *const SubIndex) usize {
+    fn subIndex2Index(s: *const SubIndex) usize {
         return s.row * 8 + s.col;
     }
 };
 
-fn index2Subindex(i: u8) SubIndex {
+fn index2SubIndex(i: u8) SubIndex {
     const col = @mod(i, 8);
     const row = (i - col) / 8; // need checks here
     return .{
@@ -358,11 +357,27 @@ fn computeNumberOfUniques(comptime T: type, data: []const T) usize {
     if (data.len < 2) return data.len;
     var n_uniques: usize = 1;
     for (data[0 .. data.len - 1], data[1..data.len]) |d1, d2| {
-        if (d1 != d2) {
-            n_uniques += 1;
-        }
+        n_uniques += @intFromBool(d1 != d2);
     }
     return n_uniques;
+}
+
+fn computeFrequenciesIndex(comptime T: type, data: []T, buffer: []T) !void {
+    // assumes:
+    //  data is unsorted
+    //  0 <= datum <= buffer.len
+    //  data = key = index into buffer
+    //  count = freq = value stored in buffer at that index
+    //  assumes buffer initialized as an array of 0s
+    switch (@typeInfo(T)) {
+        .int => {},
+        else => @compileError("Only accepts ints or unsigned ints."),
+    }
+    for (data) |datum| {
+        if (datum < 0) return error.IndexOutOfBounds;
+        if (datum >= buffer.len) return error.IndexOutOfBounds;
+        buffer[datum] += 1;
+    }
 }
 
 fn computeFrequenciesBuffer(
@@ -374,7 +389,7 @@ fn computeFrequenciesBuffer(
     // assumes:
     //   data is sorted
     //   0 < data.len < 2^32
-    //   symbol_buffer + count_buffer = list of 0s
+    //   symbols buffer + count buffer = list of 0s
     // computes frequencies of each symbol using a buffer
     const n_uniques = computeNumberOfUniques(T, data);
     if (n_uniques > symbols_buffer.len or n_uniques > count_buffer.len) return error.NumUniquesGTBufferLen;
@@ -489,39 +504,9 @@ fn huffmanEncoding(
     //  - create nodes
     //  - return tree
 
-    // compute freqs
     var freqs = try computeFrequenciesMapAllo(T, allo, data);
     defer freqs.deinit();
 
-    // // sort data - can i sort data using a min heap instead
-    // const Context = struct {
-    //     keys: []T,
-    //     values: []usize,
-    //
-    //     pub fn lessThan(ctx: @This(), a: usize, b: usize) bool {
-    //         return ctx.values[a] < ctx.values[b];
-    //     }
-    //
-    //     pub fn swap(ctx: @This(), a: usize, b: usize) void {
-    //         std.mem.swap(T, &ctx.keys[a], &ctx.keys[b]);
-    //         std.mem.swap(usize, &ctx.values[a], &ctx.values[b]);
-    //     }
-    // };
-    // const ctx: Context = .{ .keys = freqs.keys(), .values = freqs.values() };
-    // std.sort.pdqContext(0, ctx.keys.len, ctx);
-    // for (ctx.keys, ctx.values) |key, value| std.debug.print("{c} - {}\n", .{ key, value });
-
-    // min-heap
-    // - add each symbol to min heap
-    // - while heap.size > 1
-    // heap.pop()
-    // heap.pop()
-    // parent = new Node(a.freq + b.freq, null, a, b)
-    // heap.push(parent)
-    // root = heap.pop()
-    // codes = {}
-    // dfs(root, "")
-    // create nodes
     const Node = struct {
         freq: usize = 0,
         sym: ?T = null,
@@ -543,6 +528,7 @@ fn huffmanEncoding(
         node.freq = freq;
         node.sym = key;
     }
+
     var pq = std.PriorityQueue(T, Context, Context.lessThan).init(allo, ctx);
     defer pq.deinit();
     for (ctx.keys()) |key| {
@@ -553,11 +539,8 @@ fn huffmanEncoding(
     }
 }
 
-// fn huffmanDecoding(
-//     comptime T: type,
-//     map: std.AutoArrayHashMap(T, T),
-// ) !void {
-//     _ = map;
+// fn dfs(comptime T: type, nodes: *Node, code: T) void {
+//     while ()
 // }
 
 test "Test Huffman Encoding" {
