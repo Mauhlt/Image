@@ -633,6 +633,7 @@ const HuffmanTable = struct {
             .init(allo, {});
         defer queue.deinit();
 
+        // add all nodes to arraylist, skip those with 0 freqs, add nodes to priority queue
         for (freqs, 0..) |freq, i| {
             if (freq == 0) continue;
 
@@ -646,6 +647,7 @@ const HuffmanTable = struct {
             });
         }
 
+        // pop nodes off priority queue to create branch nodes connecting min nodes
         while (queue.count() > 1) {
             const left = queue.remove();
             const right = queue.remove();
