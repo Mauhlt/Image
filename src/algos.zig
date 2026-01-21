@@ -602,27 +602,70 @@ fn computeFrequenciesMapAllo(
 
 // version 2
 const Node = struct {
-    const Data = union(enum) {
-        leaf: u8, // what value does it contain
-        branch: struct {
-            left: u32, // position in array
-            right: u32, // position in array
-        },
-    };
-    count: u32,
-    data: Data,
+    leaf: u8,
+    branch: struct {
+        left: usize,
+        right: usize,
+    },
+};
+
+const FreqCountedNode = struct {
+    count: u64,
+    node: usize,
+};
+
+fn freqCountedNodePriority(_: void, a: @This(), b: @This()) std.math.Order {
+    return std.math.order(a.count, b.count);
+}
+
+const FreqCountedNode = struct {
+    count: u64,
+    node: usize,
 };
 
 const HuffmanTable = struct {
-    node: std.ArrayList(u32),
+    nodes: std.ArrayList(Node),
 
-    pub fn init(allo: std.mem.Allocator, freqs: *const Freqs) !HuffmanTable {
-        _ = freqs;
-        var nodes = NodeArray.init(Node).initCapcity(allo, 4);
-        for (0..freqs) |freq| {}
+    pub fn init(allo: std.mem.Allocator, freqs: *const Freqs) !@This() {
+        var nodes: std.ArrayList(Node) = try .initCapacity(allo, 4);
+
+        var queue = std.PriorityQueue(FreqCountedNode, void, FreqCountedNode.freqCountedPriority);
+
+        for (freqs, 0..) |freq, i| {
+            if (freq == 0) continue;
+            try nodes.append(allo, .{
+                .count = freq,
+                .data = Node.Data{ .leaf = @truncate(i) },
+            });
+            try queue.add(FreqCountedNode{
+                .count = freq,
+                .node = i,
+            });
+        }
+
+        while (queue.count() > 1) {
+            const left = queue.remove();
+            const right = queue.remove();
+
+            try nodes.append(.{
+                .count = left.count + right.count,
+                .data = .{
+                    .left = left.node,
+                    .right = right.node,
+                },
+            });
+
+            try queue.add(FreqCountedNode{
+                .count = left.count + right.count,
+                .node = nodes.items.len - 1,
+            });
+        }
+
+        // now # of items = 1
+        var root = queue.remove();
 
         return .{
-            .nodes = try .initCapacity(allo, 4),
+            .nodes = nodes,
         };
     }
 
@@ -631,11 +674,11 @@ const HuffmanTable = struct {
     }
 };
 
-const Freqs = [256]u64;
+const Freqs = [256]u32;
 
 fn countCharFreqs(data: []const u8) Freqs {
     // assumes image data is a u8
-    var counts = [_]u64{0} ** 256;
+    var counts = [_]u32{0} ** 256;
     for (data) |datum| counts[datum] += 1;
     return counts;
 }
@@ -650,9 +693,11 @@ fn printCharFreqs(freqs: *const Freqs) void {
 
 test "Test Huffman Encoding Using Arrays" {
     const allo = std.testing.allocator;
-    _ = allo;
     const data = "aaaaaasdf";
 
     const freqs = countCharFreqs(data);
     printCharFreqs(&freqs);
+
+    var table = try HuffmanTable.init(allo, &freqs);
+    defer table.deinit(allo);
 }
