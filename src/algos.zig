@@ -601,7 +601,7 @@ fn computeFrequenciesMapAllo(
 // }
 
 // version 2
-const Node = struct {
+const Node = union(enum) {
     leaf: u8,
     branch: struct {
         left: usize,
@@ -627,7 +627,7 @@ const HuffmanTable = struct {
     root: usize,
 
     pub fn init(allo: std.mem.Allocator, freqs: *const Freqs) !@This() {
-        var nodes: std.ArrayList(Node) = try .initCapacity(allo, 4);
+        var nodes: std.ArrayList(Node) = try .initCapacity(allo, freqs.len); // 4 should be changed to 1920x1080 / 2
 
         var queue: std.PriorityQueue(FreqCountedNode, void, freqCountedNodePriority) =
             .init(allo, {});
@@ -637,13 +637,12 @@ const HuffmanTable = struct {
             if (freq == 0) continue;
 
             try nodes.append(allo, .{
-                .count = freq,
-                .data = Node.Data{ .leaf = @truncate(i) },
+                .leaf = @intCast(i),
             });
 
             try queue.add(FreqCountedNode{
                 .count = freq,
-                .node = i,
+                .node = nodes.items.len - 1,
             });
         }
 
@@ -651,9 +650,8 @@ const HuffmanTable = struct {
             const left = queue.remove();
             const right = queue.remove();
 
-            try nodes.append(.{
-                .count = left.count + right.count,
-                .data = .{
+            try nodes.append(allo, .{
+                .branch = .{
                     .left = left.node,
                     .right = right.node,
                 },
@@ -698,13 +696,101 @@ fn printCharFreqs(freqs: *const Freqs) void {
     }
 }
 
+fn bfs(allo: std.mem.Allocator, nodes: *const std.ArrayList(Node), root: usize) !void {
+    if (root >= nodes.items.len) return error.RootOutOfBounds;
+    if (nodes.items.len == 0) return error.NoNodes;
+
+    var queue: std.ArrayList(Node) = try .initCapacity(allo, 1);
+    defer queue.deinit(allo);
+    try queue.append(allo, nodes.items[root]);
+
+    var level: std.ArrayList(usize) = try .initCapacity(allo, 1);
+    defer level.deinit(allo);
+    try level.append(allo, 0);
+
+    var prev_level: usize = 0;
+    while (queue.items.len > 0) {
+        const pop_node = queue.orderedRemove(0);
+        const curr_level = level.orderedRemove(0);
+
+        if (curr_level > prev_level) {
+            std.debug.print("\n", .{});
+        }
+
+        switch (pop_node) {
+            .leaf => |l| {
+                std.debug.print("Leaf: {c}, ", .{l});
+            },
+            .branch => |b| {
+                std.debug.print("Branch: {} {}, ", .{ b.left, b.right });
+
+                try queue.append(allo, nodes.items[b.left]);
+                try queue.append(allo, nodes.items[b.right]);
+
+                try level.append(allo, curr_level + 1);
+                try level.append(allo, curr_level + 1);
+            },
+        }
+
+        prev_level = curr_level;
+    }
+}
+
+fn dfs(allo: std.mem.Allocator, nodes: *const std.ArrayList(Node), root: usize) !void {
+    if (root >= nodes.items.len) return error.RootIsOutOfBounds;
+    if (nodes.items.len == 0) return error.NoNodes;
+
+    var stack: std.ArrayList(Node) = try .initCapacity(allo, 1);
+    defer stack.deinit(allo);
+    try stack.append(allo, nodes.items[root]);
+
+    var level: std.ArrayList(usize) = try .initCapacity(allo, 1);
+    defer level.deinit(allo);
+    try level.append(allo, 0);
+
+    while (stack.items.len > 0) {
+        const curr_node = stack.pop().?;
+        const curr_level: usize = level.pop().?;
+        std.debug.assert(curr_level < 32); // should be less than 32
+
+        switch (curr_node) {
+            .leaf => |l| {
+                std.debug.print("{c}: {b}\n", .{ l, curr_level });
+            },
+            .branch => |b| {
+                const left = nodes.items[b.left];
+                const right = nodes.items[b.right];
+
+                try stack.append(allo, left);
+                try stack.append(allo, right);
+
+                std.debug.print("CL: {}\n", .{curr_level});
+                const new_left_level = curr_level << 1;
+                std.debug.print("LL: {}\n", .{new_left_level});
+                const new_right_level = new_left_level + 1;
+                std.debug.print("RL: {}\n", .{new_right_level});
+                try level.append(allo, new_left_level);
+                try level.append(allo, new_right_level);
+            },
+        }
+    }
+}
+
 test "Test Huffman Encoding Using Arrays" {
     const allo = std.testing.allocator;
-    const data = "aaaaaasdf";
+    const data = "aaaaaasddf";
 
     const freqs = countCharFreqs(data);
     printCharFreqs(&freqs);
 
     var table = try HuffmanTable.init(allo, &freqs);
     defer table.deinit(allo);
+
+    // try bfs(allo, &table.nodes, table.root);
+    try dfs(allo, &table.nodes, table.root);
 }
+
+// big open world - destroy + get resources - lots of things generated
+// Solution = overworld be constrained in what you can/can't do + how to use resources
+// portals you can go through to get resources
+//
