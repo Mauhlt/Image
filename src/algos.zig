@@ -614,29 +614,33 @@ const FreqCountedNode = struct {
     node: usize,
 };
 
-fn freqCountedNodePriority(_: void, a: @This(), b: @This()) std.math.Order {
+fn freqCountedNodePriority(
+    _: void,
+    a: FreqCountedNode,
+    b: FreqCountedNode,
+) std.math.Order {
     return std.math.order(a.count, b.count);
 }
 
-const FreqCountedNode = struct {
-    count: u64,
-    node: usize,
-};
-
 const HuffmanTable = struct {
     nodes: std.ArrayList(Node),
+    root: usize,
 
     pub fn init(allo: std.mem.Allocator, freqs: *const Freqs) !@This() {
         var nodes: std.ArrayList(Node) = try .initCapacity(allo, 4);
 
-        var queue = std.PriorityQueue(FreqCountedNode, void, FreqCountedNode.freqCountedPriority);
+        var queue: std.PriorityQueue(FreqCountedNode, void, freqCountedNodePriority) =
+            .init(allo, {});
+        defer queue.deinit();
 
         for (freqs, 0..) |freq, i| {
             if (freq == 0) continue;
+
             try nodes.append(allo, .{
                 .count = freq,
                 .data = Node.Data{ .leaf = @truncate(i) },
             });
+
             try queue.add(FreqCountedNode{
                 .count = freq,
                 .node = i,
@@ -662,10 +666,13 @@ const HuffmanTable = struct {
         }
 
         // now # of items = 1
-        var root = queue.remove();
+        const root = queue.remove().node;
+        std.debug.assert(root == nodes.items.len - 1);
+        std.debug.assert(queue.count() == 0);
 
         return .{
             .nodes = nodes,
+            .root = root,
         };
     }
 
