@@ -624,7 +624,7 @@ fn freqCountedNodePriority(
 
 const HuffmanTable = struct {
     nodes: std.ArrayList(Node),
-    root: usize,
+    // root: usize,
 
     pub fn init(allo: std.mem.Allocator, freqs: *const Freqs) !@This() {
         var nodes: std.ArrayList(Node) = try .initCapacity(allo, freqs.len); // 4 should be changed to 1920x1080 / 2
@@ -669,19 +669,41 @@ const HuffmanTable = struct {
             });
         }
 
-        // last node = root of tree
-        const root = queue.remove().node;
-        std.debug.assert(root == nodes.items.len - 1);
-        std.debug.assert(queue.count() == 0);
+        // // last node = root of tree
+        // const root = queue.remove().node;
+        // std.debug.assert(root == nodes.items.len - 1);
+        // std.debug.assert(queue.count() == 0);
 
         return .{
             .nodes = nodes,
-            .root = root,
+            // .root = root,
         };
     }
 
     pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
         self.nodes.deinit(allo);
+    }
+
+    pub fn nodeFromCode(self: *const @This(), code: []const u8) Node {
+        // code = string of 0s and 1s
+        // 0 = go left to leaf, if no node, go to branch
+        // 1 = go right to branch, if no branch, go to leaf
+
+        var node_idx = self.nodes.items.len - 1;
+        for (code) |v| {
+            const node = switch (self.nodes.items[node_idx]) {
+                .leaf => unreachable,
+                .branch => |b| b,
+            };
+
+            // this logic doesn't work b/c branches aren't right and leafs aren't left
+            switch (v) {
+                0 => node_idx = node.left,
+                1 => node_idx = node.right,
+                else => unreachable,
+            }
+        }
+        return self.nodes.items[node_idx];
     }
 };
 
@@ -700,6 +722,7 @@ fn printCharFreqs(freqs: *const Freqs) void {
         const ch: u8 = @truncate(i);
         std.debug.print("{c}: {}\n", .{ ch, freq });
     }
+    std.debug.print("\n", .{});
 }
 
 fn bfs(allo: std.mem.Allocator, nodes: *const std.ArrayList(Node), root: usize) !void {
@@ -710,35 +733,18 @@ fn bfs(allo: std.mem.Allocator, nodes: *const std.ArrayList(Node), root: usize) 
     defer queue.deinit(allo);
     try queue.append(allo, nodes.items[root]);
 
-    var level: std.ArrayList(usize) = try .initCapacity(allo, 1);
-    defer level.deinit(allo);
-    try level.append(allo, 0);
-
-    var prev_level: usize = 0;
+    var curr_count: usize = 0;
     while (queue.items.len > 0) {
         const pop_node = queue.orderedRemove(0);
-        const curr_level = level.orderedRemove(0);
-
-        if (curr_level > prev_level) {
-            std.debug.print("\n", .{});
-        }
 
         switch (pop_node) {
-            .leaf => |l| {
-                std.debug.print("Leaf: {c}, ", .{l});
-            },
+            .leaf => |l| std.debug.print("{c}: {}\n", .{ l, curr_count }),
             .branch => |b| {
-                std.debug.print("Branch: {} {}, ", .{ b.left, b.right });
-
+                curr_count = curr_count << 1 + 1;
                 try queue.append(allo, nodes.items[b.left]);
                 try queue.append(allo, nodes.items[b.right]);
-
-                try level.append(allo, curr_level + 1);
-                try level.append(allo, curr_level + 1);
             },
         }
-
-        prev_level = curr_level;
     }
 }
 
@@ -750,50 +756,77 @@ fn dfs(allo: std.mem.Allocator, nodes: *const std.ArrayList(Node), root: usize) 
     defer stack.deinit(allo);
     try stack.append(allo, nodes.items[root]);
 
-    var level: std.ArrayList(usize) = try .initCapacity(allo, 1);
-    defer level.deinit(allo);
-    try level.append(allo, 0);
-
     while (stack.items.len > 0) {
         const curr_node = stack.pop().?;
-        const curr_level: usize = level.pop().?;
-        std.debug.assert(curr_level < 32); // should be less than 32
 
         switch (curr_node) {
-            .leaf => |l| {
-                std.debug.print("{c}: {b}\n", .{ l, curr_level });
-            },
+            .leaf => |l| std.debug.print("{c}, ", .{l}),
             .branch => |b| {
                 const left = nodes.items[b.left];
                 const right = nodes.items[b.right];
 
                 try stack.append(allo, left);
                 try stack.append(allo, right);
-
-                std.debug.print("CL: {}\n", .{curr_level});
-                const new_left_level = curr_level << 1;
-                std.debug.print("LL: {}\n", .{new_left_level});
-                const new_right_level = new_left_level + 1;
-                std.debug.print("RL: {}\n", .{new_right_level});
-                try level.append(allo, new_left_level);
-                try level.append(allo, new_right_level);
             },
+        }
+    }
+}
+
+fn createCode(
+    allo: std.mem.Allocator,
+    table: std.ArrayList(Node),
+) !void {
+    var path: std.ArrayList(u8) = try .initCapacity(allo, 4);
+    defer path.deinit(allo);
+
+    try path.append(allo, 0);
+
+    while (path.items.len > 0) {
+        const node = table.nodeFromCode(path.items);
+        switch (node) {
+            .leaf => {
+                std.debug.print("{any}, {c}\n", .{ path.items, node.leaf });
+            },
+            .branch => {
+                try path.append(allo, 0); // go deeper
+                continue;
+            },
+        }
+
+        // [0, 0, 0] => branch
+        // [0, 0, 0, 0] => leaf
+        const x: *u8 = &path.items[path.items.len - 1];
+        if (x.* == 0) { // branch
+            x.* = 1;
+        } else {
+            _ = path.pop(); // go shallower
+            if (path.items.len == 0) break;
+            path.items[path.items.len - 1] = 1;
         }
     }
 }
 
 test "Test Huffman Encoding Using Arrays" {
     const allo = std.testing.allocator;
-    const data = "aaaaaasddf";
+    // const data = "aaaaaasdddf";
+    const data = "aaaaaaaaabbbbbbccccddddddffff";
 
     const freqs = countCharFreqs(data);
-    printCharFreqs(&freqs);
+    // printCharFreqs(&freqs);
 
     var table = try HuffmanTable.init(allo, &freqs);
     defer table.deinit(allo);
 
-    // try bfs(allo, &table.nodes, table.root);
-    try dfs(allo, &table.nodes, table.root);
+    // search
+    // const root = table.nodes.items.len - 1;
+    // std.debug.print("BFS: \n", .{});
+    // try bfs(allo, &table.nodes, root);
+    // std.debug.print("DFS: \n", .{});
+    // try dfs(allo, &table.nodes, root);
+
+    // code search
+    // const node = table.nodeFromCode(&.{1});
+    // std.debug.print("{}\n", .{node});
 }
 
 // big open world - destroy + get resources - lots of things generated
