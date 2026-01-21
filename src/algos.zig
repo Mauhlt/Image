@@ -647,7 +647,11 @@ const HuffmanTable = struct {
             });
         }
 
-        // pop nodes off priority queue to create branch nodes connecting min nodes
+        // priority queue organizes nodes by min value at top
+        // pop = removes min node
+        // pop off 2 nodes -> combine into a new branch node
+        // add branch node back into queue (sorts into position)
+        // repeat until 1 node left = root node of tree
         while (queue.count() > 1) {
             const left = queue.remove();
             const right = queue.remove();
@@ -665,7 +669,7 @@ const HuffmanTable = struct {
             });
         }
 
-        // now # of items = 1
+        // last node = root of tree
         const root = queue.remove().node;
         std.debug.assert(root == nodes.items.len - 1);
         std.debug.assert(queue.count() == 0);
