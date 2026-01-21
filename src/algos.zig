@@ -490,112 +490,169 @@ fn computeFrequenciesMapAllo(
     return maps;
 }
 
-fn createNode(comptime T: type) type {
-    return struct {
-        freq: usize = 0,
-        sym: ?T = null,
-        left: ?*@This() = null,
-        right: ?*@This() = null,
+// fn createNode(comptime T: type) type {
+//     return struct {
+//         freq: usize = 0,
+//         sym: ?T = null,
+//         left: ?*@This() = null,
+//         right: ?*@This() = null,
+//     };
+// }
+//
+// fn buildHuffmanTree(
+//     comptime T: type,
+//     allo: std.mem.Allocator,
+//     data: []const T,
+// ) !*createNode(T) {
+//     // assumptions:
+//     //   data is not sorted
+//     //   0 < data.len < 2^32; avg = 1920x1080
+//     // steps:
+//     //  - compute freqs
+//     //  - sort data
+//     //  - create nodes
+//     //  - return tree
+//
+//     const Node = createNode(T);
+//
+//     var freqs = try computeFrequenciesMapAllo(T, allo, data);
+//     defer freqs.deinit();
+//
+//     const Cmp = struct {
+//         fn lessThan(_: void, a: *Node, b: *Node) bool {
+//             return a.freq < b.freq;
+//         }
+//     };
+//
+//     var pq = std.PriorityQueue(*Node, void, Cmp.lessThan).init(allo, {});
+//     defer pq.deinit();
+//
+//     // push leaves
+//     for (freqs.values(), freqs.keys()) |freq, sym| {
+//         if (freq == 0) continue;
+//         const leaf = try allo.create(Node);
+//         leaf.* = Node{
+//             .freq = freq,
+//             .sym = sym,
+//             .left = null,
+//             .right = null,
+//         };
+//         try pq.add(leaf);
+//     }
+//
+//     // edge case = just use single bit 0
+//     if (pq.count() == 1) return pq.remove();
+//
+//     // merge until 1 root remains
+//     while (pq.count() > 1) {
+//         const a = pq.remove();
+//         const b = pq.remove();
+//
+//         const parent = try allo.create(Node);
+//         parent.* = .{
+//             .freq = a.freq + b.freq,
+//             .sym = null,
+//             .left = a,
+//             .right = b,
+//         };
+//         try pq.add(parent);
+//     }
+//
+//     return pq.remove(); // return node
+// }
+//
+// fn buildHuffmanCodes(comptime T: type, allo: std.mem.Allocator, node: *createNode(T), prefix: []u8, codes: [][]u8) !void {
+//     // why store prefix data as u8 instead of as u32s + every combination?
+//     if (node.sym) |s| {
+//         codes[s] = try allo.dupe(u8, prefix);
+//         return;
+//     }
+//
+//     // left = prefix + "0"
+//     var left = try allo.alloc(u8, prefix.len + 1);
+//     @memcpy(left[0..prefix.len], prefix);
+//     left[prefix.len] = '0';
+//
+//     // right = prefix + "1"
+//     var right = try allo.alloc(u8, prefix.len + 1);
+//     @memcpy(right[0..prefix.len], prefix);
+//     right[prefix.len] = '1';
+//
+//     try buildHuffmanCodes(T, allo, node.left.?, left, codes);
+//     try buildHuffmanCodes(T, allo, node.right.?, right, codes);
+//
+//     allo.free(left);
+//     allo.free(right);
+// }
+//
+// test "Test Huffman Encoding" {
+//     const data: []const u8 = "HelloWorld";
+//     // sort
+//     const allo = std.testing.allocator;
+//     const new_data = try allo.dupe(u8, data);
+//     defer allo.free(new_data);
+//     std.mem.sort(u8, new_data, {}, comptime std.sort.asc(u8));
+//     // compute uniques
+//     const n_uniques = computeNumberOfUniques(@TypeOf(new_data[0]), new_data);
+//     try std.testing.expectEqual(7, n_uniques);
+//     // huffman encoding
+//     const node: createNode(@TypeOf(data[0])) = try buildHuffmanTree(@TypeOf(data[0]), allo, data);
+//     allo.destroy(node);
+// }
+
+// version 2
+const Node = struct {
+    const Data = union(enum) {
+        leaf: u8, // what value does it contain
+        branch: struct {
+            left: u32, // position in array
+            right: u32, // position in array
+        },
     };
+    count: u32,
+    data: Data,
+};
+
+const HuffmanTable = struct {
+    node: std.ArrayList(u32),
+
+    pub fn init(allo: std.mem.Allocator, freqs: *const Freqs) !HuffmanTable {
+        _ = freqs;
+        var nodes = NodeArray.init(Node).initCapcity(allo, 4);
+        for (0..freqs) |freq| {}
+
+        return .{
+            .nodes = try .initCapacity(allo, 4),
+        };
+    }
+
+    pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
+        self.nodes.deinit(allo);
+    }
+};
+
+const Freqs = [256]u64;
+
+fn countCharFreqs(data: []const u8) Freqs {
+    // assumes image data is a u8
+    var counts = [_]u64{0} ** 256;
+    for (data) |datum| counts[datum] += 1;
+    return counts;
 }
 
-fn buildHuffmanTree(
-    comptime T: type,
-    allo: std.mem.Allocator,
-    data: []const T,
-) !*createNode(T) {
-    // assumptions:
-    //   data is not sorted
-    //   0 < data.len < 2^32; avg = 1920x1080
-    // steps:
-    //  - compute freqs
-    //  - sort data
-    //  - create nodes
-    //  - return tree
-
-    const Node = createNode(T);
-
-    var freqs = try computeFrequenciesMapAllo(T, allo, data);
-    defer freqs.deinit();
-
-    const Cmp = struct {
-        fn lessThan(_: void, a: *Node, b: *Node) bool {
-            return a.freq < b.freq;
-        }
-    };
-
-    var pq = std.PriorityQueue(*Node, void, Cmp.lessThan).init(allo, {});
-    defer pq.deinit();
-
-    // push leaves
-    for (freqs.values(), freqs.keys()) |freq, sym| {
+fn printCharFreqs(freqs: *const Freqs) void {
+    for (freqs, 0..) |freq, i| {
         if (freq == 0) continue;
-        const leaf = try allo.create(Node);
-        leaf.* = Node{
-            .freq = freq,
-            .sym = sym,
-            .left = null,
-            .right = null,
-        };
-        try pq.add(leaf);
+        const ch: u8 = @truncate(i);
+        std.debug.print("{c}: {}\n", .{ ch, freq });
     }
-
-    // edge case = just use single bit 0
-    if (pq.count() == 1) return pq.remove();
-
-    // merge until 1 root remains
-    while (pq.count() > 1) {
-        const a = pq.remove();
-        const b = pq.remove();
-
-        const parent = try allo.create(Node);
-        parent.* = .{
-            .freq = a.freq + b.freq,
-            .sym = null,
-            .left = a,
-            .right = b,
-        };
-        try pq.add(parent);
-    }
-
-    return pq.remove(); // return node
 }
 
-fn buildHuffmanCodes(comptime T: type, allo: std.mem.Allocator, node: *createNode(T), prefix: []u8, codes: [][]u8) !void {
-    // why store prefix data as u8 instead of as u32s + every combination?
-    if (node.sym) |s| {
-        codes[s] = try allo.dupe(u8, prefix);
-        return;
-    }
-
-    // left = prefix + "0"
-    var left = try allo.alloc(u8, prefix.len + 1);
-    @memcpy(left[0..prefix.len], prefix);
-    left[prefix.len] = '0';
-
-    // right = prefix + "1"
-    var right = try allo.alloc(u8, prefix.len + 1);
-    @memcpy(right[0..prefix.len], prefix);
-    right[prefix.len] = '1';
-
-    try buildHuffmanCodes(T, allo, node.left.?, left, codes);
-    try buildHuffmanCodes(T, allo, node.right.?, right, codes);
-
-    allo.free(left);
-    allo.free(right);
-}
-
-test "Test Huffman Encoding" {
-    const data: []const u8 = "HelloWorld";
-    // sort
+test "Test Huffman Encoding Using Arrays" {
     const allo = std.testing.allocator;
-    const new_data = try allo.dupe(u8, data);
-    defer allo.free(new_data);
-    std.mem.sort(u8, new_data, {}, comptime std.sort.asc(u8));
-    // compute uniques
-    const n_uniques = computeNumberOfUniques(@TypeOf(new_data[0]), new_data);
-    try std.testing.expectEqual(7, n_uniques);
-    // huffman encoding
-    const node: createNode(@TypeOf(data[0])) = try buildHuffmanTree(@TypeOf(data[0]), allo, data);
-    allo.destroy(node);
+    _ = allo;
+    const data = "aaaaaasdf";
+
+    const freqs = countCharFreqs(data);
+    printCharFreqs(&freqs);
 }
