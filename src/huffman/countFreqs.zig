@@ -12,17 +12,14 @@ pub fn simple(data: []const u8) Freq {
 }
 
 // version 2
-fn simple2(data: []const u8, freq: *Freq, done: *bool) void {
+fn simple2(data: []const u8, freq: *Freq) void {
     for (data) |datum| freq[datum] += 1;
-    done.* = true;
 }
 
 pub fn threaded(data: []const u8) !Freq {
-    // fastest
     const total_threads = 16;
     var threads: [total_threads]std.Thread = undefined;
     var freqs: [total_threads]Freq = @bitCast([_]u32{0} ** (N * total_threads));
-    var done = [_]bool{true} ** total_threads;
 
     const num_threads = @min((std.Thread.getCpuCount() catch 2) - 1, total_threads);
     const max_data_per_thread: usize = @divTrunc(data.len, num_threads);
@@ -33,7 +30,7 @@ pub fn threaded(data: []const u8) !Freq {
         threads[i] = std.Thread.spawn(
             .{},
             simple2,
-            .{ data[start..end], &freqs[i], &done[i] },
+            .{ data[start..end], &freqs[i] },
         ) catch unreachable;
         start = end;
         end += max_data_per_thread;
@@ -42,24 +39,17 @@ pub fn threaded(data: []const u8) !Freq {
     threads[num_threads - 1] = std.Thread.spawn(
         .{},
         simple2,
-        .{ data[start..data.len], &freqs[num_threads - 1], &done[num_threads - 1] },
+        .{ data[start..data.len], &freqs[num_threads - 1] },
     ) catch unreachable;
 
     // let threads fly
-    inline for (0..num_threads) |i| threads[i].detach();
-    while (@reduce(.And, @as(@Vector(total_threads, bool), done)) != true) {}
+    inline for (0..num_threads) |i| threads[i].join();
 
     // combine results - sum across
-    for (1..num_threads) |i| {
-        // var j: usize = 0;
-        // while (j + 64 < N) : (j += 64) {
-        //     freqs[0][j .. j + 64].* = @as(@Vector(64, u32), freqs[i][j .. j + 64]) +
-        //         @as(@Vector(64, u32), freqs[0][j .. j + 64]);
-        // }
-
-        // for (freq, 0..) |f, i| {
-        //     freqs[0][i] += f;
-        // }
+    for (freqs[1..num_threads]) |freq| {
+        for (freq, 0..) |f, i| {
+            freqs[0][i] += f;
+        }
     }
 
     return freqs[0];
@@ -124,27 +114,83 @@ pub fn threaded_simd(data: []const u8) !Freq {
 }
 
 // version 4
+fn simple4(data: []const u8, freq: *Freq, done: *bool) void {
+    for (data) |datum| freq[datum] += 1;
+    done.* = true;
+}
+
+pub fn threaded_simd_v2(data: []const u8) !Freq {
+    // fastest
+    const total_threads = 16;
+    var threads: [total_threads]std.Thread = undefined;
+    var freqs: [total_threads]Freq = @bitCast([_]u32{0} ** (N * total_threads));
+    var done = [_]bool{true} ** total_threads;
+
+    const num_threads = @min((std.Thread.getCpuCount() catch 2) - 1, total_threads);
+    @memset(done[0..num_threads], false);
+    const max_data_per_thread: usize = @divFloor(data.len, num_threads);
+
+    var start: usize = 0;
+    var end: usize = max_data_per_thread;
+    for (0..num_threads - 1) |i| {
+        threads[i] = std.Thread.spawn(
+            .{},
+            simple4,
+            .{ data[start..end], &freqs[i], &done[i] },
+        ) catch unreachable;
+        start = end;
+        end += max_data_per_thread;
+    }
+
+    threads[num_threads - 1] = std.Thread.spawn(
+        .{},
+        simple4,
+        .{ data[start..data.len], &freqs[num_threads - 1], &done[num_threads - 1] },
+    ) catch unreachable;
+
+    // let threads fly
+    inline for (0..num_threads) |i| threads[i].detach();
+    while (@reduce(.And, @as(@Vector(total_threads, bool), done)) != true) {}
+
+    // combine results - sum across
+    for (1..num_threads) |i| {
+        var j: usize = 0;
+        while (j + 64 < N) : (j += 64) {
+            freqs[0][j .. j + 64].* = @as(@Vector(64, u32), freqs[i][j .. j + 64]) +
+                @as(@Vector(64, u32), freqs[0][j .. j + 64]);
+        }
+    }
+
+    return freqs[0];
+}
 
 const Input = enum {
     simple,
     threaded,
     threaded_simd,
+    threaded_simd_v2,
 };
 
 fn timer(input: Input, data: []const u8, n_reps: usize) !Freq {
+    std.debug.assert(n_reps > 0);
+
     const start: i128 = std.time.nanoTimestamp();
 
-    for (0..n_reps - 1) |_| {
+    // reps
+    for (0..n_reps) |_| {
         _ = switch (input) {
             .simple => simple(data),
             .threaded => try threaded(data),
             .threaded_simd => try threaded_simd(data),
+            .threaded_simd_v2 => try threaded_simd_v2(data),
         };
     }
+    // grab data on this rep
     const freqs = switch (input) {
         .simple => simple(data),
         .threaded => try threaded(data),
         .threaded_simd => try threaded_simd(data),
+        .threaded_simd_v2 => try threaded_simd_v2(data),
     };
 
     const end: i128 = std.time.nanoTimestamp();
@@ -157,12 +203,12 @@ fn timer(input: Input, data: []const u8, n_reps: usize) !Freq {
     };
     var time_sects = [_]i128{0} ** (ns_pers.len + 1);
 
-    var diff = @divTrunc((end - start), @as(i128, n_reps)); // avg
+    var diff_avg = @divTrunc((end - start), @as(i128, n_reps + 1)); // avg
     inline for (ns_pers, 0..) |ns_per, i| {
-        time_sects[i] = @divTrunc(diff, ns_per);
-        diff -= (time_sects[i] * ns_per);
+        time_sects[i] = @divTrunc(diff_avg, ns_per);
+        diff_avg -= (time_sects[i] * ns_per);
     }
-    time_sects[time_sects.len - 1] = diff;
+    time_sects[time_sects.len - 1] = diff_avg;
 
     const end_strs = [_][]const u8{ "min", "sec", "ms", "us", "ns" };
     for (end_strs, 0..) |end_str, i| {
@@ -173,34 +219,36 @@ fn timer(input: Input, data: []const u8, n_reps: usize) !Freq {
     return freqs;
 }
 
-// test "Count Frequencies" {
-//     const allo = std.testing.allocator;
-//     // Upper Size Limits: Image Size * 2, 2 = worst case scenario for run length encoding
-//     // Image Size:
-//     //   Expected Load: 1920 * 1080 * 4 (~8 Mb)
-//     //   High Load: 3840 * 2160 * 4 (~32 Mb)
-//     //   Extremely High Load: 7680 * 4320 * 4 (~128 Mb)
-//     //
-//     const limit: usize = 1920 * 1080;
-//     var data: []u8 = try allo.alloc(u8, limit);
-//     defer allo.free(data);
-//
-//     const time: u64 = @intCast(@abs(std.time.milliTimestamp()));
-//     var r = std.Random.DefaultPrng.init(time);
-//     const rand = r.random();
-//
-//     for (0..data.len) |i| {
-//         const rand_num = rand.intRangeAtMost(u8, 0, 255);
-//         data[i] = rand_num;
-//     }
-//
-//     const n_reps: i128 = 1; // 1_000, 10_000
-//     const f1 = try timer(.simple, data, n_reps);
-//     const f2 = try timer(.threaded, data, n_reps); // fastest = ~4-5x faster
-//     const f3 = try timer(.threaded_simd, data, n_reps);
-//
-//     // ensure that each freq fn is correct
-//     for (f1, f2, f3) |uno, dos, tres| {
-//         try std.testing.expect(uno == dos and dos == tres);
-//     }
-// }
+test "Count Frequencies" {
+    const allo = std.testing.allocator;
+    // Upper Size Limits: Image Size * 2, 2 = worst case scenario for run length encoding
+    // Image Size:
+    //   Expected Load: 1920 * 1080 * 4 (~8 Mb)
+    //   High Load: 3840 * 2160 * 4 (~32 Mb)
+    //   Extremely High Load: 7680 * 4320 * 4 (~128 Mb)
+    //
+    const limit: usize = 1920 * 1080;
+    var data: []u8 = try allo.alloc(u8, limit);
+    defer allo.free(data);
+
+    const time: u64 = @intCast(@abs(std.time.milliTimestamp()));
+    var r = std.Random.DefaultPrng.init(time);
+    const rand = r.random();
+
+    for (0..data.len) |i| {
+        const rand_num = rand.intRangeAtMost(u8, 0, 255);
+        data[i] = rand_num;
+    }
+
+    const n_reps: i128 = 10; // 1_000, 10_000
+    const len = std.meta.fieldNames(Input).len;
+    var f_values: [len]Freq = undefined;
+    for (std.meta.FieldEnum(Input), 0..) |field_name, i|
+        f_values[i] = try timer(field_name, data, n_reps);
+
+    // ensure that each freq fn is correct
+    for (0..N) |i| {
+        for (1..len) |j|
+            try std.testing.expect(f_values[j][i] == f_values[0][i]);
+    }
+}
