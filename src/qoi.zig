@@ -21,7 +21,7 @@ const Header = struct {
     magic: [4]u8 = "qoif",
     width: u32 = 0,
     height: u32 = 0,
-    channels: Channels = .rgb,
+    format: Format = .rgb,
     colorspace: Colorspace = .srgb,
 };
 
@@ -30,23 +30,39 @@ pub const Run = struct {
     len: usize,
 };
 
-pub const Color = extern struct {
+/// Color:
+/// extern struct for rgba values
+pub const Color3 = extern struct {
+    r: u8,
+    g: u8,
+    b: u8,
+
+    pub fn hash(c: Color3) u8 {
+        return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% 0xFF *% 11);
+    }
+
+    pub fn eql(a: Color3, b: Color3) bool {
+        return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
+    }
+};
+
+pub const Color4 = extern struct {
     r: u8,
     g: u8,
     b: u8,
     a: u8 = 0xFF,
 
-    pub fn hash(c: Color) u8 {
-        0b1111;
-        0b111;
+    pub fn hash(c: Color4) u8 {
         return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
     }
 
-    pub fn eql(a: Color, b: Color) bool {
+    pub fn eql(a: Color4, b: Color4) bool {
         return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
     }
 };
 
+/// Image:
+/// contains width, height, modifiable pixels, and colorspace
 pub const Image = struct {
     width: u32 = 1920,
     height: u32 = 1080,
@@ -68,6 +84,8 @@ pub const Image = struct {
     }
 };
 
+/// Constant Image:
+/// same as Image but pixels are constant
 pub const ConstImage = struct {
     width: u32 = 1920,
     height: u32 = 1080,
@@ -75,6 +93,7 @@ pub const ConstImage = struct {
     colorspace: Colorspace = .srgb,
 };
 
+/// Checks if magic bytes are qoif
 pub fn isQOI(bytes: []const u8) bool {
     if (bytes.len < Header.size) return false;
     const header = Header.decode(bytes[0..Header.size].*) catch return false;
