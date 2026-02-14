@@ -63,18 +63,57 @@ pub const Color4 = extern struct {
 
 /// Image:
 /// contains width, height, modifiable pixels, and colorspace
-pub const Image = struct {
+pub const Image3 = struct {
     width: u32 = 1920,
     height: u32 = 1080,
-    pixels: []Color,
-    colorspace: Colorspace = .srgb,
+    pixels: []Color3,
+    colorspace: Colorspace = .rgb,
 
-    pub fn toConst(self: *const @This()) ConstImage {
-        return ConstImage{
+    pub fn toConst(self: *const @This()) ConstImage3 {
+        return .{
             .width = self.width,
             .height = self.height,
             .pixels = self.pixels,
             .colorspace = self.colorspace,
+        };
+    }
+
+    pub fn init(allo: std.mem.Allocator, width: u32, height: u32) !@This() {
+        std.debug.assert(width > 0 and height > 0);
+        return .{
+            .width = width,
+            .height = height,
+            .pixels = try allo.alloc(Color3, width * height),
+        };
+    }
+
+    pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
+        allo.free(self.pixels);
+        self.* = undefined;
+    }
+};
+
+pub const Image4 = struct {
+    width: u32 = 1920,
+    height: u32 = 1080,
+    pixels: []Color4,
+    colorspace: Colorspace = .srgb,
+
+    pub fn toConst(self: *const @This()) ConstImage4 {
+        return ConstImage4{
+            .width = self.width,
+            .height = self.height,
+            .pixels = self.pixels,
+            .colorspace = self.colorspace,
+        };
+    }
+
+    pub fn init(allo: std.mem.Allocator, width: u32, height: u32) !@This() {
+        std.debug.assert(width > 0 and height > 0);
+        return .{
+            .width = width,
+            .height = height,
+            .pixels = try allo.alloc(Color4, width * height),
         };
     }
 
@@ -86,10 +125,17 @@ pub const Image = struct {
 
 /// Constant Image:
 /// same as Image but pixels are constant
-pub const ConstImage = struct {
+pub const ConstImage3 = struct {
     width: u32 = 1920,
     height: u32 = 1080,
-    pixels: []const Color,
+    pixels: []const Color3,
+    colorspace: Colorspace = .srgb,
+};
+
+pub const ConstImage4 = struct {
+    width: u32 = 1920,
+    height: u32 = 1080,
+    pixels: []const Color4,
     colorspace: Colorspace = .srgb,
 };
 
