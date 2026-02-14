@@ -20,4 +20,5 @@ pub fn main() void {
 
 test "All Tests" {
     _ = @import("algos.zig");
+    _ = @import("huffman/huffman.zig");
 }

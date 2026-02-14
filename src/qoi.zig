@@ -1,63 +1,94 @@
 const std = @import("std");
+// structure:
+// 14 byte header
+// X data chunks
+// 8 byte end marker
 
-const Header = struct {
-    // magic: [4]u8, // qoif
-    width: u32, // width in pixels
-    height: u32, // height in pixels
-    channels: u8, // 3 = rgb, 4 = rgba
-    colorspace: u8, // 0 = srgb + linear alpha, 1 = all channels linear
+pub const EncodeError = error{};
+pub const DecodeError = error{ OutOfMemory, InvalidData, EndOfStream };
+
+const Format = enum(u8) {
+    rgb = 3,
+    rbba = 4,
 };
 
-// encoded left to right, top to bottom
-// run of previous pixel
+const Colorspace = enum(u8) {
+    srgb = 0,
+    linear = 1,
+};
 
-fn indexPosition(rgba: RGBA) u64 {
-    return @mod(rgba.r * 3 + rgba.g * 5 + rgba.b * 7 + rgba.a * 11, 64);
-}
+const Header = struct {
+    magic: [4]u8 = "qoif",
+    width: u32 = 0,
+    height: u32 = 0,
+    channels: Channels = .rgb,
+    colorspace: Colorspace = .srgb,
+};
 
-const RGBA = struct {
+pub const Run = struct {
+    color: Color,
+    len: usize,
+};
+
+pub const Color = extern struct {
     r: u8,
     g: u8,
     b: u8,
-    a: u8,
+    a: u8 = 0xFF,
+
+    pub fn hash(c: Color) u8 {
+        0b1111;
+        0b111;
+        return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
+    }
+
+    pub fn eql(a: Color, b: Color) bool {
+        return @as(u32, @bitCast(a)) == @as(u32, @bitCast(b));
+    }
 };
 
-fn read32(bytes: []const u8, p: *i32) u32 {
-    _ = bytes;
-    _ = p;
-    return 0;
+pub const Image = struct {
+    width: u32 = 1920,
+    height: u32 = 1080,
+    pixels: []Color,
+    colorspace: Colorspace = .srgb,
+
+    pub fn toConst(self: *const @This()) ConstImage {
+        return ConstImage{
+            .width = self.width,
+            .height = self.height,
+            .pixels = self.pixels,
+            .colorspace = self.colorspace,
+        };
+    }
+
+    pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
+        allo.free(self.pixels);
+        self.* = undefined;
+    }
+};
+
+pub const ConstImage = struct {
+    width: u32 = 1920,
+    height: u32 = 1080,
+    pixels: []const Color,
+    colorspace: Colorspace = .srgb,
+};
+
+pub fn isQOI(bytes: []const u8) bool {
+    if (bytes.len < Header.size) return false;
+    const header = Header.decode(bytes[0..Header.size].*) catch return false;
+    return (bytes.len >= Header.size + header.size);
 }
 
-fn write32(file: std.fs.File, v: RGBA) !void {
-    const data = [_]u32{
-        (0xff000000 & v) >> 24,
-        (0x00ff0000 & v) >> 16,
-        (0x0000ff00 & v) >> 8,
-        0x000000ff & v,
+pub fn decodeBuffer(allo: std.mem.Allocator, buffer: []const u8) DecodeError!Image {
+    if (buffer.len < Header.size) return DecodeError.InvalidData;
+
+    var reader: std.Io.Reader = .fixed(buffer);
+    return decodeStream(allo, &reader) catch |err| switch (err) {
+        error.ReadFailed => unreachable,
+        else => |other| return other,
     };
-    try file.write(&data);
 }
 
-fn encode(file: std.fs.File) !void {}
-
-fn decode(file: std.fs.File) !void {}
-
-const OP = enum(u32) {
-    index = 0x00,
-    diff = 0x40,
-    luma = 0x80,
-    run = 0xc0,
-    rgb = 0xfe,
-    rgba = 0xff,
-    mask = 0xc0,
-};
-fn color_hash(color: RGBA) u32 {
-    return @mod(color.r * 3 + color.g * 5 + color.b * 7 + color.a * 11, 64);
-}
-
-fn magic() u32 {
-    return @as(u32, q << 24 | o << 16 | i << 8 | f);
-}
-
-const header_size = 14;
-const max_pixels: u32 = 400000000;
+pub fn decodeStream() void {}

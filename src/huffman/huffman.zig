@@ -16,7 +16,7 @@ test "Creating Huffman Codes" {
     const allo = std.testing.allocator;
     const data = "aaaaaaaaabbbbbbccccddddddffffeegghi";
     // extract freqs
-    const freqs = try countCharFrequencies(data);
+    const freqs = try countFreqs(data);
     // parse bins
     const n_syms: usize = blk: {
         var n_syms: usize = 0;
@@ -70,7 +70,6 @@ const EncodedData = struct {
     // len = pre-computed length of encoded data
     // assumes # of encoded symbols <= 64 bits
 
-    const Self = @This();
     const T: type = u64;
     const bits: u16 = @typeInfo(T).int.bits;
 
@@ -79,7 +78,7 @@ const EncodedData = struct {
     bits_left: u16 = bits, // 64 // bits left at current position
     total_bits: u64, // total # of bits for encoded msg = pre-computed
 
-    pub fn init(allo: std.mem.Allocator, total_bits: usize) !Self {
+    pub fn init(allo: std.mem.Allocator, total_bits: usize) !@This() {
         // total length/bits
         if (total_bits == 0) return error.GivenZeroTotalBits;
         const total_len = std.math.divCeil(T, total_bits, bits) catch unreachable;
@@ -93,7 +92,7 @@ const EncodedData = struct {
         };
     }
 
-    pub fn add(self: *Self, code: T) void {
+    pub fn add(self: *@This(), code: T) void {
         // assumes code length <= 64 bits long
         // get # of bits a code consumes
         const consumes_n_bits = blk: {
@@ -131,11 +130,17 @@ const EncodedData = struct {
         }
     }
 
-    pub fn deinit(self: *Self, allo: std.mem.Allocator) void {
+    pub fn sub(self: *@This()) u32 {
+        // get next code
+        // opp of add
+
+    }
+
+    pub fn deinit(self: *@This(), allo: std.mem.Allocator) void {
         allo.free(self.data);
     }
 
-    pub fn print(self: *const Self) void {
+    pub fn print(self: *const @This()) void {
         for (self.data) |datum| std.debug.print("{b} ", .{datum});
         std.debug.print("\n", .{});
     }
@@ -234,7 +239,9 @@ const Huffman = struct {
         var data = try allo.alloc(u8, total_bits);
         defer allo.free(data);
         // loop bit str
-        for (bit_strs) |bit_str| {}
+        for (bit_strs) |bit_str| {
+            self.encoded_data.sub();
+        }
         // return data;
     }
 
