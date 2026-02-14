@@ -123,6 +123,43 @@ pub const Image4 = struct {
     }
 };
 
+/// Image 5:
+/// difference is no color struct, instead array of red, green, blue, and alpha
+/// goal is to see if this is faster than using color
+pub const Image5 = struct {
+    width: u32 = 1920,
+    height: u32 = 1080,
+    red: []u8,
+    green: []u8,
+    blue: []u8,
+    alpha: []u8,
+    colorspace: Colorspace = .srgb,
+
+    pub fn toConst(self: *const @This()) ConstImage5 {
+        return .{
+            .width = self.width,
+            .height = self.height,
+            .red = self.red,
+            .green = self.green,
+            .blue = self.blue,
+            .alpha = self.alpha,
+        };
+    }
+
+    pub fn init(allo: std.mem.Allocator, width: u32, height: u32) !@This() {
+        std.debug.assert(width > 0 and height > 0);
+        const len = width * height;
+        return .{
+            .width = width,
+            .height = height,
+            .red = try allo.alloc(u8, len),
+            .green = try allo.alloc(u8, len),
+            .blue = try allo.alloc(u8, len),
+            .alpha = try allo.alloc(u8, len),
+        };
+    }
+};
+
 /// Constant Image:
 /// same as Image but pixels are constant
 pub const ConstImage3 = struct {
@@ -136,6 +173,16 @@ pub const ConstImage4 = struct {
     width: u32 = 1920,
     height: u32 = 1080,
     pixels: []const Color4,
+    colorspace: Colorspace = .srgb,
+};
+
+pub const ConstImage5 = struct {
+    width: u32 = 1920,
+    height: u32 = 1080,
+    red: []const u8,
+    blue: []const u8,
+    green: []const u8,
+    alpha: []const u8,
     colorspace: Colorspace = .srgb,
 };
 
