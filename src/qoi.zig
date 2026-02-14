@@ -5,7 +5,14 @@ const std = @import("std");
 // 8 byte end marker
 
 pub const EncodeError = error{};
-pub const DecodeError = error{ OutOfMemory, InvalidData, EndOfStream };
+pub const DecodeError = error{
+    OutOfMemory,
+    InvalidData,
+    EndOfStream,
+    InvalidMagic,
+    InvalidFormat,
+    InvalidColorspace,
+};
 
 const Format = enum(u8) {
     rgb = 3,
@@ -17,16 +24,15 @@ const Colorspace = enum(u8) {
     linear = 1,
 };
 
-const Header = struct {
-    magic: [4]u8 = "qoif",
-    width: u32 = 0,
-    height: u32 = 0,
-    format: Format = .rgb,
-    colorspace: Colorspace = .srgb,
+/// Color Run:
+/// struct containing the list of how long a color repeats
+pub const ColorRun3 = struct {
+    color: Color3,
+    len: usize,
 };
 
-pub const Run = struct {
-    color: Color,
+pub const ColorRun4 = struct {
+    color: Color4,
     len: usize,
 };
 
@@ -184,6 +190,35 @@ pub const ConstImage5 = struct {
     green: []const u8,
     alpha: []const u8,
     colorspace: Colorspace = .srgb,
+};
+
+const Header = struct {
+    const size = 14;
+    const magic: [4]u8 = [_]u8{ 'q', 'o', 'i', 'f' };
+
+    width: u32 = 0,
+    height: u32 = 0,
+    format: Format = .rgb,
+    colorspace: Colorspace = .srgb,
+
+    fn decode(buffer: [size]u8) DecodeError!Header {
+        if (!std.mem.eql(u8, buffer[0..4], &magic)) return DecodeError.InvalidMagic;
+        return @This(){
+            .width = std.mem.readInt(u32, buffer[4..8], .big),
+            .height = std.mem.readInt(u32, buffer[8..12], .big),
+            .format = std.enums.fromInt(Format, buffer[12]) orelse return DecodeError.InvalidFormat,
+            .colorspace = std.enums.fromInt(Colorspace, buffer[13]) orelse return DecodeError.InvalidColorspace,
+        };
+    }
+
+    fn encode(header: @This()) [size]u8 {
+        var result: [size]u8 = undefined;
+        @memcpy(result[0..4], &magic);
+        std.mem.writeInt(u32, result[4..8], header.width, .big);
+        std.mem.writeInt(u32, result[8..12], header.height, .big);
+        result[12] = @intFromEnum(header.format);
+        result[13] = @intFromEnum(header.colorspace);
+    }
 };
 
 /// Checks if magic bytes are qoif
