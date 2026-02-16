@@ -59,9 +59,9 @@ pub fn main() !void {
     switch (ext) {
         .qoi => try readQoi(&reader.interface),
         .png => try readPng(&reader.interface),
-        .jpg, .jpeg => try readJpg(&reader.interface),
-        .gif, .jif => try readGif(&reader.interface),
-        .bmp, .dib => try readBmp(&reader.interface),
+        // .jpg, .jpeg => try readJpg(&reader.interface),
+        // .gif, .jif => try readGif(&reader.interface),
+        // .bmp, .dib => try readBmp(&reader.interface),
         // .heic => try readHeic(&reader.interface),
         // .paint => try readPaint(&reader.interface),
     }
