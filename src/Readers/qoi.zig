@@ -29,7 +29,7 @@ const Decoder = struct {
 };
 
 fn hash(c: Color) u8 {
-    return (c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11) & 0b1111111111111111;
+    return (c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11) & 0b111111;
 }
 
 fn readQoi(r: *std.Io.Reader) !void {
@@ -40,4 +40,6 @@ fn readQoi(r: *std.Io.Reader) !void {
     const height = @as(u32, hdr[8..12]);
     const channels = std.enums.fromInt(Channels, hdr[12]);
     const colorspace = std.enums.fromInt(Colorspace, hdr[13]);
+
+    std.debug.print("{}x{}\n{t}\n{t}\n", .{ width, height, channels, colorspace });
 }
