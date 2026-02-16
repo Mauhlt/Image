@@ -5,10 +5,10 @@
 /// 4. Write
 const std = @import("std");
 /// Readers
-const readPng = @import("Readers/png.zig").readPng;
-const readJpg = @import("Readers/jpg.zig").readJpg;
-const readGif = @import("Readers/gif.zig").readGif;
-const readBmp = @import("Readers/bmp.zig").readBmp;
+// const readPng = @import("Readers/png.zig").readPng;
+// const readJpg = @import("Readers/jpg.zig").readJpg;
+// const readGif = @import("Readers/gif.zig").readGif;
+// const readBmp = @import("Readers/bmp.zig").readBmp;
 const readQoi = @import("Readers/qoi.zig").readQoi;
 
 const FileTypes = enum(u8) {
@@ -23,6 +23,7 @@ const FileTypes = enum(u8) {
 };
 
 pub fn main() !void {
+    // TODO: convert filepath to cli command or library command
     const filepath: []const u8 = "Images/BasicArt.png";
 
     // check that extension is supported
@@ -58,7 +59,7 @@ pub fn main() !void {
     // read file based on ext
     switch (ext) {
         .qoi => try readQoi(&reader.interface),
-        .png => try readPng(&reader.interface),
+        // .png => try readPng(&reader.interface),
         // .jpg, .jpeg => try readJpg(&reader.interface),
         // .gif, .jif => try readGif(&reader.interface),
         // .bmp, .dib => try readBmp(&reader.interface),
