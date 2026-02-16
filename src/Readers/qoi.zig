@@ -1,9 +1,5 @@
 const std = @import("std");
-/// Goals:
-/// 1. Take file path - identify if file exists, if yes open file
-/// 2. Identify if it is readable: (jpg, png, bmp, qoi, gif)
-/// 3. Use appropriate reader to read data
-/// 4. Write
+
 pub fn main(filepath: []const u8) !void {
     const f = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
     defer f.close();
