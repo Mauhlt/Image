@@ -23,47 +23,50 @@ const FileTypes = enum(u8) {
 };
 
 pub fn main() !void {
-    // TODO: convert filepath to cli command or library command
-    const filepath: []const u8 = "Images/BasicArt.png";
+    // test what 63 bit is
+    std.debug.print("{b}\n", .{63});
 
-    // check that extension is supported
-    const map: std.StaticStringMap(FileTypes) = .initComptime(.{
-        .{ "qoi", .qoi },
-        .{ "png", .png },
-        .{ "jpg", .jpg },
-        .{ "jpeg", .jpg },
-        .{ "jpe", .jpg },
-        .{ "jfif", .jpg },
-        .{ "gif", .gif },
-        .{ "jif", .gif },
-        .{ "tif", .tif },
-        .{ "tiff", .tif },
-        .{ "heic", .heic },
-        .{ "hif", .heic },
-        .{ "paint", .paint },
-        .{ "bmp", .bmp },
-        .{ "dib", .bmp },
-    });
-    const last_period = std.mem.lastIndexOfScalar(u8, filepath, ".") orelse return error.InvalidFilePath;
-    const ext = filepath[last_period + 1 .. filepath.len];
-    if (!map.has(ext)) return error.InvalidFileExtension;
-
-    // check that file exists
-    const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
-    defer file.close();
-
-    // setup reader
-    var read_buffer: [4096]u8 = undefined;
-    var reader = file.reader(&read_buffer);
-
-    // read file based on ext
-    switch (ext) {
-        .qoi => try readQoi(&reader.interface),
-        // .png => try readPng(&reader.interface),
-        // .jpg, .jpeg => try readJpg(&reader.interface),
-        // .gif, .jif => try readGif(&reader.interface),
-        // .bmp, .dib => try readBmp(&reader.interface),
-        // .heic => try readHeic(&reader.interface),
-        // .paint => try readPaint(&reader.interface),
-    }
+    // // TODO: convert filepath to cli command or library command
+    // const filepath: []const u8 = "Images/BasicArt.png";
+    //
+    // // check that extension is supported
+    // const map: std.StaticStringMap(FileTypes) = .initComptime(.{
+    //     .{ "qoi", .qoi },
+    //     .{ "png", .png },
+    //     .{ "jpg", .jpg },
+    //     .{ "jpeg", .jpg },
+    //     .{ "jpe", .jpg },
+    //     .{ "jfif", .jpg },
+    //     .{ "gif", .gif },
+    //     .{ "jif", .gif },
+    //     .{ "tif", .tif },
+    //     .{ "tiff", .tif },
+    //     .{ "heic", .heic },
+    //     .{ "hif", .heic },
+    //     .{ "paint", .paint },
+    //     .{ "bmp", .bmp },
+    //     .{ "dib", .bmp },
+    // });
+    // const last_period = std.mem.lastIndexOfScalar(u8, filepath, ".") orelse return error.InvalidFilePath;
+    // const ext = filepath[last_period + 1 .. filepath.len];
+    // if (!map.has(ext)) return error.InvalidFileExtension;
+    //
+    // // check that file exists
+    // const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
+    // defer file.close();
+    //
+    // // setup reader
+    // var read_buffer: [4096]u8 = undefined;
+    // var reader = file.reader(&read_buffer);
+    //
+    // // read file based on ext
+    // switch (ext) {
+    //     .qoi => try readQoi(&reader.interface),
+    //     // .png => try readPng(&reader.interface),
+    //     // .jpg, .jpeg => try readJpg(&reader.interface),
+    //     // .gif, .jif => try readGif(&reader.interface),
+    //     // .bmp, .dib => try readBmp(&reader.interface),
+    //     // .heic => try readHeic(&reader.interface),
+    //     // .paint => try readPaint(&reader.interface),
+    // }
 }
