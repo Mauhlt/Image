@@ -22,7 +22,8 @@ const ChunkHeader = struct {
 
 pub fn readPng(r: *std.Io.Reader) !void {
     const sig = try r.take(8);
-    if (!std.mem.eql(u8, sig, &.{ 137, 80, 78, 71, 13, 10, 26, 10 })) return DecodeError.InvalidSignature;
+    if (!std.mem.eql(u8, sig, &.{ 137, 80, 78, 71, 13, 10, 26, 10 }))
+        return DecodeError.InvalidSignature;
 
     const chunk = try ChunkHeader.read(r);
     std.debug.print("First Chunk: {any}\n", .{chunk});

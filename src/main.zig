@@ -6,11 +6,11 @@
 const std = @import("std");
 const testing = std.testing;
 /// Readers
-// const readPng = @import("Readers/png.zig").readPng;
+const readPng = @import("Readers/png.zig").readPng;
 // const readJpg = @import("Readers/jpg.zig").readJpg;
 // const readGif = @import("Readers/gif.zig").readGif;
 // const readBmp = @import("Readers/bmp.zig").readBmp;
-const readQoi = @import("Readers/qoi.zig").readQoi;
+// const readQoi = @import("Readers/qoi.zig").readQoi;
 
 const FileTypes = enum(u8) {
     unsupported = 0,
@@ -62,8 +62,8 @@ pub fn main() !void {
 
     // read file based on ext
     switch (ext) {
-        .qoi => try readQoi(&reader.interface),
-        // .png => try readPng(&reader.interface),
+        // .qoi => try readQoi(&reader.interface),
+        .png => try readPng(&reader.interface),
         // .jpg, .jpeg => try readJpg(&reader.interface),
         // .gif, .jif => try readGif(&reader.interface),
         // .bmp, .dib => try readBmp(&reader.interface),
