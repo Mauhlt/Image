@@ -33,13 +33,15 @@ fn hash(c: Color) u8 {
 }
 
 fn readQoi(r: *std.Io.Reader) !void {
-    const hdr = try r.take(14);
-    if (!std.mem.eql(u8, hdr[0..4], "qoif")) return DecodeError.InvalidSignature;
+    const sig = try r.take(4);
+    const expected_signature = "qoif";
+    if (!std.mem.eql(u8, sig, expected_signature)) return DecodeError.InvalidSignature;
 
-    const width = @as(u32, hdr[4..8]);
-    const height = @as(u32, hdr[8..12]);
-    const channels = std.enums.fromInt(Channels, hdr[12]);
-    const colorspace = std.enums.fromInt(Colorspace, hdr[13]);
+    const hdr = try r.take(10);
+    const width = @as(u32, hdr[0..4]);
+    const height = @as(u32, hdr[4..8]);
+    const channels = std.enums.fromInt(Channels, hdr[8]);
+    const colorspace = std.enums.fromInt(Colorspace, hdr[9]);
 
     std.debug.print("{}x{}\n{t}\n{t}\n", .{ width, height, channels, colorspace });
 }
