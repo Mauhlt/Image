@@ -12,6 +12,9 @@ const readPng = @import("Readers/png.zig").readPng;
 // const readBmp = @import("Readers/bmp.zig").readBmp;
 // const readQoi = @import("Readers/qoi.zig").readQoi;
 
+/// AI-based decoders
+const ai_qoi = @import("ai/qoi.zig");
+
 const FileTypes = enum(u8) {
     unsupported = 0,
     qoi,
@@ -70,6 +73,10 @@ pub fn main() !void {
         // .heic => try readHeic(&reader.interface),
         // .paint => try readPaint(&reader.interface),
     }
+}
+
+test {
+    _ = ai_qoi;
 }
 
 test "Extract Extension" {

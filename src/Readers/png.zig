@@ -15,7 +15,7 @@ const ChunkHeader = struct {
         };
     }
 
-    pub fn format(self: @This(), w: *std.Io.Writer) !void {
+    pub fn format(_: @This(), w: *std.Io.Writer) !void {
         w.writeAll();
     }
 };
