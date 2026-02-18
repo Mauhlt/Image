@@ -26,18 +26,6 @@ const ChunkTypes = union(enum) {
     IEND,
     unknown: [4]u8, // if you don't know, you can look at chunk name
 };
-
-const Compression = enum(u8) {
-    base = 0, // deflate datastreams stored in zlib format
-    unsupported,
-};
-
-const Filter = enum(u8) {
-    scanline = 0,
-};
-
-const Interlace = enum(u8) {};
-
 const ChunkHdr = struct {
     len: u32 = 0,
     type: ChunkTypes,
@@ -69,6 +57,25 @@ const ChunkHdr = struct {
         };
     }
 };
+
+const ColorType = enum(u8){
+    grayscale = 0, // allows 1, 2, 4, 8, 16 bit depths
+    rgb = 2, // allows 8, 16 bit depths
+    palette_index = 3, // must be preceded by palette chunk, allows 1, 2, 4, 8 bit depths
+    grayscale_alpha = 4, // allows 8, 16 bit depths
+    rgba = 6, // allows 8, 16 bit depths
+};
+
+const Compression = enum(u8) {
+    base = 0, // deflate datastreams stored in zlib format
+    unsupported,
+};
+
+const Filter = enum(u8) {
+    scanline = 0,
+};
+
+const Interlace = enum(u8) {};
 
 const PngHdr = struct {
     width: u32,
@@ -141,7 +148,9 @@ pub fn readPng(r: *std.Io.Reader) !void {
                 var limited_r = std.Io.Reader.Limited.init(r, chunk.len, &.{});
 
                 var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
-                std.compress.flate.Decompress.init(&limited_r, .zlib, &decompress_buf);
+                var decompressor = std.compress.flate.Decompress.init(&limited_r, .zlib, &decompress_buf);
+                decompressor.reader.
+                
             },
             else => try r.discardAll(chunk.len),
         }
