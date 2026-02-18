@@ -10,6 +10,11 @@ const DecodeError = error{
     StreamTooLong,
 };
 
+const PngHdrError = error{
+    InvalidHdrType,
+    InvalidHdrLen,
+};
+
 const ChunkTypes = union(enum) {
     IHDR,
     // sRGB,
@@ -25,7 +30,7 @@ const Compression = enum(u8) {};
 const Filter = enum(u8) {};
 const Interlace = enum(u8) {};
 
-const ChunkHeader = struct {
+const ChunkHdr = struct {
     len: u32 = 0,
     type: ChunkTypes,
 
@@ -51,20 +56,48 @@ const ChunkHeader = struct {
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         return switch (self.type) {
-            .unknown => |u| w.print("Unknown: {s}: {d}\n", .{ u, self.len }),
+            .unknown => |u| w.print("{s}?: {d}\n", .{ u, self.len }),
             inline else => w.print("{t}: {d}\n", .{ self.type, self.len }),
         };
     }
 };
 
-const IHDR = struct {
+const PngHdr = struct {
     width: u32,
     height: u32,
     bit_depth: u8,
     color_type: u8,
-    compression_method: Compression,
+    compression_method: u8,
     filter_method: u8,
     interlace_method: u8,
+
+    pub fn read(r: *std.Io.Reader) !@This() {
+        // chunk
+        const chunk = try ChunkHdr.read(r);
+        // error checks
+        switch (chunk.type) {
+            .IHDR => {},
+            else => return PngHdrError.InvalidHdrType,
+        }
+        const exp_hdr_len = 13;
+        if (chunk.len != exp_hdr_len) return PngHdrError.InvalidHdrLen;
+        // get data
+        const data = try r.take(exp_hdr_len);
+        // construct hdr
+        const hdr: @This() = .{
+            .width = @as(u32, @bitCast(data[0..4].*)),
+            .height = @as(u32, @bitCast(data[4..8].*)),
+            .bit_depth = data[8],
+            .color_type = data[9],
+            .compression_method = data[10], // @enumFromInt(data[10]),
+            .filter_method = data[11], // @enumFromInt(data[11]),
+            .interlace_method = data[12], // @enumFromInt(data[12]),
+        };
+        // discard crc
+        try discardCrc(r);
+
+        return hdr;
+    }
 };
 
 fn discardCrc(r: *std.Io.Reader) !void {
@@ -76,15 +109,11 @@ pub fn readPng(r: *std.Io.Reader) !void {
     if (!std.mem.eql(u8, sig, &.{ 137, 80, 78, 71, 13, 10, 26, 10 }))
         return DecodeError.InvalidSignature;
 
-    var iter: usize = 0;
-    while (true) : (iter += 1) {
-        const chunk = try ChunkHeader.read(r);
-        if (iter == 0) {
-            try switch (chunk.type) {
-                .IHDR => {},
-                else => DecodeError.InvalidChunk,
-            };
-        }
+    const hdr = try PngHdr.read(r);
+    std.debug.print("PNG Hdr: {any}\n", .{hdr});
+
+    while (true) {
+        const chunk = try ChunkHdr.read(r);
         std.debug.print("{f}\n", .{chunk});
         try r.discardAll(chunk.len);
         // TODO: Perform CRC
