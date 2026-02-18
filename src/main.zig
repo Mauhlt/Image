@@ -14,6 +14,9 @@ const readPng = @import("Readers/png.zig").readPng;
 
 /// AI-based decoders
 const ai_qoi = @import("ai/qoi.zig");
+const ai_png = @import("ai/png.zig");
+const ai_bmp = @import("ai/bmp.zig");
+// const ai_jpg = @import("ai/jpg.zig");
 
 const FileTypes = enum(u8) {
     unsupported = 0,
@@ -77,6 +80,9 @@ pub fn main() !void {
 
 test {
     _ = ai_qoi;
+    _ = ai_png;
+    _ = ai_bmp;
+    // _ = ai_jpg;
 }
 
 test "Extract Extension" {
