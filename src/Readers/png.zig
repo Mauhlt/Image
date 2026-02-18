@@ -81,7 +81,7 @@ const PngHdr = struct {
     width: u32,
     height: u32,
     bit_depth: u8,
-    color_type: u8,
+    color_type: ColorType,
     compression_method: u8,
     filter_method: u8,
     interlace_method: u8,
@@ -103,7 +103,7 @@ const PngHdr = struct {
             .width = @as(u32, @bitCast(data[0..4].*)),
             .height = @as(u32, @bitCast(data[4..8].*)),
             .bit_depth = data[8],
-            .color_type = data[9],
+            .color_type = @enumFromInt(data[9]),
             .compression_method = data[10], // @enumFromInt(data[10]),
             .filter_method = data[11], // @enumFromInt(data[11]),
             .interlace_method = data[12], // @enumFromInt(data[12]),
@@ -115,10 +115,43 @@ const PngHdr = struct {
     }
 
     pub fn validateHdr(self: *const @This()) !void {
-        return switch (self.compression_method) {
+        switch (self.compression_method) {
             0 => {},
-            else => PngHdrError.UnsupportedCompression,
-        };
+            else => return PngHdrError.UnsupportedCompression,
+        }
+
+        switch (self.color_type) {
+            .grayscale => {
+                switch (self.bit_depth) {
+                    1, 2, 4, 8, 16 => {},
+                    else => return error.InvalidBitDepth,
+                }
+            },
+            .rgb => {
+                switch (self.bit_depth) {
+                    8, 16 => {},
+                    else => return error.InvalidBitDepth,
+                }
+            },
+            .palette_index => {
+                switch (self.bit_depth) {
+                    1, 2, 4, 8 =>  {},
+                    else => return error.InvalidBitDepth,
+                }
+            },
+            .grayscale_alpha => {
+                switch (self.bit_depth) {
+                    8, 16 => {},
+                    else => return error.InvalidBitDepth,
+                }
+            },
+            .rgba => {
+                switch (self.bit_depth) {
+                    8, 16 => {},
+                    else => return error.InvalidBitDepth,
+                }
+            },
+        }
     }
 };
 
