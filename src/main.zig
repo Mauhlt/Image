@@ -50,15 +50,16 @@ const map: std.StaticStringMap(FileTypes) = .initComptime(.{
 });
 
 pub fn main() !void {
-    const filepath: []const u8 = "Images/BasicArt.png";
+    const filepath: []const u8 = "src/Images/BasicArt.png";
     if (filepath.len == 0) return error.InvalidFilepath;
 
-    const last_period = std.mem.lastIndexOfScalar(u8, filepath, ".") orelse return error.InvalidFilePath;
+    const last_period = std.mem.lastIndexOfScalar(u8, filepath, '.') orelse
+        return error.InvalidFilePath;
     const ext_str = filepath[last_period + 1 .. filepath.len];
-    std.debug.print("Ext: {s}\n", .{ext_str});
-    const ext = map.get(ext_str) orelse return error.InvalidFileExtension;
+    const ext = map.get(ext_str) orelse
+        return error.InvalidFileExtension;
+    // std.debug.print("Ext: {t}\n", .{ext});
 
-    // check that file exists
     const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
     defer file.close();
 
@@ -68,13 +69,14 @@ pub fn main() !void {
 
     // read file based on ext
     switch (ext) {
-        // .qoi => try readQoi(&reader.interface),
+        //     // .qoi => try readQoi(&reader.interface),
         .png => try readPng(&reader.interface),
-        // .jpg, .jpeg => try readJpg(&reader.interface),
-        // .gif, .jif => try readGif(&reader.interface),
-        // .bmp, .dib => try readBmp(&reader.interface),
-        // .heic => try readHeic(&reader.interface),
-        // .paint => try readPaint(&reader.interface),
+        //     // .jpg, .jpeg => try readJpg(&reader.interface),
+        //     // .gif, .jif => try readGif(&reader.interface),
+        //     // .bmp, .dib => try readBmp(&reader.interface),
+        //     // .heic => try readHeic(&reader.interface),
+        //     // .paint => try readPaint(&reader.interface),
+        else => unreachable,
     }
 }
 
