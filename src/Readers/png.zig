@@ -13,6 +13,7 @@ const DecodeError = error{
 const PngHdrError = error{
     InvalidHdrType,
     InvalidHdrLen,
+    UnsupportedCompression,
 };
 
 const ChunkTypes = union(enum) {
@@ -21,13 +22,20 @@ const ChunkTypes = union(enum) {
     // gAMA,
     // pHYs,
     // ITxt,
-    // IDAT,
+    IDAT,
     IEND,
     unknown: [4]u8, // if you don't know, you can look at chunk name
 };
 
-const Compression = enum(u8) {};
-const Filter = enum(u8) {};
+const Compression = enum(u8) {
+    base = 0, // deflate datastreams stored in zlib format
+    unsupported,
+};
+
+const Filter = enum(u8) {
+    scanline = 0,
+};
+
 const Interlace = enum(u8) {};
 
 const ChunkHdr = struct {
@@ -98,6 +106,13 @@ const PngHdr = struct {
 
         return hdr;
     }
+
+    pub fn validateHdr(self: *const @This()) !void {
+        return switch (self.compression_method) {
+            0 => {},
+            else => PngHdrError.UnsupportedCompression,
+        };
+    }
 };
 
 fn discardCrc(r: *std.Io.Reader) !void {
@@ -112,10 +127,24 @@ pub fn readPng(r: *std.Io.Reader) !void {
     const hdr = try PngHdr.read(r);
     std.debug.print("PNG Hdr: {any}\n", .{hdr});
 
+    var seen_idat: bool = false;
+
     while (true) {
         const chunk = try ChunkHdr.read(r);
         std.debug.print("{f}\n", .{chunk});
-        try r.discardAll(chunk.len);
+
+        switch (chunk.type) {
+            .IDAT => {
+                if (seen_idat) return error.UnhandledMultiIdat;
+                seen_idat = true;
+
+                var limited_r = std.Io.Reader.Limited.init(r, chunk.len, &.{});
+
+                var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
+                std.compress.flate.Decompress.init(&limited_r, .zlib, &decompress_buf);
+            },
+            else => try r.discardAll(chunk.len),
+        }
         // TODO: Perform CRC
         try discardCrc(r);
 
