@@ -53,10 +53,10 @@ const map: std.StaticStringMap(FileTypes) = .initComptime(.{
 });
 
 pub fn main() !void {
-    var alloc_buffer: [1 * 1024 * 1024]u8 = undefined;
-    var fba: std.heap.FixedBufferAllocator = .init(&alloc_buffer);
+    // var alloc_buffer: [1 * 1024 * 1024]u8 = undefined;
+    // var fba: std.heap.FixedBufferAllocator = .init(&alloc_buffer);
 
-    const filepath: []const u8 = "src/Images/BasicArt.png";
+    const filepath: []const u8 = "src/Data/BasicArt.png";
     if (filepath.len == 0) return error.InvalidFilepath;
 
     const last_period = std.mem.lastIndexOfScalar(u8, filepath, '.') orelse
@@ -71,45 +71,47 @@ pub fn main() !void {
     var read_buffer: [4096]u8 = undefined;
     var reader = file.reader(&read_buffer);
 
-    const image: Image = switch (ext) {
+    // const image: Image = switch (ext) {
+    switch (ext) {
         // .qoi => try readQoi(&reader.interface),
-        .png => try readPng(fba.allocator(), &reader.interface),
+        .png => try readPng(&reader.interface),
+        // .png => try readPng(fba.allocator(), &reader.interface),
         // .jpg, .jpeg => try readJpg(&reader.interface),
         // .gif, .jif => try readGif(&reader.interface),
         // .bmp, .dib => try readBmp(&reader.interface),
         // .heic => try readHeic(&reader.interface),
         // .paint => try readPaint(&reader.interface),
         else => unreachable,
-    };
-
-    const ppm_f = try std.fs.cwd().createFile("parsed_png.ppm", .{});
-    defer ppm_f.close();
-
-    var writer_buf: [4096]u8 = undefined;
-    var writer = ppm_f.writer(&writer_buf);
-    const w = &writer.interface;
-
-    const image_height = image.calcHeight();
-    try w.print(
-        \\P6 
-        \\{d} {d}
-        \\255 
-        \\
-    , .{ image.width, image_height });
-
-    const image_width_bytes = image.widthBytes();
-    std.debug.assert(image.bit_depth == 8);
-    for (0..image_height) |y| {
-        for (0..image.width) |x| {
-            // TODO: fix api
-            const px = image.data[y * image_width_bytes + x * 4 ..][0..4];
-            try w.writeByte(px[0]);
-            try w.writeByte(px[1]);
-            try w.writeByte(px[2]);
-        }
     }
 
-    try w.flush();
+    // const ppm_f = try std.fs.cwd().createFile("parsed_png.ppm", .{});
+    // defer ppm_f.close();
+    //
+    // var writer_buf: [4096]u8 = undefined;
+    // var writer = ppm_f.writer(&writer_buf);
+    // const w = &writer.interface;
+    //
+    // const image_height = image.calcHeight();
+    // try w.print(
+    //     \\P6
+    //     \\{d} {d}
+    //     \\255
+    //     \\
+    // , .{ image.width, image_height });
+    //
+    // const image_width_bytes = image.widthBytes();
+    // std.debug.assert(image.bit_depth == 8);
+    // for (0..image_height) |y| {
+    //     for (0..image.width) |x| {
+    //         // TODO: fix api
+    //         const px = image.data[y * image_width_bytes + x * 4 ..][0..4];
+    //         try w.writeByte(px[0]);
+    //         try w.writeByte(px[1]);
+    //         try w.writeByte(px[2]);
+    //     }
+    // }
+    //
+    // try w.flush();
 }
 
 test {

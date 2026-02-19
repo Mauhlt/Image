@@ -1,8 +1,9 @@
 const std = @import("std");
+const Image = @import("Image.zig");
 
+/// Assume packed RGBA
 width: u32,
 bit_depth: u8,
-// assume packed rgba
 data: []const u8,
 
 fn widthBytes(self: *const @This()) usize {

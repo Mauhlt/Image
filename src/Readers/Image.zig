@@ -1,15 +1,22 @@
 const std = @import("std");
+const ConstImage = @import("ConstImage.zig");
 
+/// assume packed RGBA
 width: u32,
+height: u32,
 bit_depth: u8,
-// assume packed rgba
 data: []u8,
 
 fn widthBytes(self: *const @This()) usize {
-    return self.width * 4 * self.bit_depth;
+    // 4 = rgba
+    return self.width * 4 * self.bit_depth / 8;
 }
 
-fn calcHeight(self: *const @This()) u32 {
-    std.debug.assert(self.data.len > 0 and self.width > 0 and self.bit_depth > 0);
-    return self.data.len / self.width / (self.bit_depth / 8);
+fn toConstImage(self: *const @This()) ConstImage {
+    return .{
+        .width = self.width,
+        .height = self.height,
+        .bit_depth = self.bit_depth,
+        .data = self.data,
+    };
 }

@@ -22,5 +22,15 @@
     - time to load 
     - quality
 
+## Parsing PNG: 
+1. Intro 
+2. Parse PNG structure
+3. Parse PNG header
+4. Find data 
+5. Visualize data 
+6. Apply Filters 
+7. Extract Color Palette 
+8. Construct API
+
 ## How to use with another program:
 
