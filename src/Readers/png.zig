@@ -14,6 +14,8 @@ const PngHdrError = error{
     InvalidHdrType,
     InvalidHdrLen,
     UnsupportedCompression,
+    UnsupportedColorType,
+    InvalidBitDepth,
 };
 
 const ChunkTypes = union(enum) {
@@ -58,7 +60,7 @@ const ChunkHdr = struct {
     }
 };
 
-const ColorType = enum(u8){
+const ColorType = enum(u8) {
     grayscale = 0, // allows 1, 2, 4, 8, 16 bit depths
     rgb = 2, // allows 8, 16 bit depths
     palette_index = 3, // must be preceded by palette chunk, allows 1, 2, 4, 8 bit depths
@@ -114,44 +116,54 @@ const PngHdr = struct {
         return hdr;
     }
 
-    pub fn validateHdr(self: *const @This()) !void {
+    pub fn validate(self: *const @This()) !void {
         switch (self.compression_method) {
-            0 => {},
-            else => return PngHdrError.UnsupportedCompression,
+            .base => {},
+            else => return PngHdrError.UnsupportedCompressionMethod,
+        }
+        switch (self.color_type) {
+            .rgba => {},
+            else => return PngHdrError.UnsupportedColorType,
+        }
+        switch (self.bit_depth) {
+            8, 16 => {},
+            else => return PngHdrError.InvalidBitDepth,
         }
 
-        switch (self.color_type) {
-            .grayscale => {
-                switch (self.bit_depth) {
-                    1, 2, 4, 8, 16 => {},
-                    else => return error.InvalidBitDepth,
-                }
-            },
-            .rgb => {
-                switch (self.bit_depth) {
-                    8, 16 => {},
-                    else => return error.InvalidBitDepth,
-                }
-            },
-            .palette_index => {
-                switch (self.bit_depth) {
-                    1, 2, 4, 8 =>  {},
-                    else => return error.InvalidBitDepth,
-                }
-            },
-            .grayscale_alpha => {
-                switch (self.bit_depth) {
-                    8, 16 => {},
-                    else => return error.InvalidBitDepth,
-                }
-            },
-            .rgba => {
-                switch (self.bit_depth) {
-                    8, 16 => {},
-                    else => return error.InvalidBitDepth,
-                }
-            },
-        }
+        // // sample depth = bit depth except for rgb, then its always 8
+        // switch (self.color_type) {
+        //     .grayscale => {
+        //         switch (self.bit_depth) {
+        //             1, 2, 4, 8, 16 => {},
+        //             else => return PngHdrError.InvalidBitDepth,
+        //         }
+        //     },
+        //     .rgb => {
+        //         switch (self.bit_depth) {
+        //             8, 16 => {},
+        //             else => return PngHdrError.InvalidBitDepth,
+        //         }
+        //         // sample depth is always 8
+        //     },
+        //     .palette_index => {
+        //         switch (self.bit_depth) {
+        //             1, 2, 4, 8 => {},
+        //             else => return PngHdrError.InvalidBitDepth,
+        //         }
+        //     },
+        //     .grayscale_alpha => {
+        //         switch (self.bit_depth) {
+        //             8, 16 => {},
+        //             else => return PngHdrError.InvalidBitDepth,
+        //         }
+        //     },
+        //     .rgba => {
+        //         switch (self.bit_depth) {
+        //             8, 16 => {},
+        //             else => return PngHdrError.InvalidBitDepth,
+        //         }
+        //     },
+        // }
     }
 };
 
@@ -159,18 +171,38 @@ fn discardCrc(r: *std.Io.Reader) !void {
     try r.discardAll(4);
 }
 
-pub fn readPng(r: *std.Io.Reader) !void {
-    const sig = try r.take(8);
+const Image = struct {
+    width: u32,
+    bit_depth: u8,
+    data: []const u8,
+
+    fn calcHeight(self: *const @This()) u32 {
+        return self.data.len / self.width / (self.bit_depth / 8);
+    }
+};
+
+const ConstImage = struct {};
+
+pub fn readPng(allo: std.mem.Allocator, reader: *std.Io.Reader) !Image {
+    const sig = try reader.take(8);
     if (!std.mem.eql(u8, sig, &.{ 137, 80, 78, 71, 13, 10, 26, 10 }))
         return DecodeError.InvalidSignature;
 
-    const hdr = try PngHdr.read(r);
+    const hdr = try PngHdr.read(reader);
     std.debug.print("PNG Hdr: {any}\n", .{hdr});
+    try hdr.validate();
+
+    std.debug.assert(hdr.color_type == .rgba);
+    std.debug.assert(@mod(hdr.bit_depth, 8) == 0);
+    const pixel_size = 4 * hdr.bit_depth / 8;
+
+    const data = try allo.alloc(u8, hdr.width * hdr.height * pixel_size);
+    var data_builder: std.ArrayList(u8) = .initBuffer(&data);
 
     var seen_idat: bool = false;
 
     while (true) {
-        const chunk = try ChunkHdr.read(r);
+        const chunk = try ChunkHdr.read(reader);
         std.debug.print("{f}\n", .{chunk});
 
         switch (chunk.type) {
@@ -178,18 +210,32 @@ pub fn readPng(r: *std.Io.Reader) !void {
                 if (seen_idat) return error.UnhandledMultiIdat;
                 seen_idat = true;
 
-                var limited_r = std.Io.Reader.Limited.init(r, chunk.len, &.{});
-
                 var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
-                var decompressor = std.compress.flate.Decompress.init(&limited_r, .zlib, &decompress_buf);
-                decompressor.reader.
-                
+                var decompressor: std.compress.flate.Decompress =
+                    .init(reader, .zlib, &decompress_buf);
+
+                const width_size = hdr.width * pixel_size;
+                const scanline_size = width_size + 1;
+
+                // TODO: Decompressed data len == chunk header len
+                // Limited reader requires an extra buffer.
+                for (0..hdr.height) |i| {
+                    const scanline_filter = try decompressor.reader.takeByte();
+                    _ = scanline_filter;
+                    try decompressor.reader.readSliceAll(data[i * width_size ..][0..width_size]);
+                    _ = try decompressor.reader.take(scanline_size);
+                }
             },
-            else => try r.discardAll(chunk.len),
+            else => try reader.discardAll(chunk.len),
         }
         // TODO: Perform CRC
-        try discardCrc(r);
-
+        try discardCrc(reader);
         if (chunk.type == .IEND) break;
     }
+
+    return .{
+        .width = hdr.width,
+        .bit_depth = hdr.bit_depth,
+        .data = data,
+    };
 }
