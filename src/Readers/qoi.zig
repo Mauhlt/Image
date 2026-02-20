@@ -1,7 +1,7 @@
 const std = @import("std");
 const Image = @import("Image.zig").Image2D;
+const Color = @typeInfo(Image).@"struct".fields[3];
 const DecodeError = @import("Error.zig").DecodeError;
-const Color = @import("Image.zig").ColorStruct(u8);
 
 // Neil Postman - Amusing Ourselves To Death
 // Upton Sinclair - Jungle (meat-packing gross), brass tacks (newspaper expose)

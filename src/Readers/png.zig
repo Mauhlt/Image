@@ -8,13 +8,11 @@ pub fn readPng(r: *std.Io.Reader) !void {
     const exp_sig: []const u8 = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
     try isSigSame(sig, exp_sig);
 
-    const hdr = try Chunk.read(r);
+    const hdr = PngHeader.read(r);
     std.debug.print("{f}\n", .{hdr});
-    try r.discardAll(hdr.len);
-    try discardCrc(r);
 
     while (true) {
-        const chunk = try Chunk.read(r);
+        const chunk = try ChunkHeader.read(r);
         std.debug.print("{f}\n", .{chunk});
         try r.discardAll(chunk.len);
         try discardCrc(r);
@@ -23,7 +21,7 @@ pub fn readPng(r: *std.Io.Reader) !void {
     }
 }
 
-const Chunk = struct {
+const ChunkHeader = struct {
     len: u32,
     type: ChunkTypes,
 
@@ -89,7 +87,7 @@ test "Parse Chunks" {
     };
 
     for (0..expected_chunk_types.len - 1) |i| {
-        const chunk = try Chunk.read(reader);
+        const chunk = try ChunkHeader.read(reader);
         try reader.discardAll(chunk.len);
         try discardCrc(reader);
         try testing.expect(expected_chunk_types[i] == chunk.type);
@@ -98,6 +96,35 @@ test "Parse Chunks" {
             else => {},
         }
     }
-    const chunk = try Chunk.read(reader);
+    const chunk = try ChunkHeader.read(reader);
     try testing.expect(expected_chunk_types[expected_chunk_types.len - 1] == chunk.type);
 }
+
+const PngHeader = struct {
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    color_type: u8,
+    compression_method: u8,
+    filter_method: u8,
+    interlace_method: u8,
+
+    pub fn read(r: *std.Io.Reader) !@This() {
+        const chunk = try ChunkHeader.read(r);
+        if (chunk.type != .IHDR) return DecodeError.ChunkIsNotHeader;
+        if (chunk.len != 13) return DecodeError.InvalidHeaderLength;
+
+        const result: @This() = .{
+            .width = try r.takeInt(u32, .big),
+            .height = try r.takeInt(u32, .big),
+            .bit_depth = try r.takeByte(),
+            .color_type = try r.takeByte(),
+            .compression_method = try r.takeByte(),
+            .filter_method = try r.takeByte(),
+            .interlace_method = try r.takeByte(),
+        };
+
+        try discardCrc();
+        return result;
+    }
+};
