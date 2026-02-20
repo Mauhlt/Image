@@ -1,5 +1,7 @@
 const std = @import("std");
 const Image = @import("Image.zig").Image2D;
+const DecodeError = @import("Error.zig").DecodeError;
+const Color = @import("Image.zig").ColorStruct(u8);
 
 // Neil Postman - Amusing Ourselves To Death
 // Upton Sinclair - Jungle (meat-packing gross), brass tacks (newspaper expose)
@@ -14,10 +16,6 @@ pub fn readQoi(r: *std.Io.Reader) !void { // !Image
     const hdr = try Header.read(r);
     std.debug.print("Hdr: {any}\n", .{hdr});
 }
-
-const DecodeError = error{
-    InavlidSignature,
-};
 
 const Channels = enum(u8) {
     rgb = 3,
@@ -53,5 +51,5 @@ const Header = struct {
 };
 
 pub fn hash(c: Color) u6 {
-    return @truncate(r *% 3 +% g *% 5 +% b *% 7 +% a *% 11);
+    return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
 }

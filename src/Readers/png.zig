@@ -17,6 +17,7 @@ const Chunk = struct {
         const chunk_type_str = try r.takeArray(4);
         const chunk_type = std.meta.stringToEnum(PngType, try r.takeArray(4)) orelse
             return DecodeError.InvalidChunkType;
+
         return .{
             .len = chunk_len,
             .type = switch (chunk_type) {
