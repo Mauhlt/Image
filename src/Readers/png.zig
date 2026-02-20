@@ -6,6 +6,9 @@ pub fn readPng(r: *std.Io.Reader) !void {
     const expected_sig = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
     if (std.mem.eql(u8, sig, expected_sig))
         return DecodeError.UnexpectedSignature;
+
+    const chunk = try Chunk.read(r);
+    std.debug.print("{f}\n", .{chunk});
 }
 
 const Chunk = struct {
@@ -26,6 +29,10 @@ const Chunk = struct {
             },
         };
     }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+        return w.print("({t}: {d})\n", .{ self.type, self.len });
+    }
 };
 
 const PngType = union(enum) {
@@ -34,3 +41,7 @@ const PngType = union(enum) {
     // IDAT,
     IEND,
 };
+
+fn discardCrc(r: *std.Io.Reader) !void {
+    return r.discardAll(4);
+}
