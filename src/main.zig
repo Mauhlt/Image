@@ -5,9 +5,6 @@
 /// 4. Write
 const std = @import("std");
 const testing = std.testing;
-// Data Structure
-const Image = @import("Readers/Image.zig");
-const ConstImage = @import("Readers/ConstImage.zig");
 // Readers
 const readPng = @import("Readers/png.zig").readPng;
 // const readJpg = @import("Readers/jpg.zig").readJpg;
