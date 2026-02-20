@@ -1,7 +1,22 @@
 const std = @import("std");
+const Image = @import("Image.zig").Image2D;
+
+// Neil Postman - Amusing Ourselves To Death
+// Upton Sinclair - Jungle (meat-packing gross), brass tacks (newspaper expose)
+
+pub fn readQoi(r: *std.Io.Reader) !void { // !Image
+    // get signature
+    const sig = r.take(4);
+    const exp_sig = "qoif";
+    if (!std.mem.eql(u8, sig, exp_sig))
+        return DecodeError.InvalidSignature;
+
+    const hdr = try Header.read(r);
+    std.debug.print("Hdr: {any}\n", .{hdr});
+}
 
 const DecodeError = error{
-    InvalidSignature,
+    InavlidSignature,
 };
 
 const Channels = enum(u8) {
@@ -14,44 +29,29 @@ const Colorspace = enum(u8) {
     linear = 1,
 };
 
-const Color = struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
-    a: u8 = 0xFF,
-};
+const Header = struct {
+    width: u32,
+    height: u32,
+    channels: Channels,
+    colorspace: Colorspace,
 
-const Decoder = struct {
-    previous_pixel: Color,
-    previously_seen_pixels: [64]Color = [_]Color{.{}} ** 64,
-    diff_pixel: Color,
-    full_pixel: Color,
-};
+    pub fn read(r: *std.Io.Reader) @This() {
+        const hdr = r.take(10);
 
-fn hash(c: Color) u8 {
-    return (c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11) & 0b111111;
-}
+        const width: u32 = @bitCast(hdr[0..4].*);
+        const height: u32 = @bitCast(hdr[4..8].*);
+        const channels: Channels = @enumFromInt(hdr[8]);
+        const colorspace: Colorspace = @enumFromInt(hdr[9]);
 
-fn readQoi(r: *std.Io.Reader) !void {
-    const sig = try r.take(4);
-    if (!std.mem.eql(u8, sig, "qoif"))
-        return DecodeError.InvalidSignature;
-
-    const hdr = try r.take(10);
-    const width = @as(u32, hdr[0..4]);
-    const height = @as(u32, hdr[4..8]);
-    const channels = std.enums.fromInt(Channels, hdr[8]);
-    const colorspace = std.enums.fromInt(Colorspace, hdr[9]);
-
-    std.debug.print("{}x{}\n{t}\n{t}\n", .{ width, height, channels, colorspace });
-
-    while (true) {
-        const data = r.take(64) catch |err| switch (err) {
-            error.EndOfStream => {
-                break;
-            },
-            else => return err,
+        return @This(){
+            .width = width,
+            .height = height,
+            .channels = channels,
+            .colorspace = colorspace,
         };
-        _ = data;
     }
+};
+
+pub fn hash(c: Color) u6 {
+    return @truncate(r *% 3 +% g *% 5 +% b *% 7 +% a *% 11);
 }
