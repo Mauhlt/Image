@@ -4,21 +4,30 @@ const DecodeError = @import("Error.zig").DecodeError;
 const isSigSame = @import("Misc.zig").isSigSame;
 const Image = @import("Image.zig").Image2D;
 
-const PngError = error{
+const PNG = @This();
+
+const Error = error{
     UnsupportedCompressionMethod,
     UnsupportedColorType,
     UnsupportedBitDepth,
     UnhandledMultiIdat,
 };
 
-pub fn readPng(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
+pub fn read(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
     const sig: []const u8 = try r.take(8);
     const exp_sig: []const u8 = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
     try isSigSame(sig, exp_sig);
 
-    const hdr = PngHeader.read(r);
+    const hdr = Header.read(r);
     try hdr.validate();
     std.debug.print("Hdr: {any}\n", .{hdr});
+
+    std.debug.assert(hdr.color_type == .rgb);
+    const pixel_size = 4 * hdr.bit_depth / 8;
+    const scanline_size = (hdr.width * pixel_size) + 1; // 1 = filter type
+    const width_size = hdr.width * hdr.height * pixel_size;
+    const data = try allo.alloc(u8, width_size);
+    var data_builder: std.ArrayList(u8) = .initBuffer(&data);
 
     while (true) {
         const chunk = try ChunkHeader.read(r);
@@ -27,21 +36,18 @@ pub fn readPng(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
         var seen_idat: bool = false;
         switch (chunk.type) {
             .IDAT => {
-                if (seen_idat) return PngError.UnhandledMultiIdat;
+                if (seen_idat) return Error.UnhandledMultiIdat;
                 seen_idat = true;
 
                 var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
                 var decompressor = std.compress.flate.Decompress.init(r, .zlib, &decompress_buffer);
 
-                std.debug.assert(hdr.color_type == .rgb);
-                const pixel_size = 4 * hdr.bit_depth / 8;
-                const scanline_size = (hdr.width * pixel_size) + 1; // 1 = filter type
-                // const byte_size = scanline_size * hdr.height;
-
                 // TODO: ensure decompressed data len == chunk header len
                 // limited reader requires an extra buffer = unnecessary mem copies
-                for (0..hdr.height) |_| {
-                    _ = try decompressor.reader.take(scanline_size);
+                for (0..hdr.height) |i| {
+                    const scanline_filter = try decompressor.reader.takeByte();
+                    _ = scanline_filter;
+                    try decompressor.reader.readSliceAll(data[i * width_size][0..width_size]);
                 }
             },
             else => try r.discardAll(chunk.len),
@@ -51,6 +57,13 @@ pub fn readPng(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
 
         if (chunk.type == .IEND) break;
     }
+
+    return .{
+        .width = hdr.width,
+        .height = hdr.height,
+        .bit_depth = hdr.bit_depth,
+        .data = data,
+    };
 }
 
 const ChunkHeader = struct {
@@ -132,7 +145,7 @@ test "Parse Chunks" {
     try testing.expect(expected_chunk_types[expected_chunk_types.len - 1] == chunk.type);
 }
 
-const PngHeader = struct {
+const Header = struct {
     width: u32,
     height: u32,
     bit_depth: u8,
@@ -162,11 +175,11 @@ const PngHeader = struct {
 
     pub fn validate(self: *const @This()) !void {
         if (self.compression_method != 0)
-            return PngError.UnsupportedCompressionMethod;
+            return Error.UnsupportedCompressionMethod;
         if (self.color_type != 6)
-            return PngError.UnsupportedColorType;
+            return Error.UnsupportedColorType;
         if (self.bit_depth != 8 and self.bit_depth != 16)
-            return PngError.UnsupportedBitDepth;
+            return Error.UnsupportedBitDepth;
     }
 };
 

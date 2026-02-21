@@ -7,17 +7,25 @@ const std = @import("std");
 const testing = std.testing;
 // Readers
 const readPng = @import("Readers/png.zig").readPng;
+const readPPM = @import("Readers/ppm.zig").readPPM;
 // const readJpg = @import("Readers/jpg.zig").readJpg;
 // const readGif = @import("Readers/gif.zig").readGif;
 // const readBmp = @import("Readers/bmp.zig").readBmp;
 // const readQoi = @import("Readers/qoi.zig").readQoi;
 
-/// AI-based decoders
-const ai_qoi = @import("ai/qoi.zig");
-const ai_png = @import("ai/png.zig");
-const ai_bmp = @import("ai/bmp.zig");
-// const ai_jpg = @import("ai/jpg.zig");
-
+/// Types of Projections:
+/// 1. perspective projection
+/// 2. orthographic/rectilinear projection
+/// 3. fisheye projection
+/// - equisolid projection
+/// - stereo projection
+/// 4. cylindrical projection
+/// 5. spherical projection
+/// 6. equirectangular projection
+/// 7. omnimax projection
+/// 8. pinhole camera projection
+/// 9. panini projection
+/// https://www.youtube.com/watch?v=LE9kxUQ-l14
 const FileTypes = enum(u8) {
     unsupported = 0,
     qoi,
@@ -50,8 +58,8 @@ const map: std.StaticStringMap(FileTypes) = .initComptime(.{
 });
 
 pub fn main() !void {
-    // var alloc_buffer: [1 * 1024 * 1024]u8 = undefined;
-    // var fba: std.heap.FixedBufferAllocator = .init(&alloc_buffer);
+    var alloc_buffer: [1 * 1024 * 1024]u8 = undefined;
+    var fba: std.heap.FixedBufferAllocator = .init(&alloc_buffer);
 
     const filepath: []const u8 = "src/Data/BasicArt.png";
     if (filepath.len == 0) return error.InvalidFilepath;
@@ -69,9 +77,9 @@ pub fn main() !void {
     var reader = file.reader(&read_buffer);
 
     // const image: Image = switch (ext) {
-    switch (ext) {
+    const img = switch (ext) {
         // .qoi => try readQoi(&reader.interface),
-        .png => try readPng(&reader.interface),
+        .png => try readPng(fba.allocator(), &reader.interface),
         // .png => try readPng(fba.allocator(), &reader.interface),
         // .jpg, .jpeg => try readJpg(&reader.interface),
         // .gif, .jif => try readGif(&reader.interface),
@@ -79,36 +87,27 @@ pub fn main() !void {
         // .heic => try readHeic(&reader.interface),
         // .paint => try readPaint(&reader.interface),
         else => unreachable,
-    }
+    };
 
-    // const ppm_f = try std.fs.cwd().createFile("parsed_png.ppm", .{});
-    // defer ppm_f.close();
-    //
-    // var writer_buf: [4096]u8 = undefined;
-    // var writer = ppm_f.writer(&writer_buf);
-    // const w = &writer.interface;
-    //
-    // const image_height = image.calcHeight();
-    // try w.print(
-    //     \\P6
-    //     \\{d} {d}
-    //     \\255
-    //     \\
-    // , .{ image.width, image_height });
-    //
-    // const image_width_bytes = image.widthBytes();
-    // std.debug.assert(image.bit_depth == 8);
-    // for (0..image_height) |y| {
-    //     for (0..image.width) |x| {
-    //         // TODO: fix api
-    //         const px = image.data[y * image_width_bytes + x * 4 ..][0..4];
-    //         try w.writeByte(px[0]);
-    //         try w.writeByte(px[1]);
-    //         try w.writeByte(px[2]);
-    //     }
-    // }
-    //
-    // try w.flush();
+    const ppm_f = try std.fs.cwd().openFile("parsed_png.ppm", .{});
+    defer ppm_f.close();
+
+    var writer_buf: [4096]u8 = undefined;
+    var writer = ppm_f.writer(&writer_buf);
+    const w = &writer.interface;
+
+    // ppm = P6, width height, max value, newline
+    try w.print(
+        \\P6 
+        \\{d} {d}
+        \\255
+        \\
+    , .{ img.width, img.height });
+
+    std.debug.assert(img.bit_depth == 8);
+    for (0..img.height) |h| {
+        for (0..img.width) |w| {}
+    }
 }
 
 test {
