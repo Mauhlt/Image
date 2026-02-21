@@ -6,6 +6,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 const PngError = error{
     UnsupportedCompressionMethod,
     UnsupportedColorType,
+    UnsupportedBitDepth,
     UnhandledMultiIdat,
 };
 
@@ -30,7 +31,12 @@ pub fn readPng(r: *std.Io.Reader) !void {
 
                 var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
                 var decompressor = std.compress.flate.Decompress.init(r, .zlib, &decompress_buffer);
-                decompressor.reader.take();
+
+                std.debug.assert(hdr.compression_method == .rgb);
+                const pixel_size = 4;
+                const scanline_size = (hdr.width * pixel_size) + 1; // 1 = filter type
+                // const byte_size = scanline_size * hdr.height;
+                decompressor.reader.take(scanline_size);
             },
             else => try r.discardAll(chunk.len),
         }
@@ -124,10 +130,10 @@ const PngHeader = struct {
     width: u32,
     height: u32,
     bit_depth: u8,
-    color_type: u8,
-    compression_method: u8,
-    filter_method: u8,
-    interlace_method: u8,
+    color_type: ColorType,
+    compression_method: CompressionMethod,
+    filter_method: FilterMethod,
+    interlace_method: InterlaceMethod,
 
     pub fn read(r: *std.Io.Reader) !@This() {
         const chunk = try ChunkHeader.read(r);
@@ -138,10 +144,10 @@ const PngHeader = struct {
             .width = try r.takeInt(u32, .big),
             .height = try r.takeInt(u32, .big),
             .bit_depth = try r.takeByte(),
-            .color_type = try r.takeByte(),
-            .compression_method = try r.takeByte(),
-            .filter_method = try r.takeByte(),
-            .interlace_method = try r.takeByte(),
+            .color_type = @enumFromInt(try r.takeByte()),
+            .compression_method = @enumFromInt(try r.takeByte()),
+            .filter_method = @enumFromInt(try r.takeByte()),
+            .interlace_method = @enumFromInt(try r.takeByte()),
         };
 
         try discardCrc(r);
@@ -153,6 +159,8 @@ const PngHeader = struct {
             return PngError.UnsupportedCompressionMethod;
         if (self.color_type != 6)
             return PngError.UnsupportedColorType;
+        if (self.bit_depth != 8 and self.bit_depth != 16)
+            return PngError.UnsupportedBitDepth;
     }
 };
 
@@ -162,4 +170,16 @@ const ColorType = enum(u8) {
     palette = 3, // 1, 2, 4, 8
     grayscale_alpha = 4, // 8, 16
     rgba = 6, // 8, 16
+};
+
+const CompressionMethod = enum(u8) {
+    none = 0,
+};
+
+const FilterMethod = enum(u8) {
+    none = 0,
+};
+
+const InterlaceMethod = enum(u8) {
+    none = 0,
 };
