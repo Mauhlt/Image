@@ -3,18 +3,38 @@ const testing = std.testing;
 const DecodeError = @import("Error.zig").DecodeError;
 const isSigSame = @import("Misc.zig").isSigSame;
 
+const PngError = error{
+    UnsupportedCompressionMethod,
+    UnsupportedColorType,
+    UnhandledMultiIdat,
+};
+
 pub fn readPng(r: *std.Io.Reader) !void {
     const sig: []const u8 = try r.take(8);
     const exp_sig: []const u8 = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
     try isSigSame(sig, exp_sig);
 
     const hdr = PngHeader.read(r);
-    std.debug.print("{f}\n", .{hdr});
+    try hdr.validate();
+    std.debug.print("Hdr: {any}\n", .{hdr});
 
     while (true) {
         const chunk = try ChunkHeader.read(r);
         std.debug.print("{f}\n", .{chunk});
-        try r.discardAll(chunk.len);
+
+        var seen_idat: bool = false;
+        switch (chunk.type) {
+            .IDAT => {
+                if (seen_idat) return PngError.UnhandledMultiIdat;
+                seen_idat = true;
+
+                var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+                var decompressor = std.compress.flate.Decompress.init(r, .zlib, &decompress_buffer);
+                decompressor.reader.take();
+            },
+            else => try r.discardAll(chunk.len),
+        }
+
         try discardCrc(r);
 
         if (chunk.type == .IEND) break;
@@ -56,9 +76,9 @@ const ChunkTypes = union(enum) {
     IHDR,
     // sRGB
     // gAMA
-    // pHYS,
+    // pHYS, // intended pixel size/aspect ratio, x: 4 bytes, y: 4 bytes, specifier: 1 byte
     // iTXt
-    // IDAT,
+    IDAT,
     IEND,
 };
 
@@ -124,7 +144,22 @@ const PngHeader = struct {
             .interlace_method = try r.takeByte(),
         };
 
-        try discardCrc();
+        try discardCrc(r);
         return result;
     }
+
+    pub fn validate(self: *const @This()) !void {
+        if (self.compression_method != 0)
+            return PngError.UnsupportedCompressionMethod;
+        if (self.color_type != 6)
+            return PngError.UnsupportedColorType;
+    }
+};
+
+const ColorType = enum(u8) {
+    grayscale = 0, // 1, 2, 4, 8, 16
+    rgb = 2, // 8, 16
+    palette = 3, // 1, 2, 4, 8
+    grayscale_alpha = 4, // 8, 16
+    rgba = 6, // 8, 16
 };
