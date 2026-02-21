@@ -31,8 +31,9 @@ pub fn ImageStruct(
 
     // default = 2, may have depth 3,
     const len = 2 + @intFromBool(has_depth);
-    var struct_fields: [len + 1]std.builtin.Type.StructField = undefined;
+    var struct_fields: [len + 2]std.builtin.Type.StructField = undefined;
 
+    // dimensions
     const field_names = [_][]const u8{ "width", "height", "depth" };
     for (0..len) |i| {
         struct_fields[i] = .{
@@ -44,9 +45,18 @@ pub fn ImageStruct(
         };
     }
 
-    const Color = ColorStruct(T);
-
+    // bit depth
     struct_fields[len] = .{
+        .alignment = null,
+        .default_value_ptr = null,
+        .is_comptime = false,
+        .name = "bit_depth",
+        .type = u8,
+    };
+
+    // Data
+    const Color = ColorStruct(T);
+    struct_fields[len + 1] = .{
         .alignment = null,
         .default_value_ptr = null,
         .is_comptime = false,

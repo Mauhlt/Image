@@ -2,6 +2,7 @@ const std = @import("std");
 const testing = std.testing;
 const DecodeError = @import("Error.zig").DecodeError;
 const isSigSame = @import("Misc.zig").isSigSame;
+const Image = @import("Image.zig").Image2D;
 
 const PngError = error{
     UnsupportedCompressionMethod,
@@ -10,7 +11,7 @@ const PngError = error{
     UnhandledMultiIdat,
 };
 
-pub fn readPng(r: *std.Io.Reader) !void {
+pub fn readPng(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
     const sig: []const u8 = try r.take(8);
     const exp_sig: []const u8 = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
     try isSigSame(sig, exp_sig);
@@ -32,11 +33,16 @@ pub fn readPng(r: *std.Io.Reader) !void {
                 var decompress_buffer: [std.compress.flate.max_window_len]u8 = undefined;
                 var decompressor = std.compress.flate.Decompress.init(r, .zlib, &decompress_buffer);
 
-                std.debug.assert(hdr.compression_method == .rgb);
-                const pixel_size = 4;
+                std.debug.assert(hdr.color_type == .rgb);
+                const pixel_size = 4 * hdr.bit_depth / 8;
                 const scanline_size = (hdr.width * pixel_size) + 1; // 1 = filter type
                 // const byte_size = scanline_size * hdr.height;
-                decompressor.reader.take(scanline_size);
+
+                // TODO: ensure decompressed data len == chunk header len
+                // limited reader requires an extra buffer = unnecessary mem copies
+                for (0..hdr.height) |_| {
+                    _ = try decompressor.reader.take(scanline_size);
+                }
             },
             else => try r.discardAll(chunk.len),
         }
