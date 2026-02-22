@@ -34,3 +34,10 @@ const Header = struct {
         };
     }
 };
+
+pub fn write(w: *std.Io.Writer, img: Image) !void {
+    try w.write("P6");
+    try w.write(img.width);
+    try w.write(img.height);
+    try w.writeAll(img.data);
+}
