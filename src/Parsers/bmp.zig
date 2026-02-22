@@ -1,9 +1,10 @@
 const std = @import("std");
+const BMP = @This();
 
 /// Must load both bmp and dib
 /// BMP = bitmap
 /// DIB = device independent bitmap
-pub fn readBMP(r: *std.Io.Reader) !void {
+pub fn read(r: *std.Io.Reader) !void {
     const exp_sig = [_][]const u8{ 0x42, 0x4D };
     if (!std.mem.eql(u8, sig, exp_sig))
         return DecodeError.InvalidSignature;
@@ -115,4 +116,9 @@ fn getRowSize(bits_per_pixel: u32, width: u32) u32 {
 
 fn getPixelArraySize(row_size: u32, height: i32) u32 {
     return row_size * @as(u32, @abs(height));
+}
+
+pub fn write(w: *std.Io.Writer, img: Image) !void {
+    _ = w;
+    _ = img;
 }
