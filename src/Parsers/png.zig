@@ -214,4 +214,34 @@ pub fn write(w: *std.Io.Writer, hdr: Header, img: Image) !void {
     try w.write("IEND");
 }
 
-test "PNG Writer" {}
+test "PNG Writer" {
+    // base file
+    var f1 = try std.fs.cwd().openFile("Data/BasicArt.png", .{});
+    defer f1.close();
+
+    // custom written file
+    var f2 = try std.fs.cwd().openFile("Data/NewArt.png", .{});
+    defer f2.close();
+
+    const stat1 = try f1.stat();
+    const stat2 = try f2.stat();
+    if (stat1.size != stat2.size) return error.DifferentFileSizes;
+
+    var buf1: [1 * 1024 * 1024]u8 = undefined;
+    var buf2: [1 * 1024 * 1024]u8 = undefined;
+
+    const reader1 = f1.reader(&buf1);
+    const reader2 = f2.reader(&buf2);
+
+    var read_buf1: [1024]u8 = undefined;
+    var read_buf2: [1024]u8 = undefined;
+
+    var i: usize = 0;
+    while (i < stat1.size) {
+        const len1 = try reader1.interface.readSliceShort(&read_buf1);
+        const len2 = try reader2.interface.readSliceShort(&read_buf2);
+        testing.expect(len1 == len2);
+        testing.expectEqualStrings(read_buf1[0..len1], read_buf2[0..len2]);
+        i += len1;
+    }
+}
