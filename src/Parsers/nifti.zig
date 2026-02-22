@@ -146,3 +146,5 @@ const Orientation = struct {
         }
     }
 };
+
+pub fn write(w: *std.Io.Writer) !void {}

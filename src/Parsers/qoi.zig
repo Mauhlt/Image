@@ -3,10 +3,12 @@ const Image = @import("Image.zig").Image2D;
 const Color = @typeInfo(Image).@"struct".fields[3];
 const DecodeError = @import("Error.zig").DecodeError;
 
+const QOI = @This();
+
 // Neil Postman - Amusing Ourselves To Death
 // Upton Sinclair - Jungle (meat-packing gross), brass tacks (newspaper expose)
 
-pub fn readQoi(r: *std.Io.Reader) !void { // !Image
+pub fn read(r: *std.Io.Reader) !void { // !Image
     // get signature
     const sig = r.take(4);
     const exp_sig = "qoif";
@@ -53,3 +55,5 @@ const Header = struct {
 pub fn hash(c: Color) u6 {
     return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
 }
+
+pub fn write(w: *std.Io.Writer) !void {}
