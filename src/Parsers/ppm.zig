@@ -5,13 +5,18 @@ const testing = std.testing;
 
 const PPM = @This();
 
-/// Reads a PPM File
+/// PPM:
+/// signature: P6
+/// Header:
+///     width: u32,
+///     height: u32,
+/// Data: [width * height * 4]u8
 pub fn read(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
     const sig = r.take(2);
     try isSigSame(sig, "P6");
 
     const hdr = Header.read(r);
-    const size = hdr.width * hdr.height;
+    const size = hdr.width * hdr.height * 4; // rgba
 
     var data = try allo.alloc(size, u8);
     try r.readSliceAll(&data);
@@ -24,6 +29,9 @@ pub fn read(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
     };
 }
 
+/// Header
+/// width: u32
+/// height: u32
 const Header = struct {
     width: u32,
     height: u32,
@@ -36,6 +44,12 @@ const Header = struct {
     }
 };
 
+/// PPM:
+/// signature: P6
+/// Header:
+///     width: u32,
+///     height: u32,
+/// Data: [width * height * 4]u8
 pub fn write(w: *std.Io.Writer, img: Image) !void {
     try w.write("P6");
     try w.write(img.width);
