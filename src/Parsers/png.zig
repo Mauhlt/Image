@@ -4,6 +4,8 @@ const DecodeError = @import("Error.zig").DecodeError;
 const isSigSame = @import("Misc.zig").isSigSame;
 const Image = @import("Image.zig").Image2D;
 
+const SIGNATURE: []const u8 = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
+
 const PNG = @This();
 
 const Error = error{
@@ -15,8 +17,7 @@ const Error = error{
 
 pub fn read(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
     const sig: []const u8 = try r.take(8);
-    const exp_sig: []const u8 = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
-    try isSigSame(sig, exp_sig);
+    try isSigSame(sig, SIGNATURE);
 
     const hdr = Header.read(r);
     try hdr.validate();
@@ -202,3 +203,15 @@ const FilterMethod = enum(u8) {
 const InterlaceMethod = enum(u8) {
     none = 0,
 };
+
+pub fn write(w: *std.Io.Writer, hdr: Header, img: Image) !void {
+    _ = hdr;
+    _ = img;
+
+    try w.write(SIGNATURE);
+    try w.write("IHDR");
+    try w.write("IDAT");
+    try w.write("IEND");
+}
+
+test "PNG Writer" {}
