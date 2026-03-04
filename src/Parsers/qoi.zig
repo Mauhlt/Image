@@ -1,6 +1,7 @@
 const std = @import("std");
 const Image = @import("Image.zig").Image2D;
 const Color = @typeInfo(Image).@"struct".fields[3];
+const isSigSame = @import("");
 const DecodeError = @import("Error.zig").DecodeError;
 
 const QOI = @This();
@@ -57,3 +58,12 @@ pub fn hash(c: Color) u6 {
 }
 
 pub fn write(w: *std.Io.Writer) !void {}
+
+// roman social hierarchy:
+// slaves = manual labor = work to death
+// lupinar slaves = adult industry = achieve title scortum (leather = used like leather)
+// high end slaves = gladiators, charioteers
+// liberti = used to be slaves but freed = min wage for former master
+// plebian class = free citizens of rome but not rich, artisans, tradesman, look at next step up with rheumy eyes
+// equites = equestrian class = wealthy, businessman, financiers, knights = can afford a horse = may consider yourself upper  class
+// patrician = senators, politicians, aristocrats, nobles, land owners - run out of money = marry into more = claudii, cornelii, julii

@@ -49,11 +49,20 @@ const Header = struct {
 /// Header:
 ///     width: u32,
 ///     height: u32,
-/// Data: [width * height * 4]u8
+/// Body:
+///     [width * height * 4]u8
 pub fn write(w: *std.Io.Writer, img: Image) !void {
+    try w.writeHeader(img);
+    try w.writeBody(img);
+}
+
+fn writeHeader(w: *std.Io.Writer, img: Image) !void {
     try w.write("P6");
     try w.write(img.width);
     try w.write(img.height);
+}
+
+fn writeBody(w: *std.Io.Writer, img: Image) !void {
     try w.writeAll(img.data);
 }
 
