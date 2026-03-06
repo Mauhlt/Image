@@ -3,7 +3,10 @@ const Image = @import("Image.zig").Image2D;
 const isSigSame = @import("Misc.zig").isSigSame;
 const BMP = @This();
 
-pub fn read(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
+pub fn read(
+    r: *std.Io.Reader,
+    allo: std.mem.Allocator,
+) !Image {
     const hdr: Header = try .read(r);
     const body: Body = try .read(r, allo, &hdr);
     return Image{
