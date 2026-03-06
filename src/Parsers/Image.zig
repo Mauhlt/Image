@@ -18,66 +18,33 @@ pub fn ColorStruct(comptime T: type) type {
     };
 }
 
-/// fn will create custom images
+const BitTypes = enum {
+    rgb,
+    rgba,
+};
+
+/// Image Struct:
+/// T: must be an integer or float
+/// is_const: defines whether data can be modified,
 pub fn ImageStruct(
-    comptime T: type,
+    // comptime T: type,
     comptime is_const: bool,
-    comptime has_depth: bool,
 ) type {
-    switch (@typeInfo(T)) {
-        .int, .float => {},
-        else => @compileError("Fn only accepts integers or floats."),
-    }
-
-    // default = 2, may have depth 3,
-    const len = 2 + @intFromBool(has_depth);
-    var struct_fields: [len + 2]std.builtin.Type.StructField = undefined;
-
-    // dimensions
-    const field_names = [_][]const u8{ "width", "height", "depth" };
-    for (0..len) |i| {
-        struct_fields[i] = .{
-            .alignment = 4,
-            .default_value_ptr = 0,
-            .is_comptime = false,
-            .name = field_names[i],
-            .type = u32,
-        };
-    }
-
-    // bit depth
-    struct_fields[len] = .{
-        .alignment = null,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .name = "bit_depth",
-        .type = u8,
-    };
-
-    // Data
-    const Color = ColorStruct(T);
-    struct_fields[len + 1] = .{
-        .alignment = null,
-        .default_value_ptr = null,
-        .is_comptime = false,
-        .name = "data",
-        .type = switch (is_const) {
-            true => []const Color,
-            false => []Color,
+    // switch (@typeInfo(T)) {
+    //     .int, .float => {},
+    //     else => @compileError("Fn only accepts integers or floats."),
+    // }
+    return struct {
+        width: u32,
+        height: u32,
+        data: switch (is_const) {
+            true => []const RGBA,
+            false => []RGBA,
         },
     };
-
-    return @Type(std.builtin.Type.Struct{
-        .backing_integer = null,
-        .decls = &.{},
-        .fields = &struct_fields,
-        .is_tuple = false,
-        .layout = .auto,
-    });
 }
 
 /// Common Structs
-pub const Image2D = ImageStruct(u8, false, false);
-pub const ConstImage2D = ImageStruct(u8, true, false);
-// pub const Image3D = ImageStruct(u8, false, true);
-// pub const ConstImage3D = ImageStruct(u8, true, false);
+const RGBA = ColorStruct(u8);
+pub const Image2D = ImageStruct(false);
+pub const ConstImage2D = ImageStruct(true);

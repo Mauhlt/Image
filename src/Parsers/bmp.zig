@@ -1,124 +1,135 @@
 const std = @import("std");
+const Image = @import("Image.zig").Image2D;
+const isSigSame = @import("Misc.zig").isSigSame;
 const BMP = @This();
 
-/// Must load both bmp and dib
-/// BMP = bitmap
-/// DIB = device independent bitmap
-pub fn read(r: *std.Io.Reader) !void {
-    const exp_sig = [_][]const u8{ 0x42, 0x4D };
-    if (!std.mem.eql(u8, sig, exp_sig))
-        return DecodeError.InvalidSignature;
-
-    // header
-    const hdr = try Header.read(r);
+pub fn read(allo: std.mem.Allocator, r: *std.Io.Reader) !Image {
+    const hdr: Header = try .read(r);
+    const body: Body = try .read(r, allo, &hdr);
+    return Image{
+        .width = hdr.width,
+        .height = hdr.height,
+        .data = body.data,
+    };
 }
 
-const BMPHeader = struct {
+pub fn write(w: *std.Io.Writer, img: *const Image) !void {
+    try Header.write(w, img);
+    try Body.write(w, img);
+}
+
+const Header = struct {
+    const exp_sig: []const u8 = "BM";
+    // hdr - 14 bytes
+    file_size: u32,
+    reserved: u32,
+    offset: u32,
+    // infohdr - 40 bytes
+    ih_size = u32,
     width: u32,
     height: u32,
+    planes: u32,
+    bits_per_pixel: u16,
+    compression: u32,
+    image_size: u32,
+    x_pixels_per_mm: u32,
+    y_pixels_per_mm: u32,
+    colors_used: u32,
+    important_colors: u32,
+    // color table
+    color_table: [4]u8,
 
-    pub fn read(r: *std.Io.Reader) !@This() {
-        // bmp header
-        const bmp_hdr_str = try r.take(14);
+    pub fn read(r: *std.Io.Reader) !Header {
+        // 14 bytes
+        const sig = try r.take(2);
+        try isSigSame(sig, exp_sig);
+        const size = try r.takeInt(u32, .little);
+        const reserved = try r.takeInt(u32, .little);
+        const offset = try r.takeInt(u32, .little);
 
-        const sig = std.meta.stringToEnum(Signatures, bmp_hdr_str[0..2]) orelse
-            return DecodeError.InvalidSignature;
-        if (sig != .BM) return DecodeError.UnsupportedSignature;
+        // 40 bytes
+        const ih_size = try r.taketInt(u32, .little);
+        const width = try r.takeInt(u32, .little);
+        const height = try r.takeInt(u32, .little);
+        const planes = try r.takeInt(u16, .little);
+        const bits_per_pixel = try r.takeInt(u16, .little);
+        const compression = try r.takeInt(u32, .little);
+        const image_size = try r.takeInt(u32, .little);
+        const x_pixels_per_mm = try r.takeInt(u32, .little);
+        const y_pixels_per_mm = try r.takeInt(u32, .little);
+        const colors_used = try r.takeInt(u32, .little);
+        const important_colors = try r.takeInt(u32, .little);
 
-        const size: u32 = @bitCast(bmp_hdr_str[2..][0..4].*);
-        const reserved: u16 = @bitCast(bmp_hdr_str[6..][0..2].*); // if manual = 0, otherwise depends on app that creates image
-        const reserved2: u16 = @bitCast(bmp_hdr_str[8..][0..2].*); // if manual = 0, otherwise depends on app that creates image
-        const start: u32 = @bitCast(bmp_hdr_str[10..][0..4].*); // starting address of bitmap image data - using this you can skip the rest
-        _ = reserved;
-        _ = reserved2;
-        _ = start;
+        // color table
+        const color_table = try r.takeArray(4);
 
-        // unsupported: os22qbitmapheader, os22qbitmapheader, bitmapv2infoheader, bitmapv3infoheader, bitmapv4header, bitmapv5header
-
-        // bitmap core header:
-        // const dib_hdr_str = try r.take(12);
-        // const dib_size: u32 = @bitCast(dib_hdr_str[0..4]);
-        // const width: u16 = @bitCast(dib_hdr_str[4..][0..2]); // signed ints for windows 2.x bitmapcoreheader
-        // const height: u16 = @bitCast(dib_hdr_str[6..][0..2]);
-        // const num_color_panes: u16 = @bitCast(dib_hdr_str[8..][0..2]);
-        // const num_bits_per_pixel: u16 = @bitCast(dib_hdr_str[10..][0..2]);
-
-        // bitmapinfoheader:
-        // const dib_hdr_str = try r.take(40);
-        // const size_1: u32 = @bitCast(dib_hdr_str[14..][0..4].*); // of header
-        // const width: u32 = @bitCast(dib_hdr_str[18..][0..4].*);
-        // const height: u32 = @bitCast(dib_hdr_str[22][0..4].*);
-        // const num_color_panes: u16 = @bitCast(dib_hdr_str[26..][0..2].*);
-        // const num_bits_per_pixel: u16 = @bitCast(dib_hdr_str[28..][0..2].*); // must be 1, 4, 8, 16, 24, 32
-        // const compression_method: CompressionMethod = @enumFromInt(@as(u32, @bitCast(dib_hdr_str[30..][0..4].*)));
-        // const image_size: u32 = @bitCast(dib_hdr_str[34..][0..4].*);
-        // const horizontal_resolution: u32 = @bitCast(dib_hdr_str[38..][0..4].*);
-        // const vertical_resolution: u32 = @bitCast(dib_hdr_str[42..][0..4].*);
-        // const num_colors_per_palette: u32 = @bitCast(dib_hdr_str[46..][0..4].*); // 0 or 2^n
-        // const important_colors: u32 = @bitCast(dib_hdr_str[50..][0..4].*);
-
-        // os22xbitmapheader = bitmapinfoheader2
-        const dib_hdr_str = try r.take()
-
-        return @This(){
+        return Header{
+            // hdr
+            .size = size,
+            .reserved = reserved,
+            .offset = offset,
+            // ih
             .width = width,
             .height = height,
+            .planes = planes,
+            .bits_per_pixel = bits_per_pixel,
+            .compression = compression,
+            .image_size = image_size,
+            .x_pixels_per_mm = x_pixels_per_mm,
+            .y_pixels_per_mm = y_pixels_per_mm,
+            .colors_used = colors_used,
+            .important_colors = important_colors,
+            // color table
+            .color_table = color_table,
         };
+    }
+
+    pub fn write(w: *std.Io.Writer, img: *const Image) !void {
+        // hdr
+        const reserved: u32 = 0;
+        const offset: u32 = 0;
+        try w.writeInt(u32, size, .little);
+        try w.writeInt(u32, reserved, .little);
+        try w.writeInt(u32, offset, .little);
+        // ih
+        const planes: u16 = 0;
+        const bits_per_pixel: u16 = 8;
+        const compression: u16 = 0;
+        const x_pixels_per_mm = 0;
+        const y_pixels_per_mm = 0;
+        const colors_used = 0;
+        const important_colors = 0;
+        try w.writeInt(u32, img.width, .little);
+        try w.writeInt(u32, img.height, .little);
+        try w.writeInt(u16, planes, .little);
+        try w.writeInt(u16, bits_per_pixel, .little);
+        try w.writeInt(u32, compression, .little);
+        try w.writeInt(u32, img.width * img.height, .little);
+        try w.writeInt(u32, x_pixels_per_mm, .little);
+        try w.writeInt(u32, y_pixels_per_mm, .little);
+        try w.writeInt(u32, colors_used, .little);
+        try w.writeInt(u32, important_colors, .little);
+        // color table
+        try w.write(u32, @bitCast(colors_table), .little);
     }
 };
 
-const DecodeError = error{
-    InvalidSignature,
-    UnsupportedSignature,
+const Body = struct {
+    data: []const @TypeOf(Image.data),
+
+    pub fn read(
+        r: *std.Io.Reader,
+        allo: std.mem.Allocator,
+        hdr: *const Header,
+    ) ![]const @TypeOf(Image.data) {
+        const len = hdr.image_size;
+        const data = try r.readAlloc(allo, len);
+        return .{
+            .data = data,
+        };
+    }
+
+    pub fn write(w: *std.Io.Writer, img: *const Image) void {
+        try w.writeAll(img.data);
+    }
 };
-
-const Signatures = enum(u8) {
-    BM, // Windows BMP, same for DIB
-    BA, // OS/2 struct bitmap array
-    CI, // OS/2 struct color icon
-    CP, // OS/2 const color ptr
-    IC, // OS/2 struct icon
-    PT, // OS/2 ptr
-};
-
-const CompressionMethod = enum(u32) {
-    rgb = 0, // most common, none
-    rle8 = 1, // 8 bit/pixel bitmaps
-    rle4 = 2, // 4 bit/pixel bitmaps
-    bitfields = 3, // v2: rgb bit field masks, v3+: rgba
-    jpeg = 4, // v4+: jpeg
-    png = 5, // v4+: png
-    alphabitfields = 6, // windows ce 5.0 + Net 4.0
-    cmyk = 11, // windows metafile cmyk
-    cmyk_rle8 = 12, // windows metafile cmyk
-    cmyk_rle4 = 13, // windows metafile cmyk
-};
-
-const HalftoningAlgorithmEnum = enum(u8) {
-    none = 0, // most common
-    error_diffusion = 1, // param 1, % of error damping, 100% = none, 0% = errors are not diffuse
-    panda = 2, // Processing Algorithm For Noncoded Document  Acquisition, params 1 + 2, represents x + y dims in pixels
-    super_circle = 3, // params 1 + 2, represents x + y dims
-};
-
-/// Color Table:
-/// In BMP image file after BMP hdr + DIB hdr + 3/4 bitmasks if bitinfoheadr w/ bitfields (12 bytes) or alphabitfields (16 bytes)
-/// number of entries = 2^n or header in bitmapcoreheader
-/// 4 bytes per entry: blue, greend, red, 0x00
-/// each pixel described by number of bits: 1, 4, 8
-const ColorTable = struct {
-
-};
-
-fn getRowSize(bits_per_pixel: u32, width: u32) u32 {
-    return (bits_per_pixel * width + 31) / 32 * 4;
-}
-
-fn getPixelArraySize(row_size: u32, height: i32) u32 {
-    return row_size * @as(u32, @abs(height));
-}
-
-pub fn write(w: *std.Io.Writer, img: Image) !void {
-    _ = w;
-    _ = img;
-}

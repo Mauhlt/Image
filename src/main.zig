@@ -1,28 +1,46 @@
 /// Goals:
-/// Create interface - pass it to each fn and use that to standardize images
-/// 1. Take file path - identify if file exists, if yes open file
-/// 2. Identify if it is readable: (jpg, png, bmp, qoi, gif)
-/// 3. Use appropriate reader to read data
-/// 4. Write
+/// 1. Create a reader to read any img file type
+/// 2. Create an image interface:
+///     - contains width, height, image data, and bit size
+/// 3. Create a writer that can write any
+/// Reader:
+///     - parse input arguments
+///     - validate filepath
+///     - read data
+///     - convert data to image structure
+/// Writer:
+///     - parse input arguments
+///     - validate filepath
+///     - convert image structure to data
+///     - write data
+/// Interface:
+///     - abstract fn calls to standard fns
+///     - use intrusive interface
+///     - Image
+/// Command Line Arguments:
+///   executable:
+///     - image -r "filepath" - reads file at filepath
+///     - image -w "filepath" - writes file at filepath
+///     - image -c "filepath" "new filepath" - converts file from one image to another
+///     - image -c "filepath" "ext" - converts image at filepath to new format and saves it in same directory
+///   module:
+///     - const Image = import("Image");
+///     - Image.read("");
+///     - Image.write("");
+///     - Image.convert("filepath", "new_filepath");
 const std = @import("std");
 const testing = std.testing;
 // Readers
+// const BMP = @import("Parsers/BMP.zig");
+// const JPG = @import("Parsers/JPG.zig");
+// const QOI = @import("Parsers/QOI.zig");
+// const TGA = @import("Parsers/TGA.zig");
+// const DDS = @import("Parsers/DDS.zig");
+// const SVG = @import("Parsers/SVG.zig");
+// const WEBP = @import("Parsers/WEBP.zig");
 const PNG = @import("Parsers/png.zig");
 const PPM = @import("Parsers/ppm.zig");
 
-/// Types of Projections:
-/// 1. perspective projection
-/// 2. orthographic/rectilinear projection
-/// 3. fisheye projection
-/// - equisolid projection
-/// - stereo projection
-/// 4. cylindrical projection
-/// 5. spherical projection
-/// 6. equirectangular projection
-/// 7. omnimax projection
-/// 8. pinhole camera projection
-/// 9. panini projection
-/// https://www.youtube.com/watch?v=LE9kxUQ-l14
 const FileTypes = enum(u8) {
     unsupported = 0,
     qoi,
@@ -47,58 +65,60 @@ const map: std.StaticStringMap(FileTypes) = .initComptime(.{
     .{ "dib", .bmp },
 });
 
-pub fn main() !void {
+pub fn main(init: std.process.Init) !void {
+    // allocate buffer
     var alloc_buffer: [1 * 1024 * 1024]u8 = undefined;
     var fba: std.heap.FixedBufferAllocator = .init(&alloc_buffer);
-
+    // choose file
     const filepath: []const u8 = "src/Data/BasicArt.png";
     if (filepath.len == 0) return error.InvalidFilepath;
-
+    // identify file type
     const last_period = std.mem.lastIndexOfScalar(u8, filepath, '.') orelse
         return error.InvalidFilePath;
     const ext_str = filepath[last_period + 1 .. filepath.len];
     const ext = std.meta.stringToEnum(FileTypes, ext_str) orelse
         map.get(ext_str) orelse
         return error.UnsupportedFileExt;
-
-    const file = try std.fs.cwd().openFile(filepath, .{ .mode = .read_only });
+    // open file
+    const io = init.io;
+    var file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close();
-
+    // generate reader
     var read_buffer: [4096]u8 = undefined;
-    var reader = file.reader(&read_buffer);
-
-    // const image: Image = switch (ext) {
+    var reader = file.reader(io, &read_buffer);
+    // read correct image
     const img = switch (ext) {
         // .qoi => try readQoi(&reader.interface),
         .png => try PNG.read(fba.allocator(), &reader.interface),
         .ppm => try PPM.read(fba.allocator(), &reader.interface),
-        // .jpg, .jpeg => try readJpg(&reader.interface),
-        // .gif, .jif => try readGif(&reader.interface),
-        // .bmp, .dib => try readBmp(&reader.interface),
+        // .jpg => try readJpg(&reader.interface),
+        // .gif => try readGif(&reader.interface),
+        // .bmp => try readBmp(&reader.interface),
         // .heic => try readHeic(&reader.interface),
         // .paint => try readPaint(&reader.interface),
         else => unreachable,
     };
+    std.debug.print("{any}", .{img});
 
-    const ppm_f = try std.fs.cwd().openFile("parsed_png.ppm", .{});
-    defer ppm_f.close();
-
-    var writer_buf: [4096]u8 = undefined;
-    var writer = ppm_f.writer(&writer_buf);
-    const w = &writer.interface;
-
-    // ppm = P6, width height, max value, newline
-    try w.print(
-        \\P6 
-        \\{d} {d}
-        \\255
-        \\
-    , .{ img.width, img.height });
-
-    std.debug.assert(img.bit_depth == 8);
-    for (0..img.height) |h| {
-        for (0..img.width) |w| {}
-    }
+    // const ppm_f = try std.fs.cwd().openFile("parsed_png.ppm", .{});
+    // defer ppm_f.close();
+    //
+    // var writer_buf: [4096]u8 = undefined;
+    // var writer = ppm_f.writer(&writer_buf);
+    // const w = &writer.interface;
+    //
+    // // ppm = P6, width height, max value, newline
+    // try w.print(
+    //     \\P6
+    //     \\{d} {d}
+    //     \\255
+    //     \\
+    // , .{ img.width, img.height });
+    //
+    // std.debug.assert(img.bit_depth == 8);
+    // for (0..img.height) |h| {
+    //     for (0..img.width) |w| {}
+    // }
 }
 
 test "Extract Extension" {
