@@ -1,5 +1,6 @@
 const std = @import("std");
 const Image = @import("./Image.zig").Image2D;
+// I want to move this logic out of here to root.zig
 // Read file -> load img -> close file
 
 const ImageFileType = enum {

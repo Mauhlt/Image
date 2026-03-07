@@ -2,7 +2,7 @@ const std = @import("std");
 const RGBA = @import("Image.zig").RGBA;
 const Image = @import("Image.zig").Image2D;
 const isSigSame = @import("Misc.zig").isSigSame;
-pub const BMP = @This();
+// https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 
 /// To fulfull interface: needs read, write, toImage, copyToImage
 hdr: Header,
@@ -12,10 +12,9 @@ pub fn read(
     self: *@This(),
     r: *std.Io.Reader,
     allo: *const std.mem.Allocator,
-) !@This() {
-    self.hdr = try Header.read(r, allo);
-    self.body = try Body.read(r, &self.hdr, allo);
-    return self.*;
+) !void {
+    self.hdr = try .read(r, allo);
+    self.body = try .read(r, allo, &self.hdr);
 }
 
 const BitsPerPixel = enum(u16) {
@@ -102,6 +101,7 @@ const Header = struct {
         curr_info_hdr_size = try checkSize(curr_info_hdr_size, compress_num);
         const compression = std.enums.fromInt(Compression, compress_num) orelse
             return error.InvalidEnumValue;
+        if (compress_num != .rgb) return error.UnsupportedCompressionNumber;
 
         const compressed_image_size = try r.takeInt(u32, .little);
         curr_info_hdr_size = try checkSize(curr_info_hdr_size, compressed_image_size);
@@ -182,6 +182,11 @@ const Header = struct {
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         return w.print("Header:\n{any}\n", .{self.*});
     }
+
+    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+        _ = self;
+        _ = w;
+    }
 };
 
 const Body = struct {
@@ -189,8 +194,8 @@ const Body = struct {
 
     pub fn read(
         r: *std.Io.Reader,
-        hdr: *const Header,
         allo: *const std.mem.Allocator,
+        hdr: *const Header,
     ) !@This() {
         const len = hdr.width * hdr.height / 4; // (4 bytes per color)
         return .{
@@ -208,41 +213,18 @@ const Body = struct {
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         return w.print("Body:\n{any}\n", .{self.data[0]});
     }
+
+    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+        _ = self;
+        _ = w;
+    }
 };
 
 /// Converts data written from this file type as this file type
-pub fn write(self: *const @This(), w: *std.Io.Writer) void {
-    _ = self;
-    _ = w;
+pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+    try self.hdr.write(w);
+    try self.body.write(w);
 }
-
-/// Takes ownership of body.data
-pub fn toImage(self: *const @This(), allo: *const std.mem.Allocator) !Image {
-    const img: Image = .{
-        .width = self.hdr.width,
-        .height = self.hdr.height,
-        .data = self.body.data,
-    };
-    self.hdr.free(allo);
-    self.* = undefined;
-    return img;
-}
-
-/// Copies over body.data
-pub fn copyToImage(self: *const @This(), allo: *const std.mem.Allocator) !Image {
-    return Image{
-        .width = self.hdr.width,
-        .height = self.hdr.height,
-        .data = try allo.dupe(u8, self.body.data),
-    };
-}
-
-// pub fn fromImage(allo: *const std.mem.Allocator, img: *const Image) !@This() {
-//     return .{
-//         .hdr = hdr,
-//         .body = body,
-//     };
-// }
 
 /// Used for file size + info hdr size
 fn checkSize(size: u32, field: anytype) !u32 {
