@@ -1,6 +1,7 @@
 const std = @import("std");
+const RGBA = @import("Image.zig").RGBA;
 const Image = @import("Image.zig").Image2D;
-const IntrusiveInterface = @import("IntrusiveInterface.zig");
+const isSigSame = @import("Misc.zig").isSigSame;
 const PNG = @This();
 
 interface: IntrusiveInterface,

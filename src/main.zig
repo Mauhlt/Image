@@ -39,42 +39,15 @@
 ///     - Image.convert("filepath", "new_filepath");
 const std = @import("std");
 const testing = std.testing;
-const extractImageFileType = @import("Io/Interface.zig").extractImageFileType;
-const ImageFile = @import("Io/Interface.zig").ImageFile;
-const BMP = @import("Io/bmp.zig");
+const ImageFile = @import("Io/ImageLoader.zig").ImageFile;
 
 pub fn main(init: std.process.Init) !void {
+    const io = init.io;
+    const filepath: []const u8 = "src/Data/BasicArt.bmp";
 
-    // allocate buffer
-    // var arena = init.arena;
-    // const allo = arena.allocator();
-    // defer arena.deinit();
-
-    var buffer: [3 * 1024 * 1024]u8 = undefined;
+    var buffer: [2 * 1024 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     const allo = fba.allocator();
-
-    const filepath: []const u8 = "src/Data/BasicArt.bmp";
-    if (filepath.len == 0) return error.InvalidFilepath;
-    // const image_file_type = try extractImageFileType(filepath);
-
-    const io = init.io;
-    var file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
-    defer file.close(io);
-
-    var read_buffer: [4096]u8 = undefined;
-    var reader = file.reader(io, &read_buffer);
-    const io_reader = &reader.interface;
-
-    // // wastes memory by letting all of them use the same size memory
-    // const file_type = switch (image_file_type) {
-    //     inline else => @unionInit(ImageFile, @tagName(image_file_type), .{ .hdr = undefined, .body = undefined }),
-    // };
-    // const data = file_type.read(&reader, &allo);
-
-    const bmp: BMP = try .read(io_reader, &allo);
-    std.debug.print("{f}\n", .{bmp});
-
-    // .qoi => try readQoi(&reader.interface),
-
+    const image = ImageFile.read(io, &allo, filepath);
+    std.debug.print("Image: {any}\n", .{image});
 }

@@ -1,24 +1,21 @@
 const std = @import("std");
 const RGBA = @import("Image.zig").RGBA;
 const Image = @import("Image.zig").Image2D;
-const Interface = @import("Interface.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
-const BMP = @This();
+pub const BMP = @This();
 
 /// To fulfull interface: needs read, write, toImage, copyToImage
 hdr: Header,
 body: Body,
 
 pub fn read(
+    self: *@This(),
     r: *std.Io.Reader,
     allo: *const std.mem.Allocator,
 ) !@This() {
-    const hdr = try Header.read(r, allo);
-    const body = try Body.read(r, &hdr, allo);
-    return .{
-        .hdr = hdr,
-        .body = body,
-    };
+    self.hdr = try Header.read(r, allo);
+    self.body = try Body.read(r, &self.hdr, allo);
+    return self.*;
 }
 
 const BitsPerPixel = enum(u16) {
@@ -195,9 +192,9 @@ const Body = struct {
         hdr: *const Header,
         allo: *const std.mem.Allocator,
     ) !@This() {
-        std.debug.print("Size: {}\n", .{hdr.width * hdr.height});
+        const len = hdr.width * hdr.height / 4; // (4 bytes per color)
         return .{
-            .data = @ptrCast(try r.readAlloc(allo.*, hdr.width * hdr.height)),
+            .data = @ptrCast(try r.readAlloc(allo.*, len)),
         };
     }
 
