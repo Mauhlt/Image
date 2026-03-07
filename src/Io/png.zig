@@ -17,12 +17,14 @@ pub fn write(self: *const @This(), w: *std.Io.Writer) void {
 }
 
 const Header = struct {
-    pub fn read(
-        r: *std.Io.Reader,
-        allo: *const std.mem.Allocator,
-    ) !void {}
+    pub fn read(r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
+        _ = r;
+        _ = allo;
+    }
 
-    pub fn write() !void {}
+    pub fn write(w: *std.Io.Writer) !void {
+        _ = w;
+    }
 };
 
 const Body = struct {
@@ -30,7 +32,13 @@ const Body = struct {
         r: *std.Io.Reader,
         allo: *const std.mem.Allocator,
         hdr: *const Header,
-    ) !void {}
+    ) !@This() {
+        _ = r;
+        _ = allo;
+        _ = hdr;
+    }
 
-    pub fn write() !void {}
+    pub fn write(w: *std.Io.Writer) !void {
+        _ = w;
+    }
 };
