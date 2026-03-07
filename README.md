@@ -34,3 +34,17 @@
 
 ## How to use with another program:
 
+## Types of Projections:
+1. perspective projection
+2. orthographic/rectilinear projection
+3. fisheye projection
+    - equisolid projection
+    - stereo projection
+4. cylindrical projection
+5. spherical projection
+6. equirectangular projection
+7. omnimax projection
+8. pinhole camera projection
+9. panini projection
+oo. Links: https://www.youtube.com/watch?v=LE9kxUQ-l14
+
