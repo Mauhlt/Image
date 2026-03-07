@@ -1,24 +1,21 @@
 const std = @import("std");
+const isSigSame = @import("Misc.zig").isSigSame;
 const Image = @import("Image.zig").Image2D;
 
-pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
-    const hdr: Header = try .init(r);
-    const body: Body = try .init(r, allo);
-    return .{
-        .width = hdr.width,
-        .height = hdr.height,
-        .data = body.data,
-    };
+pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
+    self.hdr = try .init(r);
+    self.body = try .init(r, allo);
 }
 
-pub fn write(w: *std.Io.Writer, img: *const Image) !void {
-    try Header.write(w, img);
-    try Body.write(w, img);
+pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+    try self.hdr.write(w);
+    try self.body.write(w);
 }
 
 const Header = struct {
-    pub fn read(r: *std.Io.Reader) Header {
-        return .{};
+    pub fn read(r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
+        _ = r;
+        _ = allo;
     }
 
     pub fn write(w: *std.Io.Writer) void {
@@ -27,7 +24,12 @@ const Header = struct {
 };
 
 const Body = struct {
-    pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !void {}
+    pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !@This() {
+        _ = r;
+        _ = allo;
+    }
 
-    pub fn write(w: *std.Io.Writer) void {}
+    pub fn write(w: *std.Io.Writer) void {
+        _ = w;
+    }
 };

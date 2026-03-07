@@ -1,7 +1,6 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
 const Image = @import("Image.zig").Image2D;
-const QOI = @This();
 
 hdr: Header,
 body: Body,
