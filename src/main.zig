@@ -73,7 +73,7 @@ pub fn main(init: std.process.Init) !void {
     // const data = file_type.read(&reader, &allo);
 
     const bmp: BMP = try .read(io_reader, &allo);
-    std.debug.print("BMP: {any}\n", .{bmp});
+    std.debug.print("{f}\n", .{bmp});
 
     // .qoi => try readQoi(&reader.interface),
 

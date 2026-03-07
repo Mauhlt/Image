@@ -181,6 +181,10 @@ const Header = struct {
     ) void {
         allo.free(self.color_table);
     }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+        return w.print("Header:\n{any}\n", .{self.*});
+    }
 };
 
 const Body = struct {
@@ -202,6 +206,10 @@ const Body = struct {
         allo: *const std.mem.Allocator,
     ) void {
         allo.free(self.data);
+    }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+        return w.print("Body:\n{any}\n", .{self.data[0]});
     }
 };
 
@@ -247,4 +255,9 @@ fn checkSize(size: u32, field: anytype) !u32 {
         return error.IncorrectSize;
     }
     return size - bits;
+}
+
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    try self.hdr.format(w);
+    try self.body.format(w);
 }
