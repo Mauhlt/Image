@@ -23,6 +23,7 @@
 ///     - validate filepath
 ///     - convert image structure to data
 ///     - write data
+///     - convert reader -> image -> writer
 /// Polymorphism:
 ///     - tagged unions
 ///     - inline else fn calls

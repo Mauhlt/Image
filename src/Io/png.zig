@@ -1,6 +1,6 @@
 const std = @import("std");
 const RGBA = @import("Image.zig").RGBA;
-const Image = @import("Image.zig").Image2D;
+const Image = @import("Image.zig").Image2DRGBA;
 const isSigSame = @import("Misc.zig").isSigSame;
 
 hdr: Header,
@@ -32,6 +32,8 @@ const Header = struct {
 };
 
 const Body = struct {
+    data: []const RGBA,
+
     pub fn read(
         r: *std.Io.Reader,
         allo: *const std.mem.Allocator,
@@ -43,13 +45,15 @@ const Body = struct {
     }
 
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-        w.print("{}\n", .{self.data[0]});
+        try w.writeAll(self.data);
     }
 
-    pub fn format() void {}
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+        w.print("{}\n", .{self.data[0]});
+    }
 };
 
 pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-    self.hdr.write(w);
-    self.body.write(w);
+    self.hdr.format(w);
+    self.body.format(w);
 }

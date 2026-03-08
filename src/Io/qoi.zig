@@ -2,13 +2,13 @@ const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
 const RGB = @import("Image.zig").RGB;
 const RGBA = @import("Image.zig").RGBA;
-const Image = @import("Image.zig").Image2D;
+const Image = @import("Image.zig").Image2DRGBA;
 
 hdr: Header,
 body: Body,
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
-    self.hdr = try .read(r, allo);
+    self.hdr = try .read(r);
     self.body = try .read(r, allo, &self.hdr);
 }
 
@@ -33,8 +33,7 @@ const Header = struct {
     channels: Channels,
     colorspace: Colorspace,
 
-    pub fn read(r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
-        _ = allo;
+    pub fn read(r: *std.Io.Reader) !@This() {
         const sig = try r.takeArray(4);
         try isSigSame(sig, "qoif");
         const width = try r.takeInt(u32, .big);
@@ -57,6 +56,9 @@ const Header = struct {
         try w.writeInt(u32, self.height, .big);
         try w.writeInt(u8, @intFromEnum(self.channels), .big);
         try w.writeInt(u8, @intFromEnum(self.colorspace), .big);
+
+        const value: u32, const overflow: u1 = @mulWithOverflow(self.width, self.height);
+        if (overflow > 0) return error.InvalidDimensions;
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
@@ -65,10 +67,17 @@ const Header = struct {
 };
 
 const Body = struct {
-    pub fn readRGBA(self: *const @This(), r: *std.Io.Reader, hdr: *const Header) !@This() {
-        _ = self;
-        _ = r;
-        _ = hdr;
+    pub fn readRGBA(
+        self: *const @This(),
+        r: *std.Io.Reader,
+        allo: *const std.mem.Allocator,
+        hdr: *const Header,
+    ) !@This() {
+        var buf: [4096]u8 = undefined;
+        try r.readSliceAll(&buf);
+        const len = hdr.width * hdr.height;
+        var raw = try r.readAlloc(allo, len);
+        var data = try allo.alloc(RGBA, hdr.width * hdr.height * @intFromEnum(hdr.channels));
         // array of previous seen pixels, color channels = assumed to be un-premultiplied alpha
         var previous_pixel: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
         var running_array: [64]RGBA = [_]RGBA{ .r = 0, .g = 0, .b = 0, .a = 0 } ** 64;

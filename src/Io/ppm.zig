@@ -1,6 +1,7 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const Image = @import("Image.zig").Image2D;
+const RGBA = @import("Image.zig").RGBA;
+const Image = @import("Image.zig").Image2DRGBA;
 
 hdr: Header,
 body: Body,

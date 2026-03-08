@@ -1,6 +1,7 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const Image = @import("Image.zig").Image2D;
+const RGBA = @import("Image.zig").RGBA;
+const Image = @import("Image.zig").Image2DRGBA;
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
     self.hdr = try .init(r);

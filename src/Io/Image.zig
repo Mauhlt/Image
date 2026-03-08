@@ -15,8 +15,8 @@ const testing = std.testing;
 ///     - const image data + const images
 pub fn ColorStruct(comptime bit_type: BitType) type {
     return switch (bit_type) {
-        .rgb => struct { r: u8, g: u8, b: u8 },
-        .rgba => struct { r: u8, g: u8, b: u8, a: u8 },
+        .rgb => struct { r: u8 = 0, g: u8 = 0, b: u8 = 0 },
+        .rgba => struct { r: u8 = 0, g: u8 = 0, b: u8 = 0, a: u8 = 0xFF },
     };
 }
 
@@ -30,27 +30,41 @@ const Colorspace = enum(u8) {
     linear = 1,
 };
 
-/// Image Struct:
-/// T: must be an integer or float
-pub fn ImageStruct(comptime bit_type: BitType) type {
-    return switch (bit_type) {
-        .rgb => struct {
-            width: u32 = 0,
-            height: u32 = 0,
-            colorspace: Colorspace = .srgb,
-            data: []RGB = undefined,
-        },
-        .rgba => struct {
-            width: u32 = 0,
-            height: u32 = 0,
-            colorspace: Colorspace = .srgb,
-            data: []RGBA = undefined,
-        },
+const Config = struct {
+    bit_type: BitType = .rgba,
+    is_const: bool = true,
+};
+
+pub fn ImageStruct(
+    comptime config: Config,
+) type {
+    const RGBA_T = switch (config.bit_type) {
+        .rgb => RGB,
+        .rgba => RGBA,
+    };
+    const DataType = switch (config.is_const) {
+        false => []RGBA_T,
+        true => []const RGBA_T,
+    };
+    return struct {
+        width: u32 = 0,
+        height: u32 = 0,
+        colorspace: Colorspace,
+        data: DataType,
     };
 }
 
 /// Common Structs
 pub const RGB = ColorStruct(.rgb);
 pub const RGBA = ColorStruct(.rgba);
-pub const Image2DRGB = ImageStruct(.rgb);
-pub const Image2DRGBA = ImageStruct(.rgba);
+pub const Image2DRGB = ImageStruct(.{
+    .bit_type = .rgb,
+    .is_const = false,
+});
+pub const Image2DRGBA = ImageStruct(.{
+    .is_const = false,
+});
+pub const Image2DConstRGB = ImageStruct(.{
+    .bit_type = .rgb,
+});
+pub const Image2DConstRGBA = ImageStruct(.{});

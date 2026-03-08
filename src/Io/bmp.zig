@@ -1,6 +1,6 @@
 const std = @import("std");
 const RGBA = @import("Image.zig").RGBA;
-const Image = @import("Image.zig").Image2D;
+const Image = @import("Image.zig").Image2DRGBA;
 const isSigSame = @import("Misc.zig").isSigSame;
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 
