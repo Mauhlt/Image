@@ -71,16 +71,13 @@ pub const ImageFile = union(ImageFileType) {
         }
     }
 
-    pub fn toImage(self: @This()) !Image {
-        return switch (self) {
-            inline else => |*file| file.toImage(),
-        };
-    }
-
-    pub fn copyToImage(self: @This(), allo: *const std.mem.Allocator) !Image {
-        return switch (self) {
-            inline else => |*file| file.copyToImage(allo),
-        };
+    pub fn format(self: ImageFile, w: *std.Io.Writer) !void {
+        switch (self) {
+            inline else => |file| {
+                try w.print("Header:\n{any}\n", .{file.hdr});
+                try w.print("Body:\n{any}\n", .{file.body});
+            }
+        }
     }
 };
 

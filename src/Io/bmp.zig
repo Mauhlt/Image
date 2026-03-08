@@ -18,11 +18,6 @@ pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
     try self.body.write(w);
 }
 
-pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-    try self.hdr.format(w);
-    try self.body.format(w);
-}
-
 const BitsPerPixel = enum(u16) {
     monochrome_palette = 1,
     pallet_4_bit = 4,
@@ -199,10 +194,6 @@ const Header = struct {
         try w.writeInt(u32, self.important_colors, .little);
         // color table - not implemented
     }
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        return w.print("Header:\n{any}\n", .{self.*});
-    }
 };
 
 const Body = struct {
@@ -221,10 +212,6 @@ const Body = struct {
 
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
         try w.writeAll(self.data);
-    }
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        return w.print("Body:\n{any}\n", .{self.data[0]});
     }
 
     pub fn free(

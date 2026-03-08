@@ -16,11 +16,6 @@ pub fn write(self: *@This(), w: *std.Io.Writer) !void {
     try self.body.write(w);
 }
 
-pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-    try self.hdr.format(w);
-    try self.body.format(w);
-}
-
 const Header = struct {
     pub fn read(r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {}
 
@@ -28,18 +23,10 @@ const Header = struct {
         _ = self;
         _ = w;
     }
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) void {
-        try w.print("Header:\n{}\n", .{self.*});
-    }
 };
 
 const Body = struct {
     pub fn read() @This() {}
 
     pub fn write() void {}
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) void {
-        try w.print("Body:\n{}\n", .{self.*});
-    }
 };

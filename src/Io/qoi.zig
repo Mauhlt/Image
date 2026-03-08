@@ -16,11 +16,6 @@ pub fn write(self: *@This(), w: *std.Io.Writer) !void {
     try self.body.write(w);
 }
 
-pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-    try self.hdr.format(w);
-    try self.body.format(w);
-}
-
 const Channels = enum(u8) {
     rgb = 3,
     rgba = 4,
@@ -64,10 +59,6 @@ const Header = struct {
         const value: u32, const overflow: u1 = @mulWithOverflow(self.width, self.height);
         if (overflow > 0) return error.InvalidDimensions;
     }
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.print("Header\n{}\n", .{self.*});
-    }
 };
 
 const Body = struct {
@@ -94,10 +85,6 @@ const Body = struct {
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
         _ = self;
         _ = w;
-    }
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.print("Body:\n{}: {any}\n", .{ self.data.len, self.data[0] });
     }
 };
 
