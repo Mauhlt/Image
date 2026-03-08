@@ -1,6 +1,5 @@
 const std = @import("std");
 const RGBA = @import("Image.zig").RGBA;
-const Image = @import("Image.zig").Image2DRGBA;
 const isSigSame = @import("Misc.zig").isSigSame;
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 
@@ -8,13 +7,20 @@ const isSigSame = @import("Misc.zig").isSigSame;
 hdr: Header,
 body: Body,
 
-pub fn read(
-    self: *@This(),
-    r: *std.Io.Reader,
-    allo: *const std.mem.Allocator,
-) !void {
+pub fn read(self: *@This(), r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
     self.hdr = try .read(r, allo);
     self.body = try .read(r, allo, &self.hdr);
+}
+
+/// Converts data written from this file type as this file type
+pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+    try self.hdr.write(w);
+    try self.body.write(w);
+}
+
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    try self.hdr.format(w);
+    try self.body.format(w);
 }
 
 const BitsPerPixel = enum(u16) {
@@ -32,6 +38,7 @@ const Compression = enum(u32) {
 };
 
 const Header = struct {
+    pub const SIG: []const u8 = "BM";
     // header
     file_size: u32,
     reserved: u32,
@@ -59,7 +66,7 @@ const Header = struct {
         _ = allo;
         // signature
         const sig = try r.take(2);
-        try isSigSame(sig, "BM");
+        try isSigSame(sig, SIG);
 
         // header
         const file_size = try r.takeInt(u32, .little);
@@ -172,20 +179,29 @@ const Header = struct {
         };
     }
 
-    pub fn free(
-        self: *const Header,
-        allo: *const std.mem.Allocator,
-    ) void {
-        allo.free(self.color_table);
+    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+        // hdr
+        try w.writeAll(SIG);
+        try w.writeInt(u32, self.file_size, .little);
+        try w.writeInt(u32, self.reserved, .little);
+        try w.writeInt(u32, self.dadat_offset, .little);
+        // info hdr
+        try w.writeInt(u32, self.info_hdr_size, .little);
+        try w.writeInt(u32, self.width, .little);
+        try w.writeInt(u32, self.height, .little);
+        try w.writeInt(u16, self.planes, .little);
+        try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little);
+        try w.writeInt(u32, @intFromEnum(self.compression), .little);
+        try w.writeInt(u32, self.compressed_image_size, .little);
+        try w.writeInt(u32, self.x_pixels_per_mm, .little);
+        try w.writeInt(u32, self.y_pixels_per_mm, .little);
+        try w.writeInt(u32, self.colors_used, .little);
+        try w.writeInt(u32, self.important_colors, .little);
+        // color table - not implemented
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         return w.print("Header:\n{any}\n", .{self.*});
-    }
-
-    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-        _ = self;
-        _ = w;
     }
 };
 
@@ -203,28 +219,21 @@ const Body = struct {
         };
     }
 
-    pub fn free(
-        self: *const Body,
-        allo: *const std.mem.Allocator,
-    ) void {
-        allo.free(self.data);
+    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+        try w.writeAll(self.data);
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         return w.print("Body:\n{any}\n", .{self.data[0]});
     }
 
-    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-        _ = self;
-        _ = w;
+    pub fn free(
+        self: *const Body,
+        allo: *const std.mem.Allocator,
+    ) void {
+        allo.free(self.data);
     }
 };
-
-/// Converts data written from this file type as this file type
-pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-    try self.hdr.write(w);
-    try self.body.write(w);
-}
 
 /// Used for file size + info hdr size
 fn checkSize(size: u32, field: anytype) !u32 {
@@ -234,9 +243,4 @@ fn checkSize(size: u32, field: anytype) !u32 {
         return error.IncorrectSize;
     }
     return size - bits;
-}
-
-pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-    try self.hdr.format(w);
-    try self.body.format(w);
 }

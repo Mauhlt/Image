@@ -32,6 +32,8 @@ pub const ImageFile = union(ImageFileType) {
     // tif: @import("Io/Tif.zig"),
     // tga: @import("Io/TGA.zig"),
     // webp: @import("Io/Webp.zig"),
+
+    /// Reads image and returns this union - I don't know if that is necessary
     pub fn read(
         io: std.Io,
         allo: *const std.mem.Allocator,

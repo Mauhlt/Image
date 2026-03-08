@@ -32,7 +32,7 @@ const Colorspace = enum(u8) {
 
 const Config = struct {
     bit_type: BitType = .rgba,
-    is_const: bool = true,
+    is_const: bool = false,
 };
 
 pub fn ImageStruct(
@@ -43,8 +43,8 @@ pub fn ImageStruct(
         .rgba => RGBA,
     };
     const DataType = switch (config.is_const) {
-        false => []RGBA_T,
-        true => []const RGBA_T,
+        false => [*]RGBA_T,
+        true => [*]const RGBA_T,
     };
     return struct {
         width: u32 = 0,
@@ -57,14 +57,5 @@ pub fn ImageStruct(
 /// Common Structs
 pub const RGB = ColorStruct(.rgb);
 pub const RGBA = ColorStruct(.rgba);
-pub const Image2DRGB = ImageStruct(.{
-    .bit_type = .rgb,
-    .is_const = false,
-});
-pub const Image2DRGBA = ImageStruct(.{
-    .is_const = false,
-});
-pub const Image2DConstRGB = ImageStruct(.{
-    .bit_type = .rgb,
-});
-pub const Image2DConstRGBA = ImageStruct(.{});
+pub const ImageRGB = ImageStruct(.{ .bit_type = .rgb });
+pub const ImageRGBA = ImageStruct(.{});

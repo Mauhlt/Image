@@ -1,7 +1,7 @@
 const std = @import("std");
-const RGBA = @import("Image.zig").RGBA;
-const Image = @import("Image.zig").Image2DRGBA;
 const isSigSame = @import("Misc.zig").isSigSame;
+const RGB = @import("Image.zig").RGB;
+const RGBA = @import("Image.zig").RGBA;
 
 hdr: Header,
 body: Body,
@@ -42,6 +42,7 @@ const Body = struct {
         _ = r;
         _ = allo;
         _ = hdr;
+        var data = try allo.alloc(RGBA, hdr.width * hdr.height);
     }
 
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
