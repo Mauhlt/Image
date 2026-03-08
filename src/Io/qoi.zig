@@ -16,6 +16,11 @@ pub fn write(self: *@This(), w: *std.Io.Writer) !void {
     try self.body.write(w);
 }
 
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    try self.hdr.format(w);
+    try self.body.format(w);
+}
+
 const Channels = enum(u8) {
     rgb = 3,
     rgba = 4,
@@ -61,12 +66,12 @@ const Header = struct {
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.print("{any}\n", .{self.*});
+        try w.print("Header\n{}\n", .{self.*});
     }
 };
 
 const Body = struct {
-    pub fn readRGBA(
+    pub fn read(
         self: *const @This(),
         r: *std.Io.Reader,
         allo: *const std.mem.Allocator,
@@ -86,21 +91,13 @@ const Body = struct {
         // full rgb or rgba values
     }
 
-    pub fn readRGB(self: *const @This(), r: *std.Io.Reader, hdr: *const Header) !@This() {
-        _ = self;
-        _ = r;
-        _ = hdr;
-        var previous_pixel: RGB = .{ .r = 0, .g = 0, .b = 0 };
-        var running_array: [64]RGB = [_]RGB{.{ .r = 0, .g = 0, .b = 0 }} ** 64;
-    }
-
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
         _ = self;
         _ = w;
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.print("{}\n", .{self.*});
+        try w.print("Body:\n{}: {any}\n", .{ self.data.len, self.data[0] });
     }
 };
 
