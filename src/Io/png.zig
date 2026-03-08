@@ -25,6 +25,10 @@ const Header = struct {
     pub fn write(w: *std.Io.Writer) !void {
         _ = w;
     }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) void {
+        w.print("{}\n", .{self.*});
+    }
 };
 
 const Body = struct {
@@ -38,7 +42,14 @@ const Body = struct {
         _ = hdr;
     }
 
-    pub fn write(w: *std.Io.Writer) !void {
-        _ = w;
+    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+        w.print("{}\n", .{self.data[0]});
     }
+
+    pub fn format() void {}
 };
+
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    self.hdr.write(w);
+    self.body.write(w);
+}

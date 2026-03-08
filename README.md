@@ -21,6 +21,17 @@
     - file size 
     - time to load 
     - quality
+6. Default to library with the best combined metrics:
+    - ready time = time it takes an image to be loaded, uncompressed, ready to send to pipeline
+        - 10 ms vs 20 ms, choose 10 ms
+        - medium priority
+    - memory usage = compressed vs uncompressed 
+        - compressed = better ready time = choose that (10 ms vs 20 ms, choose 10 ms)
+        - uncompressed = smaller footprint = choose that (rgb vs rgba, choose rgb)
+        - lowest priority
+    - highest throughput = best = file size / ready time
+        - 100 vs 10, choose 100
+        - highest priority
 
 ## Parsing PNG: 
 1. Intro 

@@ -56,6 +56,8 @@ const Header = struct {
         try w.writeInt(u8, @intFromEnum(self.channels), .big);
         try w.writeInt(u8, @intFromEnum(self.colorspace), .big);
     }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) void {}
 };
 
 const Body = struct {
@@ -68,5 +70,9 @@ const Body = struct {
     pub fn write(self: *const QOI, w: *std.Io.Writer) !void {
         _ = self;
         _ = w;
+    }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+        w.print("", .{});
     }
 };
