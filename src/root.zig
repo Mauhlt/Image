@@ -7,10 +7,7 @@ const BMP = @import("Formats/bmp.zig");
 /// Assumes srgb, width, height, pixels
 width: u32,
 height: u32,
-pixels: union(BitType) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-},
+pixels: BitType,
 
 const ImageFileEnum = enum {
     bmp,
@@ -93,9 +90,14 @@ pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
 //     }
 // }
 
-const BitType = enum(u8) {
+const BitTypeEnum = enum(u8) {
     rgb,
     rgba,
+};
+
+pub const BitType = union(BitTypeEnum) {
+    rgb: [*]RGB,
+    rgba: [*]RGBA,
 };
 
 const Colorspace = enum(u8) {
