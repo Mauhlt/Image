@@ -11,7 +11,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
-    const data: []u8 = try r.readAlloc(gpa, hdr.width * hdr.height / 4);
+    const data: []u8 = try r.readAlloc(gpa, hdr.width * hdr.height);
     return .{
         .width = hdr.width,
         .height = hdr.height,
@@ -21,12 +21,6 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         },
     };
 }
-
-/// Converts data written from this file type as this file type
-// pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-//     try self.hdr.write(w);
-//     try self.body.write(w);
-// }
 
 const BitsPerPixel = enum(u16) {
     monochrome_palette = 1,
