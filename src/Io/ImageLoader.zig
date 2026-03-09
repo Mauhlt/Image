@@ -1,22 +1,7 @@
 const std = @import("std");
-const Image = @import("./Image.zig").Image2D;
+const Image = @import("./Image.zig").Image;
 // I want to move this logic out of here to root.zig
 // Read file -> load img -> close file
-
-const ImageFileType = enum {
-    bmp,
-    // dds,
-    // gif,
-    // heic,
-    // jpg,
-    // paint,
-    // png,
-    // ppm,
-    // qoi,
-    // tif,
-    // tga,
-    // webp,
-};
 
 /// TODO: convert below to pointers to types (standardizes memory used by union - adds 1 misdirection cost)
 pub const ImageFile = union(ImageFileType) {

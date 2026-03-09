@@ -37,6 +37,8 @@ const Header = struct {
         try isSigSame(sig, "qoif");
         const width = try r.takeInt(u32, .big);
         const height = try r.takeInt(u32, .big);
+        _, const overflow: u1 = @mulWithOverflow(width, height);
+        if (overflow > 0) return error.InvalidDimensions;
         const channels = try r.takeEnum(Channels, .big) orelse
             return error.InvalidChannelsEnum;
         const colorspace = try r.takeEnum(Colorspace, .big) orelse
@@ -55,13 +57,11 @@ const Header = struct {
         try w.writeInt(u32, self.height, .big);
         try w.writeInt(u8, @intFromEnum(self.channels), .big);
         try w.writeInt(u8, @intFromEnum(self.colorspace), .big);
-
-        const value: u32, const overflow: u1 = @mulWithOverflow(self.width, self.height);
-        if (overflow > 0) return error.InvalidDimensions;
     }
 };
 
 const Body = struct {
+    data: [*]RGBA,
     pub fn read(
         self: *const @This(),
         r: *std.Io.Reader,
@@ -75,7 +75,7 @@ const Body = struct {
         var data = try allo.alloc(RGBA, hdr.width * hdr.height * @intFromEnum(hdr.channels));
         // array of previous seen pixels, color channels = assumed to be un-premultiplied alpha
         var previous_pixel: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
-        var running_array: [64]RGBA = [_]RGBA{ .r = 0, .g = 0, .b = 0, .a = 0 } ** 64;
+        var running_array: [64]RGBA = [_]RGBA{.{ .r = 0, .g = 0, .b = 0, .a = 0 }} ** 64;
         // run of previous pixel,
         // index into array of previously seen pixels,
         // a diff to previous pixel value in rgb

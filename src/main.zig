@@ -49,6 +49,7 @@ pub fn main(init: std.process.Init) !void {
     var buffer: [2 * 1024 * 1024]u8 = undefined;
     var fba = std.heap.FixedBufferAllocator.init(&buffer);
     const allo = fba.allocator();
+
     const image = ImageFile.read(io, &allo, filepath);
     std.debug.print("Image: {any}\n", .{image});
 }

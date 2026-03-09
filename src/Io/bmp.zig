@@ -1,13 +1,17 @@
 const std = @import("std");
-const RGBA = @import("Image.zig").RGBA;
+const Image = @import("Image.zig").Image;
 const isSigSame = @import("Misc.zig").isSigSame;
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
+// scanlines = bottom to top
+// each scan line is 0 padded to nearest 4-byte boundary
+// rgb values stored bockwards - bgr
+// 4 bit + 8 bit bmps can be compressed
 
 /// To fulfull interface: needs read, write, toImage, copyToImage
 hdr: Header,
 body: Body,
 
-pub fn read(self: *@This(), r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
+pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !@This() {
     self.hdr = try .read(r, allo);
     self.body = try .read(r, allo, &self.hdr);
 }
@@ -196,15 +200,16 @@ const Header = struct {
     }
 };
 
-const Body = struct {
-    data: []const RGBA,
+const Body = union(enum) {
+    rgb: [*]RGB,
+    rgba: [*]RGBA,
 
     pub fn read(
         r: *std.Io.Reader,
         allo: *const std.mem.Allocator,
         hdr: *const Header,
     ) !@This() {
-        const len = hdr.width * hdr.height / 4; // (4 bytes per color)
+        const len = hdr.width * hdr.height / 4;
         return .{
             .data = @ptrCast(try r.readAlloc(allo.*, len)),
         };
