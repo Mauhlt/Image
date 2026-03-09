@@ -3,8 +3,7 @@
 // const RGB = @import("Image.zig").RGB;
 // const RGBA = @import("Image.zig").RGBA;
 //
-// hdr: Header,
-// body: Body,
+// https://qoiformat.org/qoi-specification.pdf
 //
 // pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !void {
 //     self.hdr = try .read(r);
