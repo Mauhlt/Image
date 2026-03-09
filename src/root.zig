@@ -68,7 +68,7 @@ pub fn read(
 /// Frees pixel data
 pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
     switch (self.pixels) {
-        inline else => |*data| gpa.free(data),
+        inline else => |data| gpa.free(data),
     }
 }
 
