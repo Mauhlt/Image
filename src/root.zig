@@ -52,6 +52,11 @@ const MapImageExtToImageFileEnum: std.StaticStringMap(ImageFileEnum) = .initComp
     // .{ "hif", .heic },
     // .{ "dib", .bmp },
 });
+/// Assumes srgb colorspace
+width: u32,
+height: u32,
+pixels: BitType,
+/// Fns
 fn fromExt(filepath: []const u8) !ImageFile {
     if (filepath.len == 0) return error.InvalidFilepath;
     const ext = std.fs.path.extension(filepath)[1..];
@@ -59,10 +64,6 @@ fn fromExt(filepath: []const u8) !ImageFile {
         MapImageExtToImageFileEnum.get(ext) orelse
         error.UnsupportedImageFileExt;
 }
-/// Assumes srgb colorspace
-width: u32,
-height: u32,
-pixels: BitType,
 
 /// 1. identifies file type with tagged union
 /// 2. switches on tagged union to call correct reader
@@ -92,14 +93,6 @@ pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
         inline else => |data| {
             std.debug.print("{s}\n", .{@typeName(@typeInfo(@TypeOf(data)).pointer.child)});
         }
-        // .rgb => |rgb| {
-        //     const data: []RGB = rgb[0 .. self.header.width * self.header.height / 4];
-        //     gpa.free(data);
-        // },
-        // .rgba => |rgba| {
-        //     const data: []RGBA = rgba[0 .. self.width * self.height / 4];
-        //     gpa.free(data);
-        // },
     }
 }
 
@@ -118,6 +111,6 @@ pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
 //
 //     const image_file_type = try fromExt(filepath);
 //     switch (image_file_type) {
-//         inline else => |*img| img.read(io_writer, allo, self),
+//         inline else => |*img| img.write(io_writer, allo, self),
 //     }
 // }
