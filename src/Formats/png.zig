@@ -3,9 +3,10 @@ const isSigSame = @import("Misc.zig").isSigSame;
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 
-pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !void {
-    self.hdr = try .init(r, allo);
-    self.body = try .init(r, allo, &self.hdr);
+pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !void {
+    const hdr = try .init(r, allo);
+    const body = try .init(r, allo, &hdr);
+    _ = body;
 }
 
 pub fn write(self: *const @This(), w: *std.Io.Writer) void {

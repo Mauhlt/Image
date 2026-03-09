@@ -83,6 +83,7 @@ pub fn read(
     const image_file_enum = try fromExt(filepath);
     return switch (image_file_enum) {
         .bmp => BMP.read(io_reader, gpa),
+        // .png => PNG.read(io_reader, gpa),
     };
 }
 
