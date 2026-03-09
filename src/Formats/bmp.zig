@@ -13,12 +13,17 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
-    const bytes = r.readAlloc(gpa, hdr.compressed_image_size) catch |err| switch (err) {
-        error.OutOfMemory => std.debug.print(
-            "Memory Attempting To Allocate: {}\n",
-            .{hdr.compressed_image_size},
-        ),
-        else => std.debug.print("Here", .{}),
+    const bytes = r.readAlloc(gpa, hdr.compressed_image_size) catch |err| blk: switch (err) {
+        error.OutOfMemory => {
+            std.debug.print(
+                "Memory Attempting To Allocate: {}\nWidth: {}\nHeight: {}\n",
+                .{ hdr.compressed_image_size, hdr.width, hdr.height },
+            );
+            const data: []u8 = try gpa.alloc(u8, hdr.width * hdr.height);
+            try r.readSliceAll(data);
+            break :blk data;
+        },
+        else => unreachable,
     };
     // create img
     var img: Image = .{
