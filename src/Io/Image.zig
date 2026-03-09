@@ -47,8 +47,8 @@ pub fn read(
     filepath: []const u8,
 ) !@This() {
     var buf: [std.fs.max_path_bytes]u8 = undefined;
-    const path = try std.Io.Dir.cwd().realPath(io, &buf);
-    std.debug.print("CWD: {s}\n", .{path});
+    const size = try std.Io.Dir.cwd().realPath(io, &buf);
+    std.debug.print("CWD: {s}\n", .{buf[0..size]});
 
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close(io);
