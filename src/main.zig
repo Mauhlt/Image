@@ -11,7 +11,7 @@ pub fn main() !void {
     const gpa = debug_allocator.allocator();
     defer std.debug.assert(.ok == debug_allocator.deinit());
 
-    // this works! wtf
+    // this works here!
     var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
     defer img.deinit(gpa);
 
