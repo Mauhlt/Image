@@ -16,8 +16,8 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const bytes = r.readAlloc(gpa, hdr.compressed_image_size) catch |err| blk: switch (err) {
         error.OutOfMemory => {
             std.debug.print(
-                "Memory Attempting To Allocate: {}\nWidth: {}\nHeight: {}\n",
-                .{ hdr.compressed_image_size, hdr.width, hdr.height },
+                "Memory Attempting To Allocate: {}\nWidth: {}\nHeight: {}\nExpected Alloc: {}\n",
+                .{ hdr.compressed_image_size, hdr.width, hdr.height, hdr.width * hdr.height },
             );
             const data: []u8 = try gpa.alloc(u8, hdr.width * hdr.height);
             try r.readSliceAll(data);
@@ -25,6 +25,7 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         },
         else => unreachable,
     };
+    std.debug.print("No Error.\n", .{});
     // create img
     var img: Image = .{
         .width = hdr.width,

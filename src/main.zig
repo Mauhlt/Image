@@ -14,10 +14,10 @@ pub fn main() !void {
     var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
     defer img.deinit(gpa);
 
-    switch (img.pixels) {
-        inline else => |data| {
-            std.debug.print("{}\n", .{data[0]});
-            std.debug.print("{}\n", .{data[img.width * img.height - 1]});
-        },
-    }
+    // switch (img.pixels) {
+    //     inline else => |data| {
+    //         std.debug.print("{}\n", .{data[0]});
+    //         std.debug.print("{}\n", .{data[img.width * img.height - 1]});
+    //     },
+    // }
 }
