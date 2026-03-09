@@ -18,13 +18,12 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         .rgba => 4,
         else => 3,
     };
-    const num_read: usize = 1;
-    std.debug.print("{} {}\n", .{ num_read, pixel_len });
-    const data = try r.readAlloc(gpa, num_read * pixel_len);
+    const num_to_read: usize = hdr.width * hdr.height * pixel_len;
+    const data = try r.readAlloc(gpa, num_to_read);
 
     return .{
-        .width = 1, // hdr.width,
-        .height = 1, // hdr.height,
+        .width = hdr.width,
+        .height = hdr.height,
         .pixels = switch (hdr.bits_per_pixel) {
             .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(data))).ptr },
             else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(data))).ptr },
