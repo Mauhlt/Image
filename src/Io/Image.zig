@@ -53,7 +53,7 @@ pub fn read(
     var reader = file.reader(io, &read_buffer);
     const io_reader: *std.Io.Reader = &reader.interface;
 
-    const image_file_type = try fromExt(filepath);
+    var image_file_type = try fromExt(filepath);
     return switch (image_file_type) {
         inline else => |*img| img.read(io_reader, gpa),
     };
