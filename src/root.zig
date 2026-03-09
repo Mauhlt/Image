@@ -1,9 +1,9 @@
 const std = @import("std");
 /// Libs
-const RGB = @import("RGB.zig");
-const RGBA = @import("RGBA.zig");
+const RGB = @import("Formats/RGB.zig");
+const RGBA = @import("Formats/RGBA.zig");
 /// Image Formats
-const BMP = @import("bmp.zig");
+const BMP = @import("Formats/bmp.zig");
 /// Assumes srgb, width, height, pixels
 width: u32,
 height: u32,

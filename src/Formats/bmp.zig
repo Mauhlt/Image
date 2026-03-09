@@ -1,7 +1,7 @@
 const std = @import("std");
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
-const Image = @import("Image.zig");
+const Image = @import("../root.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 // scanlines = bottom to top
