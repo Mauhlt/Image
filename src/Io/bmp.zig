@@ -14,13 +14,15 @@ hdr: *Header,
 // body: *Body,
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
-    var hdr: Header = try .read(r, allo);
-    self.hdr = &hdr;
-    // self.body = &(try .read(r, allo, self.hdr));
+    const hdr: Header = try .read(r, allo);
+    const body: Body = try .read(r, allo, self.hdr);
     return .{
-        .width = self.hdr.width,
-        .height = self.hdr.height,
-        .pixels = undefined,
+        .width = hdr.width,
+        .height = hdr.height,
+        .pixels = switch (hdr.bits_per_pixel) {
+            .rgb => body.rgb,
+            .rgba => body.rgba,
+        },
     };
 }
 
@@ -169,28 +171,32 @@ const Header = struct {
     }
 };
 
-// const Body = union(enum) {
-//     rgb: [*]RGB,
-//     rgba: [*]RGBA,
-//
-//     pub fn read(
-//         r: *std.Io.Reader,
-//         gpa: std.mem.Allocator,
-//         hdr: *const Header,
-//     ) !@This() {
-//         const len = hdr.width * hdr.height / 4; // bmp stored bgr format
-//                                                 var data = try r.readAlloc(gpa, len);
-//         return @unionInit(Body, hdr.bits_per_pixel)
-//     }
-//
-//     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-//         try w.writeAll(self.data);
-//     }
-//
-//     pub fn free(
-//         self: Body,
-//         gpa: std.mem.Allocator,
-//     ) void {
-//         gpa.free(self.data);
-//     }
-// };
+const Body = union(enum) {
+    rgb: [*]RGB,
+    rgba: [*]RGBA,
+
+    pub fn read(
+        r: *std.Io.Reader,
+        gpa: std.mem.Allocator,
+        hdr: *const Header,
+    ) !@This() {
+        std.debug.assert(hdr.width > 0 and hdr.height > 0);
+        const len = hdr.width * hdr.height / 4;
+        const data = try r.readAlloc(gpa, len);
+        return switch (hdr.bits_per_pixel) {
+            .rgba => .{ .rgba = @ptrCast(@alignCast(data)) },
+            else => .{ .rgb = @ptrCast(@alignCast(data)) },
+        };
+    }
+
+    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+        try w.writeAll(self.data);
+    }
+
+    pub fn free(
+        self: Body,
+        gpa: std.mem.Allocator,
+    ) void {
+        gpa.free(self.data);
+    }
+};
