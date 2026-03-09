@@ -12,16 +12,16 @@ pixels: union(BitType) {
 
 const ImageFileType = union(enum) {
     bmp: @import("bmp.zig"),
-    gif: @import("gif.zig"),
-    heic: @import("heic.zig"),
-    jpg: @import("jpg.zig"),
-    paint: @import("paint.zig"),
-    png: @import("png.zig"),
-    ppm: @import("ppm.zig"),
-    qoi: @import("qoi.zig"),
-    tif: @import("tif.zig"),
-    tga: @import("tga.zig"),
-    webp: @import("webp.zig"),
+    // gif: @import("gif.zig"),
+    // heic: @import("heic.zig"),
+    // jpg: @import("jpg.zig"),
+    // paint: @import("paint.zig"),
+    // png: @import("png.zig"),
+    // ppm: @import("ppm.zig"),
+    // qoi: @import("qoi.zig"),
+    // tif: @import("tif.zig"),
+    // tga: @import("tga.zig"),
+    // webp: @import("webp.zig"),
 };
 
 /// 1. identifies file type with tagged union
@@ -32,7 +32,7 @@ pub fn read(
     gpa: std.mem.Allocator,
     filepath: []const u8,
 ) !@This() {
-    var file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
+    const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close(io);
 
     var read_buffer: [4096]u8 = undefined;

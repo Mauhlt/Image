@@ -11,11 +11,11 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 /// Converted to a fat ptr
 hdr: *Header,
-body: *Body,
+// body: *Body,
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
     self.hdr = &(try .read(r, allo));
-    self.body = try .read(r, allo, self.hdr);
+    // self.body = &(try .read(r, allo, self.hdr));
     return .{
         .width = self.hdr.width,
         .height = self.hdr.height,
@@ -35,6 +35,7 @@ const BitsPerPixel = enum(u16) {
     pallet_8_bit = 8,
     rgb_16 = 16,
     rgb_24 = 24,
+    rgba = 32,
 };
 
 const Compression = enum(u32) {
@@ -153,29 +154,28 @@ const Header = struct {
     }
 };
 
-const Body = union(enum) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-
-    pub fn read(
-        r: *std.Io.Reader,
-        gpa: std.mem.Allocator,
-        hdr: *const Header,
-    ) !@This() {
-        const len = hdr.width * hdr.height / 4;
-        return .{
-            .data = @ptrCast(try r.readAlloc(gpa, len)),
-        };
-    }
-
-    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.writeAll(self.data);
-    }
-
-    pub fn free(
-        self: *const Body,
-        allo: *const std.mem.Allocator,
-    ) void {
-        allo.free(self.data);
-    }
-};
+// const Body = union(enum) {
+//     rgb: [*]RGB,
+//     rgba: [*]RGBA,
+//
+//     pub fn read(
+//         r: *std.Io.Reader,
+//         gpa: std.mem.Allocator,
+//         hdr: *const Header,
+//     ) !@This() {
+//         const len = hdr.width * hdr.height / 4; // bmp stored bgr format
+//                                                 var data = try r.readAlloc(gpa, len);
+//         return @unionInit(Body, hdr.bits_per_pixel)
+//     }
+//
+//     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+//         try w.writeAll(self.data);
+//     }
+//
+//     pub fn free(
+//         self: Body,
+//         allo: std.mem.Allocator,
+//     ) void {
+//         allo.free(self.data);
+//     }
+// };

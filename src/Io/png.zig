@@ -6,7 +6,7 @@ const RGBA = @import("Image.zig").RGBA;
 hdr: *Header,
 body: *Body,
 
-pub fn read(self: *@This(), r: *std.Io.Reader, allo: *const std.mem.Allocator) !void {
+pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !void {
     self.hdr = try .init(r, allo);
     self.body = try .init(r, allo, &self.hdr);
 }
@@ -17,7 +17,7 @@ pub fn write(self: *const @This(), w: *std.Io.Writer) void {
 }
 
 const Header = struct {
-    pub fn read(r: *std.Io.Reader, allo: *const std.mem.Allocator) !@This() {
+    pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !@This() {
         _ = r;
         _ = allo;
     }

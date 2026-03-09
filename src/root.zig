@@ -1,18 +1,18 @@
 const std = @import("std");
-const ImageFile = @import("Io/IMageLoader.zig").ImageFile;
+const Image = @import("Io/Image.zig");
 
 pub inline fn read(
     io: std.Io,
-    allo: *const std.mem.Allocator,
+    allo: std.mem.Allocator,
     filepath: []const u8,
-) !ImageFile {
+) !Image {
     return .read(io, &allo, filepath);
 }
 
 pub inline fn write(
     io: std.Io,
-    allo: *const std.mem.Allocator,
-    image: *const ImageFile,
+    allo: std.mem.Allocator,
+    image: *const Image,
     filepath: []const u8,
 ) !void {
     try image.write(io, &allo, filepath);
