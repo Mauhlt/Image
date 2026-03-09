@@ -128,7 +128,7 @@ const Header = struct {
             .height = height,
             .planes = planes,
             .bits_per_pixel = bits_per_pixel,
-            .compression = compress_num,
+            .compression = compression,
             .compressed_image_size = compressed_image_size,
             .x_pixels_per_mm = x_pixels_per_mm,
             .y_pixels_per_mm = y_pixels_per_mm,
@@ -174,7 +174,10 @@ const Body = union(enum) {
     ) !@This() {
         std.debug.assert(hdr.width > 0 and hdr.height > 0);
         const data = try r.readAlloc(gpa, hdr.compressed_image_size);
-        // decompress here - no decompression right now
+        switch (hdr.compression) {
+            .rgb => {},
+            else => return error.UnsupportedCompression,
+        }
         return switch (hdr.bits_per_pixel) {
             .rgba => .{ .rgba = @ptrCast(@alignCast(data)) },
             else => .{ .rgb = @ptrCast(@alignCast(data)) },
