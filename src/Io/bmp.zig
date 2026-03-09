@@ -78,7 +78,8 @@ const Header = struct {
 
         // header
         const file_size = try r.takeInt(u32, .little);
-        var curr_file_size = file_size - @as(@TypeOf(file_size), @truncate(sig.len));
+        const curr_file_size = file_size - @as(@TypeOf(file_size), @truncate(sig.len));
+        _ = curr_file_size;
         const reserved = try r.takeInt(u32, .little);
         const data_offset = try r.takeInt(u32, .little);
 
