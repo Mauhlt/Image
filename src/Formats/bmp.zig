@@ -20,8 +20,11 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator, buf: []u8) !Image {
     // const num_pixels: usize = hdr.width * hdr.height;
     // const bytes = try r.readAlloc(gpa, num_pixels * pixel_len);
 
-    const num_bytes = try r.readSliceShort(buf[0..hdr.compressed_image_size]);
-    const bytes = buf[0..num_bytes];
+    // allocating outside is fine but allocating in here fails?
+    const bytes = try gpa.alloc(u8, hdr.compressed_image_size);
+    try r.readSliceAll(bytes);
+    // const num_bytes = try r.readSliceShort(buf[0..hdr.compressed_image_size]);
+    // const bytes = buf[0..num_bytes];
 
     var img: Image = .{
         .width = hdr.width,
