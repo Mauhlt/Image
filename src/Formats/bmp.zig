@@ -12,6 +12,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // 4 bit + 8 bit bmps can be compressed
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator, buf: []u8) !Image {
+    _ = buf;
     const hdr: Header = try .read(r, gpa);
     // const pixel_len: usize = switch (hdr.bits_per_pixel) {
     //     .rgba => 4,
