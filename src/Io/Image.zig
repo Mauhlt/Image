@@ -2,6 +2,8 @@ const std = @import("std");
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 
+const BMP = @import("bmp.zig");
+
 /// Assumes srgb, width, height, pixels
 width: u32,
 height: u32,
@@ -25,7 +27,7 @@ const ImageFileEnum = enum {
 };
 
 const ImageFile = union(ImageFileEnum) {
-    bmp: @import("bmp.zig"),
+    bmp: BMP,
     // gif: @import("gif.zig"),
     // heic: @import("heic.zig"),
     // jpg: @import("jpg.zig"),
@@ -57,9 +59,9 @@ pub fn read(
     var reader = file.reader(io, &read_buffer);
     const io_reader: *std.Io.Reader = &reader.interface;
 
-    var image_file_type = try fromExt(filepath);
-    return switch (image_file_type) {
-        inline else => |*img| img.read(io_reader, gpa),
+    const image_file_enum = try fromExt(filepath);
+    return switch (image_file_enum) {
+        .bmp => BMP.read(io_reader, gpa),
     };
 }
 
@@ -106,8 +108,7 @@ const MapImageExtToImageFileEnum: std.StaticStringMap(ImageFileEnum) = .initComp
 fn fromExt(filepath: []const u8) !ImageFile {
     if (filepath.len == 0) return error.InvalidFilepath;
     const ext = std.fs.path.extension(filepath)[1..];
-    const ext_enum: ImageFileEnum = std.meta.stringToEnum(ImageFileEnum, ext) orelse
+    return std.meta.stringToEnum(ImageFileEnum, ext) orelse
         MapImageExtToImageFileEnum.get(ext) orelse
-        return error.UnsupportedImageFileExt;
-    return @unionInit(ImageFile, @tagName(ext_enum), undefined);
+        error.UnsupportedImageFileExt;
 }
