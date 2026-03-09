@@ -69,9 +69,9 @@ const Header = struct {
     /// reading from a file
     pub fn read(
         r: *std.Io.Reader,
-        allo: *const std.mem.Allocator,
+        gpa: std.mem.Allocator,
     ) !@This() {
-        _ = allo;
+        _ = gpa;
         // signature
         const sig = try r.take(2);
         try isSigSame(sig, SIG);
@@ -175,8 +175,8 @@ const Header = struct {
 //
 //     pub fn free(
 //         self: Body,
-//         allo: std.mem.Allocator,
+//         gpa: std.mem.Allocator,
 //     ) void {
-//         allo.free(self.data);
+//         gpa.free(self.data);
 //     }
 // };
