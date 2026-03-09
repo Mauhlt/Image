@@ -1,5 +1,7 @@
 const std = @import("std");
-const Image = @import("Image.zig").Image;
+const RGB = @import("RGB.zig");
+const RGBA = @import("RGBA.zig");
+const Image = @import("Image.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 // scanlines = bottom to top
@@ -7,20 +9,25 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // rgb values stored bockwards - bgr
 // 4 bit + 8 bit bmps can be compressed
 
-/// To fulfull interface: needs read, write, toImage, copyToImage
-hdr: Header,
-body: Body,
+/// Converted to a fat ptr
+hdr: *Header,
+body: *Body,
 
-pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !@This() {
-    self.hdr = try .read(r, allo);
-    self.body = try .read(r, allo, &self.hdr);
+pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
+    self.hdr = &(try .read(r, allo));
+    self.body = try .read(r, allo, self.hdr);
+    return .{
+        .width = self.hdr.width,
+        .height = self.hdr.height,
+        .pixels = undefined,
+    };
 }
 
 /// Converts data written from this file type as this file type
-pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-    try self.hdr.write(w);
-    try self.body.write(w);
-}
+// pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+//     try self.hdr.write(w);
+//     try self.body.write(w);
+// }
 
 const BitsPerPixel = enum(u16) {
     monochrome_palette = 1,
@@ -58,6 +65,7 @@ const Header = struct {
     // number_of_colors: u64,
     // color_table: [][4]u8, // rgb reserved
 
+    /// reading from a file
     pub fn read(
         r: *std.Io.Reader,
         allo: *const std.mem.Allocator,
@@ -70,89 +78,33 @@ const Header = struct {
         // header
         const file_size = try r.takeInt(u32, .little);
         var curr_file_size = file_size - @as(@TypeOf(file_size), @truncate(sig.len));
-        curr_file_size = try checkSize(curr_file_size, file_size);
-
         const reserved = try r.takeInt(u32, .little);
-        curr_file_size = try checkSize(curr_file_size, reserved);
-
         const data_offset = try r.takeInt(u32, .little);
-        curr_file_size = try checkSize(curr_file_size, data_offset);
-        if ((file_size - curr_file_size) != 14) {
-            std.debug.print("{} - {}: {}\n", .{ file_size, curr_file_size, file_size - curr_file_size });
-            return error.IncorrectHeaderSize;
-        }
 
         // info header
-        const info_hdr_size = try r.takeInt(u32, .little);
-        var curr_info_hdr_size = info_hdr_size;
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, info_hdr_size);
+        const info_hdr_size = try r.takeInt(u32, .little); // changes based on dib or bmp
 
         const width = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, width);
-        std.debug.print("Width: {}\n", .{width});
-
         const height = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, height);
-        std.debug.print("Height: {}\n", .{height});
-
         const planes = try r.takeInt(u16, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, planes);
-
         const bits_per_pixel_num = try r.takeInt(u16, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, bits_per_pixel_num);
         const bits_per_pixel = std.enums.fromInt(BitsPerPixel, bits_per_pixel_num) orelse
             return error.InvalidBitsPerPixelEnumValue;
-
         const compress_num = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, compress_num);
         const compression = std.enums.fromInt(Compression, compress_num) orelse
             return error.InvalidEnumValue;
         if (compress_num != .rgb) return error.UnsupportedCompressionNumber;
-
         const compressed_image_size = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, compressed_image_size);
-
         const x_pixels_per_mm = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, x_pixels_per_mm);
-
         const y_pixels_per_mm = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, y_pixels_per_mm);
-
         const colors_used = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, colors_used);
-
         const important_colors = try r.takeInt(u32, .little);
-        curr_info_hdr_size = try checkSize(curr_info_hdr_size, important_colors);
 
-        // uncompressed if pixel data begins after color table
+        std.debug.print("Colors Used: {}\n", .{colors_used});
+        std.debug.print("Important Colors: {}\n", .{important_colors});
+
         if (data_offset > 54) {
             return error.UnsupportedDataOffset;
-            // color table
-            // const total_possible_number_of_colors: u64 = switch (bits_per_pixel) {
-            //     .monochrome_palette => @as(u32, 1) << 0,
-            //     .pallet_4_bit => @as(u32, 1) << 4,
-            //     .pallet_8_bit => @as(u32, 1) << 8,
-            //     .rgb_16 => @as(u32, 1) << 16,
-            //     .rgb_24 => @as(u32, 1) << 24,
-            // };
-            // file_size = try checkFileSize(file_size, data_offset);
-
-            // var color_table = try allo.alloc([4]u8, total_possible_number_of_colors);
-            // errdefer allo.free(color_table);
-            // file_size = try checkFileSize(file_size, data_offset);
-            // for (0..colors_used) |i| {
-            //     color_table[i] = (try r.takeArray(4)).*;
-            // }
-        }
-
-        if (@import("builtin").mode == .Debug and
-            (info_hdr_size - curr_info_hdr_size) != 40)
-        {
-            std.debug.print(
-                "{} - {} = {}\n",
-                .{ info_hdr_size, curr_info_hdr_size, info_hdr_size - curr_info_hdr_size },
-            );
-            return error.FileSizeMismatch;
         }
 
         return .{
@@ -178,6 +130,7 @@ const Header = struct {
         };
     }
 
+    /// writing to a file
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
         // hdr
         try w.writeAll(SIG);
@@ -206,12 +159,12 @@ const Body = union(enum) {
 
     pub fn read(
         r: *std.Io.Reader,
-        allo: *const std.mem.Allocator,
+        gpa: std.mem.Allocator,
         hdr: *const Header,
     ) !@This() {
         const len = hdr.width * hdr.height / 4;
         return .{
-            .data = @ptrCast(try r.readAlloc(allo.*, len)),
+            .data = @ptrCast(try r.readAlloc(gpa, len)),
         };
     }
 
@@ -226,13 +179,3 @@ const Body = union(enum) {
         allo.free(self.data);
     }
 };
-
-/// Used for file size + info hdr size
-fn checkSize(size: u32, field: anytype) !u32 {
-    const bits: u32 = @sizeOf(@TypeOf(field));
-    if (size < bits) {
-        std.debug.print("Size: {}, Bits: {}\n", .{ size, bits });
-        return error.IncorrectSize;
-    }
-    return size - bits;
-}

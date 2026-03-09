@@ -3,8 +3,8 @@ const isSigSame = @import("Misc.zig").isSigSame;
 const RGB = @import("Image.zig").RGB;
 const RGBA = @import("Image.zig").RGBA;
 
-hdr: Header,
-body: Body,
+hdr: *Header,
+body: *Body,
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: *const std.mem.Allocator) !void {
     self.hdr = try .init(r, allo);
@@ -32,13 +32,12 @@ const Body = struct {
 
     pub fn read(
         r: *std.Io.Reader,
-        allo: *const std.mem.Allocator,
-        hdr: *const Header,
+        allo: std.mem.Allocator,
+        hdr: Header,
     ) !@This() {
         _ = r;
-        _ = allo;
-        _ = hdr;
-        var data = try allo.alloc(RGBA, hdr.width * hdr.height);
+        const data = try allo.alloc(RGBA, hdr.width * hdr.height);
+        defer allo.free(data);
     }
 
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {

@@ -24,12 +24,12 @@ const ImageFileType = union(enum) {
     webp: @import("webp.zig"),
 };
 
-/// 1. identifies file type
-/// 2. switches on file type to call correct reader
-/// 3. all files return correct type
+/// 1. identifies file type with tagged union
+/// 2. switches on tagged union to call correct reader
+/// 3. all files return an image
 pub fn read(
     io: std.Io,
-    allo: std.mem.Allocator,
+    gpa: std.mem.Allocator,
     filepath: []const u8,
 ) !@This() {
     var file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
@@ -41,28 +41,28 @@ pub fn read(
 
     const image_file_type = try fromExt(filepath);
     return switch (image_file_type) {
-        inline else => |*img| img.read(io_reader, allo),
+        inline else => |*img| img.read(io_reader, gpa),
     };
 }
 
-pub fn write(
-    self: *const @This(),
-    io: std.Io,
-    allo: std.mem.Allocator,
-    filepath: []const u8,
-) !void {
-    var file = try std.Io.Dir.cwd().createFile(io, filepath, .{});
-    defer file.close(io);
-
-    var write_buffer: [4096]u8 = undefined;
-    var writer = file.writer(io, &write_buffer);
-    const io_writer = &writer.interface;
-
-    const image_file_type = try fromExt(filepath);
-    switch (image_file_type) {
-        inline else => |*img| img.read(io_writer, allo, self),
-    }
-}
+// pub fn write(
+//     self: *const @This(),
+//     io: std.Io,
+//     allo: std.mem.Allocator,
+//     filepath: []const u8,
+// ) !void {
+//     var file = try std.Io.Dir.cwd().createFile(io, filepath, .{});
+//     defer file.close(io);
+//
+//     var write_buffer: [4096]u8 = undefined;
+//     var writer = file.writer(io, &write_buffer);
+//     const io_writer = &writer.interface;
+//
+//     const image_file_type = try fromExt(filepath);
+//     switch (image_file_type) {
+//         inline else => |*img| img.read(io_writer, allo, self),
+//     }
+// }
 
 const BitType = enum(u8) {
     rgb,
