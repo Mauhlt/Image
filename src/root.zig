@@ -72,7 +72,6 @@ pub fn read(
     io: std.Io,
     gpa: std.mem.Allocator,
     filepath: []const u8,
-    buf: []u8,
 ) !@This() {
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close(io);
@@ -83,7 +82,7 @@ pub fn read(
 
     const image_file_enum = try fromExt(filepath);
     return switch (image_file_enum) {
-        .bmp => BMP.read(io_reader, gpa, buf),
+        .bmp => BMP.read(io_reader, gpa),
     };
 }
 

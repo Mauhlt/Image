@@ -11,22 +11,10 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // rgb values stored bockwards - bgr
 // 4 bit + 8 bit bmps can be compressed
 
-pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator, buf: []u8) !Image {
-    _ = buf;
+pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
-    // const pixel_len: usize = switch (hdr.bits_per_pixel) {
-    //     .rgba => 4,
-    //     else => 3,
-    // };
-    // const num_pixels: usize = hdr.width * hdr.height;
-    // const bytes = try r.readAlloc(gpa, num_pixels * pixel_len);
-
-    // allocating outside is fine but allocating in here fails?
-    const bytes = try gpa.alloc(u8, hdr.compressed_image_size);
-    try r.readSliceAll(bytes);
-    // const num_bytes = try r.readSliceShort(buf[0..hdr.compressed_image_size]);
-    // const bytes = buf[0..num_bytes];
-
+    const bytes = try r.readAlloc(gpa, hdr.compressed_image_size);
+    // create img
     var img: Image = .{
         .width = hdr.width,
         .height = hdr.height,
@@ -35,14 +23,13 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator, buf: []u8) !Image {
             else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(bytes))).ptr },
         },
     };
-
+    // flip pixels: bgr to rgb order
     switch (img.pixels) {
         inline else => |data| {
             const len = img.width * img.height;
             for (data[0..len]) |*datum| datum.* = datum.flip();
         }
     }
-
     return img;
 }
 
