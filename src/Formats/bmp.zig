@@ -18,13 +18,12 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         .rgba => 4,
         else => 3,
     };
-    const num_pixels: usize = 1; // hdr.width * hdr.height * pixel_len;
+    const num_pixels: usize = hdr.width * hdr.height;
     const bytes = try r.readAlloc(gpa, num_pixels * pixel_len);
-    // try reading data as int - .big - then swap to rgb or rgba = no need for swap
 
     var img: Image = .{
-        .width = 1, // hdr.width,
-        .height = 1, // hdr.height,
+        .width = hdr.width,
+        .height = hdr.height,
         .pixels = switch (hdr.bits_per_pixel) {
             .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(bytes))).ptr },
             else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(bytes))).ptr },
