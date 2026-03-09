@@ -11,11 +11,10 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
-    const pixels = @unionInit(Body, @tagName(hdr), try r.readAlloc(gpa, hdr.width * hdr.height / 4));
     return .{
         .width = hdr.width,
         .height = hdr.height,
-        .pixels = pixels,
+        .pixels = .{ .rgba = try r.readAlloc(gpa, hdr.width * hdr.height / 4) },
     };
 }
 
