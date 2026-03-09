@@ -13,8 +13,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
-    const bytes: []u8 = try gpa.alloc(u8, hdr.compressed_image_size);
-    try r.readSliceAll(bytes);
+    const bytes = try r.readAlloc(gpa, hdr.compressed_image_size);
     // create img
     var img: Image = .{
         .width = hdr.width,
