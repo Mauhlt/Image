@@ -88,7 +88,7 @@ const Colorspace = enum(u8) {
     linear = 1,
 };
 
-const MapImageExtToFileType: std.StaticStringMap(ImageFile) = .initComptime(.{
+const MapImageExtToFileType: std.StaticStringMap(ImageFileEnum) = .initComptime(.{
     // .{ "jpeg", .jpg },
     // .{ "jpe", .jpg },
     // .{ "jfif", .jpg },
@@ -101,9 +101,9 @@ const MapImageExtToFileType: std.StaticStringMap(ImageFile) = .initComptime(.{
 /// Instantiates union based on filepath extension
 fn fromExt(filepath: []const u8) !ImageFile {
     if (filepath.len == 0) return error.InvalidFilepath;
-    const ext = std.fs.path.extension(filepath);
-    const ext_enum = std.meta.stringToEnum(ImageFileEnum, ext[1..ext.len]) orelse
-        MapImageExtToFileType.get(ext[1..ext.len]) orelse
+    const ext = std.fs.path.extension(filepath)[1..];
+    const ext_enum = std.meta.stringToEnum(ImageFileEnum, ext) orelse
+        MapImageExtToFileType.get(ext) orelse
         error.UnsupportedImageFileExt;
     return @unionInit(ImageFile, @tagName(ext_enum), undefined);
 }
