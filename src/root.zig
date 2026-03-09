@@ -67,9 +67,10 @@ pub fn read(
 
 /// Frees pixel data
 pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
-    switch (self.pixels) {
-        inline else => |data| gpa.free(data),
-    }
+    gpa.free(self.pixels.rgba); // does this work?
+    // switch (self.pixels) {
+    //     inline else => |data| gpa.free(data),
+    // }
 }
 
 // pub fn write(
