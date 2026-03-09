@@ -5,44 +5,6 @@ const RGBA = @import("Formats/RGBA.zig");
 /// Image Formats
 const BMP = @import("Formats/bmp.zig");
 // Types
-const BitTypeEnum = enum(u8) {
-    rgb,
-    rgba,
-};
-
-pub const BitType = union(BitTypeEnum) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-};
-
-const Colorspace = enum(u8) {
-    srgb = 0,
-    linear = 1,
-};
-
-const MapImageExtToImageFileEnum: std.StaticStringMap(ImageFileEnum) = .initComptime(.{
-    // .{ "jpeg", .jpg },
-    // .{ "jpe", .jpg },
-    // .{ "jfif", .jpg },
-    // .{ "jif", .gif },
-    // .{ "tiff", .tif },
-    // .{ "hif", .heic },
-    // .{ "dib", .bmp },
-});
-
-/// Instantiates union based on filepath extension
-fn fromExt(filepath: []const u8) !ImageFile {
-    if (filepath.len == 0) return error.InvalidFilepath;
-    const ext = std.fs.path.extension(filepath)[1..];
-    return std.meta.stringToEnum(ImageFileEnum, ext) orelse
-        MapImageExtToImageFileEnum.get(ext) orelse
-        error.UnsupportedImageFileExt;
-}
-/// Assumes srgb, width, height, pixels
-width: u32,
-height: u32,
-pixels: BitType,
-
 const ImageFileEnum = enum {
     bmp,
     // gif,
@@ -56,7 +18,6 @@ const ImageFileEnum = enum {
     // tga,
     // webp,
 };
-
 const ImageFile = union(ImageFileEnum) {
     bmp: BMP,
     // gif: @import("gif.zig"),
@@ -70,6 +31,38 @@ const ImageFile = union(ImageFileEnum) {
     // tga: @import("tga.zig"),
     // webp: @import("webp.zig"),
 };
+const BitTypeEnum = enum(u8) {
+    rgb,
+    rgba,
+};
+pub const BitType = union(BitTypeEnum) {
+    rgb: [*]RGB,
+    rgba: [*]RGBA,
+};
+const Colorspace = enum(u8) {
+    srgb = 0,
+    linear = 1,
+};
+const MapImageExtToImageFileEnum: std.StaticStringMap(ImageFileEnum) = .initComptime(.{
+    // .{ "jpeg", .jpg },
+    // .{ "jpe", .jpg },
+    // .{ "jfif", .jpg },
+    // .{ "jif", .gif },
+    // .{ "tiff", .tif },
+    // .{ "hif", .heic },
+    // .{ "dib", .bmp },
+});
+fn fromExt(filepath: []const u8) !ImageFile {
+    if (filepath.len == 0) return error.InvalidFilepath;
+    const ext = std.fs.path.extension(filepath)[1..];
+    return std.meta.stringToEnum(ImageFileEnum, ext) orelse
+        MapImageExtToImageFileEnum.get(ext) orelse
+        error.UnsupportedImageFileExt;
+}
+/// Assumes srgb colorspace
+width: u32,
+height: u32,
+pixels: BitType,
 
 /// 1. identifies file type with tagged union
 /// 2. switches on tagged union to call correct reader
@@ -98,15 +91,19 @@ pub fn read(
 
 /// Frees pixel data
 pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
+    _ = gpa;
     switch (self.pixels) {
-        .rgb => |rgb| {
-            const data: []RGB = rgb[0 .. self.header.width * self.header.height / 4];
-            gpa.free(data);
-        },
-        .rgba => |rgba| {
-            const data: []RGBA = rgba[0 .. self.width * self.height / 4];
-            gpa.free(data);
-        },
+        inline else => |data| {
+            std.debug.print("{s}\n", .{@typeName(@typeInfo(@TypeOf(data)).pointer.child)});
+        }
+        // .rgb => |rgb| {
+        //     const data: []RGB = rgb[0 .. self.header.width * self.header.height / 4];
+        //     gpa.free(data);
+        // },
+        // .rgba => |rgba| {
+        //     const data: []RGBA = rgba[0 .. self.width * self.height / 4];
+        //     gpa.free(data);
+        // },
     }
 }
 
