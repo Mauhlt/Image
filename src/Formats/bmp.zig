@@ -34,7 +34,7 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     switch (img.pixels) {
         inline else => |data| {
             const len = img.width * img.height;
-            for (data[0..len]) |*datum| datum.* = datum.swap();
+            for (data[0..len]) |*datum| datum.* = datum.flip();
         }
     }
 
