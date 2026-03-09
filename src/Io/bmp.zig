@@ -9,9 +9,9 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // rgb values stored bockwards - bgr
 // 4 bit + 8 bit bmps can be compressed
 
-pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
-    const hdr: Header = try .read(r, allo);
-    const body: Body = try .read(r, allo, &self.hdr);
+pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
+    const hdr: Header = try .read(r, gpa);
+    const body: Body = try .read(r, gpa, &hdr);
     return .{
         .width = hdr.width,
         .height = hdr.height,
