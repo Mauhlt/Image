@@ -99,7 +99,14 @@ pub fn read(
 /// Frees pixel data
 pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
     switch (self.pixels) {
-        inline else => |data| gpa.free(data),
+        .rgb => |rgb| {
+            const data: []RGB = rgb[0 .. self.header.width * self.header.height / 4];
+            gpa.free(data);
+        },
+        .rgba => |rgba| {
+            const data: []RGBA = rgba[0 .. self.width * self.height / 4];
+            gpa.free(data);
+        },
     }
 }
 
