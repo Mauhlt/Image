@@ -11,10 +11,14 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
+    const data: switch (hdr.bits_per_pixel) {
+        .rgba => []RGBA,
+        else => []RGB,
+    } = @ptrCast(@alignCast(try r.readAlloc(gpa, hdr.width * hdr.height / 4)));
     return .{
         .width = hdr.width,
         .height = hdr.height,
-        .pixels = .{ .rgba = @ptrCast(@alignCast(try r.readAlloc(gpa, hdr.width * hdr.height / 4))) },
+        .pixels = .{ .rgba = data.ptr },
     };
 }
 
