@@ -20,8 +20,8 @@ pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
         .width = hdr.width,
         .height = hdr.height,
         .pixels = switch (hdr.bits_per_pixel) {
-            .rgba => body.rgba,
-            else => body.rgb,
+            .rgba => .{ .rgba = body.rgba },
+            else => .{ .rgb = body.rgb },
         },
     };
 }
