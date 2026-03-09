@@ -1,10 +1,9 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const RGB = @import("Image.zig").RGB;
-const RGBA = @import("Image.zig").RGBA;
+const RGB = @import("RGB.zig");
+const RGBA = @import("RGBA.zig");
 
-hdr: Header,
-body: Body,
+// http://www.paulbourke.net/dataformats/tga/
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !void {
     self.hdr = try .read(r, allo);
