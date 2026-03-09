@@ -104,6 +104,6 @@ fn fromExt(filepath: []const u8) !ImageFile {
     const ext = std.fs.path.extension(filepath)[1..];
     const ext_enum: ImageFileEnum = std.meta.stringToEnum(ImageFileEnum, ext) orelse
         MapImageExtToImageFileEnum.get(ext) orelse
-        error.UnsupportedImageFileExt;
+        return error.UnsupportedImageFileExt;
     return @unionInit(ImageFile, @tagName(ext_enum), undefined);
 }
