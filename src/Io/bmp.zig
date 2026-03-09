@@ -56,7 +56,7 @@ const Header = struct {
     height: u32,
     planes: u16,
     bits_per_pixel: BitsPerPixel,
-    compression: Compression,
+    compression: u32,
     compressed_image_size: u32, // 0 = no compression
     x_pixels_per_mm: u32,
     y_pixels_per_mm: u32,
@@ -78,34 +78,44 @@ const Header = struct {
 
         // header
         const file_size = try r.takeInt(u32, .little);
-        const curr_file_size = file_size - @as(@TypeOf(file_size), @truncate(sig.len));
-        _ = curr_file_size;
+        // const curr_file_size = file_size - @as(@TypeOf(file_size), @truncate(sig.len));
+        std.debug.print("File Size: {}\n", .{file_size});
         const reserved = try r.takeInt(u32, .little);
+        std.debug.print("Reserved: {}\n", .{reserved});
         const data_offset = try r.takeInt(u32, .little);
+        std.debug.print("Data Offset: {}\n", .{data_offset});
 
         // info header
         const info_hdr_size = try r.takeInt(u32, .little); // changes based on dib or bmp
-
+        std.debug.print("Info Hdr Size: {}\n", .{info_hdr_size});
         const width = try r.takeInt(u32, .little);
+        std.debug.print("{}\n", .{width});
         const height = try r.takeInt(u32, .little);
+        std.debug.print("{}\n", .{height});
         const planes = try r.takeInt(u16, .little);
+        std.debug.print("Planes: {}\n", .{planes});
         const bits_per_pixel_num = try r.takeInt(u16, .little);
         const bits_per_pixel = std.enums.fromInt(BitsPerPixel, bits_per_pixel_num) orelse
             return error.InvalidBitsPerPixelEnumValue;
+        std.debug.print("Bits Per Pixel: {}\n", .{@intFromEnum(bits_per_pixel)});
         const compress_num = try r.takeInt(u32, .little);
-        const compression = std.enums.fromInt(Compression, compress_num) orelse
-            return error.InvalidEnumValue;
-        switch (compression) {
-            .rgb, .rgba => {},
-            else => return error.UnsupportedCompressionNumber,
-        }
-        const compressed_image_size = try r.takeInt(u32, .little);
-        const x_pixels_per_mm = try r.takeInt(u32, .little);
-        const y_pixels_per_mm = try r.takeInt(u32, .little);
-        const colors_used = try r.takeInt(u32, .little);
-        const important_colors = try r.takeInt(u32, .little);
+        std.debug.print("Compressed Number: {}\n", .{compress_num});
 
+        // const compression = std.enums.fromInt(Compression, compress_num) orelse
+        //     return error.InvalidEnumValue;
+        // switch (compression) {
+        //     .rgb, .rgba => {},
+        //     else => return error.UnsupportedCompressionNumber,
+        // }
+        const compressed_image_size = try r.takeInt(u32, .little);
+        std.debug.print("Compressed Image Size: {}\n", .{compressed_image_size});
+        const x_pixels_per_mm = try r.takeInt(u32, .little);
+        std.debug.print("X Pixels: {}\n", .{x_pixels_per_mm});
+        const y_pixels_per_mm = try r.takeInt(u32, .little);
+        std.debug.print("Y Pixels: {}\n", .{y_pixels_per_mm});
+        const colors_used = try r.takeInt(u32, .little);
         std.debug.print("Colors Used: {}\n", .{colors_used});
+        const important_colors = try r.takeInt(u32, .little);
         std.debug.print("Important Colors: {}\n", .{important_colors});
 
         if (data_offset > 54) {
