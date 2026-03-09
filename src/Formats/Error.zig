@@ -4,3 +4,5 @@ pub const DecodeError = error{
     ChunkIsNotHeader,
     InvalidHeaderLength,
 };
+
+pub const EncodeError = error{};
