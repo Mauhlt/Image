@@ -10,7 +10,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // 4 bit + 8 bit bmps can be compressed
 
 /// Converted to a fat ptr
-hdr: *Header,
+hdr: *const Header,
 // body: *Body,
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
