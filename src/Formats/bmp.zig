@@ -20,6 +20,7 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     };
     const num_to_read: usize = hdr.width * hdr.height * pixel_len;
     const bytes = try r.readAlloc(gpa, num_to_read);
+    // try reading data as int - .big - then swap to rgb or rgba = no need for swap
 
     var img: Image = .{
         .width = hdr.width,
