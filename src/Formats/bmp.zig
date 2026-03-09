@@ -2,6 +2,7 @@ const std = @import("std");
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 const Image = @import("../root.zig");
+const BitType = @import("../root.zig").BitType;
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
@@ -17,6 +18,8 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         .rgba => 4,
         else => 3,
     };
+    const num_read: usize = 1;
+    std.debug.print("{} {}\n", .{ num_read, pixel_len });
     const data = try r.readAlloc(gpa, num_read * pixel_len);
 
     return .{
