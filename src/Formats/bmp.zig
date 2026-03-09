@@ -14,7 +14,7 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     return .{
         .width = hdr.width,
         .height = hdr.height,
-        .pixels = .{ .rgba = try r.readAlloc(gpa, hdr.width * hdr.height / 4) },
+        .pixels = .{ .rgba = @ptrCast(@alignCast(try r.readAlloc(gpa, hdr.width * hdr.height / 4))) },
     };
 }
 
