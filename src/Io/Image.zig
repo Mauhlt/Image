@@ -10,7 +10,21 @@ pixels: union(BitType) {
     rgba: [*]RGBA,
 },
 
-const ImageFileType = union(enum) {
+const ImageFileEnum = enum {
+    bmp,
+    // gif,
+    // heic,
+    // jpg,
+    // paint,
+    // png,
+    // ppm,
+    // qoi,
+    // tif,
+    // tga,
+    // webp,
+};
+
+const ImageFile = union(ImageFileEnum) {
     bmp: @import("bmp.zig"),
     // gif: @import("gif.zig"),
     // heic: @import("heic.zig"),
@@ -74,7 +88,7 @@ const Colorspace = enum(u8) {
     linear = 1,
 };
 
-const MapImageExtToFileType: std.StaticStringMap(ImageFileType) = .initComptime(.{
+const MapImageExtToFileType: std.StaticStringMap(ImageFile) = .initComptime(.{
     // .{ "jpeg", .jpg },
     // .{ "jpe", .jpg },
     // .{ "jfif", .jpg },
@@ -84,11 +98,12 @@ const MapImageExtToFileType: std.StaticStringMap(ImageFileType) = .initComptime(
     // .{ "dib", .bmp },
 });
 
-fn fromExt(filepath: []const u8) !ImageFileType {
+/// Instantiates union based on filepath extension
+fn fromExt(filepath: []const u8) !ImageFile {
     if (filepath.len == 0) return error.InvalidFilepath;
     const ext = std.fs.path.extension(filepath);
-    const ext_enum = std.meta.stringToEnum(ImageFileType, ext[1..ext.len]) orelse
+    const ext_enum = std.meta.stringToEnum(ImageFileEnum, ext[1..ext.len]) orelse
         MapImageExtToFileType.get(ext[1..ext.len]) orelse
         error.UnsupportedImageFileExt;
-    return @unionInit(ImageFileType, @tagName(ext_enum), undefined);
+    return @unionInit(ImageFile, @tagName(ext_enum), undefined);
 }
