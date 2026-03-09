@@ -95,7 +95,10 @@ const Header = struct {
         const compress_num = try r.takeInt(u32, .little);
         const compression = std.enums.fromInt(Compression, compress_num) orelse
             return error.InvalidEnumValue;
-        if (compress_num != .rgb) return error.UnsupportedCompressionNumber;
+        switch (compression) {
+            .rgb, .rgba => {},
+            else => return error.UnsupportedCompressionNumber,
+        }
         const compressed_image_size = try r.takeInt(u32, .little);
         const x_pixels_per_mm = try r.takeInt(u32, .little);
         const y_pixels_per_mm = try r.takeInt(u32, .little);
