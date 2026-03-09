@@ -3,6 +3,7 @@ const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 const Image = @import("../root.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
+
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 // scanlines = bottom to top
 // each scan line is 0 padded to nearest 4-byte boundary
@@ -11,11 +12,10 @@ const isSigSame = @import("Misc.zig").isSigSame;
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, gpa);
-    const data = try gpa.alloc(u8, hdr.width * hdr.height);
-    try r.readSliceAll(data);
+    const data = try r.readAlloc(gpa, 4);
     return .{
-        .width = hdr.width,
-        .height = hdr.height,
+        .width = 1, // hdr.width,
+        .height = 1, // hdr.height,
         .pixels = switch (hdr.bits_per_pixel) {
             .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(data))).ptr },
             else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(data))).ptr },
