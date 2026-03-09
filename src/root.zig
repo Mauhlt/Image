@@ -88,10 +88,9 @@ pub fn read(
 
 /// Frees pixel data
 pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
-    _ = gpa;
     switch (self.pixels) {
         inline else => |data| {
-            std.debug.print("{s}\n", .{@typeName(@typeInfo(@TypeOf(data)).pointer.child)});
+            gpa.free(data[0 .. self.width * self.height]);
         }
     }
 }
