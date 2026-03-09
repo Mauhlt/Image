@@ -15,7 +15,7 @@ hdr: *Header,
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !Image {
     const hdr: Header = try .read(r, allo);
-    const body: Body = try .read(r, allo, self.hdr);
+    const body: Body = try .read(r, allo, &self.hdr);
     return .{
         .width = hdr.width,
         .height = hdr.height,
