@@ -19,16 +19,25 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         else => 3,
     };
     const num_to_read: usize = hdr.width * hdr.height * pixel_len;
-    const data = try r.readAlloc(gpa, num_to_read);
+    const bytes = try r.readAlloc(gpa, num_to_read);
 
-    return .{
+    var img: Image = .{
         .width = hdr.width,
         .height = hdr.height,
         .pixels = switch (hdr.bits_per_pixel) {
-            .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(data))).ptr },
-            else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(data))).ptr },
+            .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(bytes))).ptr },
+            else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(bytes))).ptr },
         },
     };
+
+    switch (img.pixels) {
+        inline else => |data| {
+            const len = img.width * img.height;
+            for (data[0..len]) |*datum| datum.* = datum.swap();
+        }
+    }
+
+    return img;
 }
 
 const BitsPerPixel = enum(u16) {
