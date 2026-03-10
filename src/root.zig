@@ -33,40 +33,9 @@ const ImageFile = union(ImageFileEnum) {
     // tga: @import("tga.zig"),
     // webp: @import("webp.zig"),
 };
-const BitTypeEnum = enum(u8) {
-    rgb,
-    rgba,
-};
-pub const BitType = union(BitTypeEnum) {
+pub const BitType = union(enum) {
     rgb: [*]RGB,
     rgba: [*]RGBA,
-
-    pub fn swap(self: @This(), gpa: std.mem.Allocator, len: usize) @This() {
-        switch (self) {
-            .rgb => |rgbs| {
-                const rgbas: []RGBA = try gpa.alloc(RGBA, len);
-                for (0..len) |i| {
-                    const rgb = rgbs[i];
-                    rgbas[i] = .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 0xFF };
-                }
-                gpa.free(rgbs);
-                return .{ .rgba = rgbas.ptr };
-            },
-            .rgba => |rgbas| {
-                const rgbs: []RGB = try gpa.alloc(RGB, len);
-                for (0..len) |i| {
-                    const rgba = rgbas[i];
-                    rgbs[i] = .{ .r = rgba.r, .g = rgba.g, .b = rgba.b };
-                }
-                gpa.free(rgbas);
-                return .{ .rgb = rgbs.ptr };
-            },
-        }
-    }
-};
-const Colorspace = enum(u8) {
-    srgb = 0,
-    linear = 1,
 };
 const MapImageExtToImageFileEnum: std.StaticStringMap(ImageFileEnum) = .initComptime(.{
     // .{ "jpeg", .jpg },
@@ -168,3 +137,43 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
 //         inline else => |*img| img.write(io_writer, allo, self),
 //     }
 // }
+
+/// Swap from rgb to rgbas or vice versa
+pub fn swap(self: *@This(), gpa: std.mem.Allocator) @This() {
+    const len = self.extent.width * self.extent.height * self.extent.depth;
+    const old_format = @tagName(self.pixel_format);
+    var new_format_buf: [1024]u8 = undefined;
+    switch (self.pixels) {
+        .rgb => |rgbs| {
+            const rgbas: []RGBA = try gpa.alloc(RGBA, len);
+            for (0..len) |i| {
+                const rgb = rgbs[i];
+                rgbas[i] = .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 0xFF };
+            }
+            gpa.free(rgbs);
+            self.pixels = .{ .rgba = rgbas.ptr };
+            // add a8
+            const idx = std.mem.indexOf(u8, old_format, "_").?;
+            std.debug.assert(idx < old_format.len);
+            @memcpy(new_format_buf[0..idx], old_format[0..idx]);
+            @memcpy(new_format_buf[idx .. idx + 2], "a8");
+            @memcpy(new_format_buf[idx + 2 .. idx + 2 + old_format.len], old_format[idx..old_format.len]);
+            self.pixel_format = std.meta.stringToEnum(vk.Format, "").?;
+        },
+        .rgba => |rgbas| {
+            const rgbs: []RGB = try gpa.alloc(RGB, len);
+            for (0..len) |i| {
+                const rgba = rgbas[i];
+                rgbs[i] = .{ .r = rgba.r, .g = rgba.g, .b = rgba.b };
+            }
+            gpa.free(rgbas);
+            self.pixels = .{ .rgb = rgbs.ptr };
+            // remove a8
+            const idx = std.mem.indexOf(u8, old_format, "a8").?;
+            std.debug.assert(idx <= old_format.len - 2);
+            @memcpy(new_format_buf[0..idx], old_format[0..idx]);
+            @memcpy(new_format_buf[idx .. old_format.len - 2], old_format[idx + 2 .. old_format.len]);
+            self.pixel_format = std.meta.stringToEnum(vk.Format, new_format_buf[0 .. old_format.len - 2]).?;
+        },
+    }
+}
