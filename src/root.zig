@@ -38,6 +38,29 @@ const BitTypeEnum = enum(u8) {
 pub const BitType = union(BitTypeEnum) {
     rgb: [*]RGB,
     rgba: [*]RGBA,
+
+    pub fn swap(self: @This(), gpa: std.mem.Allocator, len: usize) @This() {
+        switch (self) {
+            .rgb => |rgbs| {
+                const rgbas: []RGBA = try gpa.alloc(RGBA, len);
+                for (0..len) |i| {
+                    const rgb = rgbs[i];
+                    rgbas[i] = .{ .r = rgb.r, .g = rgb.g, .b = rgb.b, .a = 0xFF };
+                }
+                gpa.free(rgbs);
+                return .{ .rgba = rgbas.ptr };
+            },
+            .rgba => |rgbas| {
+                const rgbs: []RGB = try gpa.alloc(RGB, len);
+                for (0..len) |i| {
+                    const rgba = rgbas[i];
+                    rgbs[i] = .{ .r = rgba.r, .g = rgba.g, .b = rgba.b };
+                }
+                gpa.free(rgbas);
+                return .{ .rgb = rgbs.ptr };
+            },
+        }
+    }
 };
 const Colorspace = enum(u8) {
     srgb = 0,
