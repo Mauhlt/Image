@@ -2,10 +2,15 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+
     const mod = b.addModule("Image", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
+
+    // Libraries
+    const Vulkan = b.dependency("Vulkan", .{});
+    mod.addImport("Vulkan", Vulkan.module("Vulkan"));
 
     const exe = b.addExecutable(.{
         .name = "Image",

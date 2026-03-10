@@ -25,24 +25,17 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         },
         else => unreachable,
     };
-    std.debug.print("No Error.\n", .{});
-    // create img
-    var img: Image = .{
-        .width = hdr.width,
-        .height = hdr.height,
+    return .{
+        .extent = .{
+            .width = hdr.width,
+            .height = hdr.height,
+        },
         .pixels = switch (hdr.bits_per_pixel) {
             .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(bytes))).ptr },
             else => .{ .rgb = @as([]RGB, @ptrCast(@alignCast(bytes))).ptr },
         },
+        .pixel_format = .b8g8r8_srgb,
     };
-    // flip pixels: bgr to rgb order
-    switch (img.pixels) {
-        inline else => |data| {
-            const len = img.width * img.height;
-            for (data[0..len]) |*datum| datum.* = datum.flip();
-        }
-    }
-    return img;
 }
 
 const BitsPerPixel = enum(u16) {

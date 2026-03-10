@@ -1,4 +1,6 @@
 # Dirs
 .git/
+.gitignore
 .zig-cache/
 zig-out/
+zig-pkg/

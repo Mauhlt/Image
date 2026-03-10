@@ -1,7 +1,9 @@
 const std = @import("std");
-/// Libs
+/// Imports
 const RGB = @import("Formats/RGB.zig");
 const RGBA = @import("Formats/RGBA.zig");
+/// Libraries
+const vk = @import("Vulkan");
 /// Image Formats
 const BMP = @import("Formats/bmp.zig");
 // Types
@@ -75,10 +77,14 @@ const MapImageExtToImageFileEnum: std.StaticStringMap(ImageFileEnum) = .initComp
     // .{ "hif", .heic },
     // .{ "dib", .bmp },
 });
-/// Assumes srgb colorspace
-width: u32,
-height: u32,
-pixels: BitType,
+/// Fields
+extent: vk.Extent3D = .{
+    .width = 0,
+    .height = 0,
+    .depth = 1, // default is 1
+},
+pixels: BitType, // instead of a union - maybe use []const u8 + format to identify type?
+pixel_format: vk.Format,
 /// Fns
 fn fromExt(filepath: []const u8) !ImageFile {
     if (filepath.len == 0) return error.InvalidFilepath;
@@ -116,6 +122,21 @@ pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
     switch (self.pixels) {
         inline else => |data| {
             gpa.free(data[0 .. self.width * self.height]);
+        }
+    }
+}
+
+/// prints img data
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    try w.print(
+        "Image\nDims:\n\tWidth: {}\n\tHeight: {}\n\tDepth: {}\n\tFormat: {t}\n\t",
+        .{ self.extent.width, self.extent.height, self.extent.depth, self.pixel_format },
+    );
+    switch (self.pixels) {
+        inline else => |data| {
+            try w.print("1. {}\n", .{data[0]});
+            const len = self.extent.width * self.extent.height * self.extent.depth - 1;
+            try w.print("{}. {}\n", .{data[len]});
         }
     }
 }
