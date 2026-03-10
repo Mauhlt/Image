@@ -91,6 +91,7 @@ fn fromExt(filepath: []const u8) !ImageFile {
 /// 1. identifies file type with tagged union
 /// 2. switches on tagged union to call correct reader
 /// 3. all files return an image
+/// 4. is there a way to read the data in the format i want
 pub fn read(
     io: std.Io,
     gpa: std.mem.Allocator,

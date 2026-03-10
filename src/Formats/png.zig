@@ -25,17 +25,18 @@ const Header = struct {
     }
 };
 
-const Body = struct {
-    data: []const RGBA,
+const Body = union(enum) {
+    rgb: [*]RGB,
+    rgba: [*]RGBA,
 
     pub fn read(
         r: *std.Io.Reader,
-        allo: std.mem.Allocator,
-        hdr: Header,
+        gpa: std.mem.Allocator,
+        hdr: *const Header,
     ) !@This() {
         _ = r;
-        const data = try allo.alloc(RGBA, hdr.width * hdr.height);
-        defer allo.free(data);
+        const data = try gpa.alloc(RGBA, hdr.width * hdr.height);
+        defer gpa.free(data);
     }
 
     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
