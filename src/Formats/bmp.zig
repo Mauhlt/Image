@@ -29,6 +29,7 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
         .extent = .{
             .width = hdr.width,
             .height = hdr.height,
+            .depth = 1,
         },
         .pixels = switch (hdr.bits_per_pixel) {
             .rgba => .{ .rgba = @as([]RGBA, @ptrCast(@alignCast(bytes))).ptr },

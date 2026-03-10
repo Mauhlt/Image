@@ -119,10 +119,9 @@ pub fn read(
 
 /// Frees pixel data
 pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
+    const len = self.extent.width * self.extent.height * self.extent.depth;
     switch (self.pixels) {
-        inline else => |data| {
-            gpa.free(data[0 .. self.width * self.height]);
-        }
+        inline else => |data| gpa.free(data[0..len]),
     }
 }
 
@@ -132,11 +131,14 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         "Image\nDims:\n\tWidth: {}\n\tHeight: {}\n\tDepth: {}\n\tFormat: {t}\n\t",
         .{ self.extent.width, self.extent.height, self.extent.depth, self.pixel_format },
     );
+    const page_len: @TypeOf(self.extent.width), var overflow: u1 = @mulWithOverflow(self.extent.width, self.extent.height);
+    if (overflow > 1) try w.print("Width * Height Overflowed.\n", .{});
+    const book_len, overflow = @mulWithOverflow(page_len, self.extent.depth);
+    if (overflow == 1) try w.print("Width * Height * Depth Overflowed.\n", .{});
     switch (self.pixels) {
         inline else => |data| {
-            try w.print("1. {}\n", .{data[0]});
-            const len = self.extent.width * self.extent.height * self.extent.depth - 1;
-            try w.print("{}. {}\n", .{data[len]});
+            try w.print("1. {any}\n", .{data[0]});
+            try w.print("{}. {any}\n", .{ book_len, data[book_len - 1] });
         }
     }
 }

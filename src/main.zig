@@ -14,7 +14,7 @@ pub fn main() !void {
     var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
     defer img.deinit(gpa);
 
-    img.print();
+    std.debug.print("{f}", .{img});
 
     // switch (img.pixels) {
     //     inline else => |data| {
