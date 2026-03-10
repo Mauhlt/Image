@@ -3,7 +3,7 @@ g: u8,
 b: u8,
 a: u8,
 
-pub fn flip(self: @This()) @This() {
+pub fn bgr(self: *const @This()) @This() {
     return .{
         .r = self.a,
         .g = self.b,

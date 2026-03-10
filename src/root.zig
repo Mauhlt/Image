@@ -131,14 +131,21 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         "Image\nDims:\n\tWidth: {}\n\tHeight: {}\n\tDepth: {}\n\tFormat: {t}\n\t",
         .{ self.extent.width, self.extent.height, self.extent.depth, self.pixel_format },
     );
-    const page_len: @TypeOf(self.extent.width), var overflow: u1 = @mulWithOverflow(self.extent.width, self.extent.height);
-    if (overflow > 1) try w.print("Width * Height Overflowed.\n", .{});
-    const book_len, overflow = @mulWithOverflow(page_len, self.extent.depth);
-    if (overflow == 1) try w.print("Width * Height * Depth Overflowed.\n", .{});
+    const len = self.extent.width * self.extent.height * self.extent.depth;
     switch (self.pixels) {
         inline else => |data| {
-            try w.print("1. {any}\n", .{data[0]});
-            try w.print("{}. {any}\n", .{ book_len, data[book_len - 1] });
+            const name = @tagName(self.pixel_format);
+            var first_pixel: @TypeOf(data[0]) = undefined;
+            var last_pixel: @TypeOf(data[1]) = undefined;
+            if (std.mem.startsWith(u8, name, "r8g8b8")) {
+                first_pixel = data[0];
+                last_pixel = data[1];
+            } else if (std.mem.startsWith(u8, name, "b8g8r8")) {
+                first_pixel = data[0].bgr();
+                last_pixel = data[len - 1].bgr();
+            }
+            try w.print("1. {any}\n", .{first_pixel});
+            try w.print("{}. {any}\n", .{ len, last_pixel });
         }
     }
 }
