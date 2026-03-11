@@ -222,7 +222,9 @@ const Header = struct {
     }
 
     pub fn deinit(hdr: *const @This(), gpa: std.mem.Allocator) void {
-        gpa.free(hdr.color_table);
+        switch (hdr.color_table) {
+            inline else => |colors| gpa.free(colors[0..hdr.n_colors]),
+        }
     }
 
     /// writing to a file
