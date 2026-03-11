@@ -33,7 +33,7 @@ const Header = struct {
     compressed_image_size: u32,
     n_colors_used: u32,
     important_colors: u32,
-    color_table: [][]u8,
+    color_table: []RGB,
 
     pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !void {
         const header_data = try r.readAlloc(gpa, 14);
@@ -42,36 +42,39 @@ const Header = struct {
         const sig = header_data[0..2];
         try isSigSame(sig, SIG);
         const file_size = std.mem.readInt(u32, header_data[2..][0..4], .little);
-        const data_offset = std.mem.readInt(u32, header_data[6..][0..4], .little);
-        const dib_hdr_size = std.mem.readInt(u32, header_data[10..][0..4], .little);
-        if (dib_hdr_size != 40) return Error.Decode.InvalidHeader;
+        const data_offset = std.mem.readInt(u32, header_data[10..][0..4], .little);
 
-        const info_header_data = try r.readAlloc(gpa, 54);
+        const info_header_data = try r.readAlloc(gpa, 40);
         defer gpa.free(info_header_data);
-        const raw_width = std.mem.readInt(i32, info_header_data[18..][0..4], .little);
-        const raw_height = std.mem.readInt(i32, info_header_data[22..][0..4], .little);
+        const dib_hdr_size = std.mem.readInt(u32, header_data[0..4], .little);
+        if (dib_hdr_size != 40) return Error.Decode.InvalidHeader;
+        const raw_width = std.mem.readInt(i32, info_header_data[4..][0..4], .little);
+        const raw_height = std.mem.readInt(i32, info_header_data[8..][0..4], .little);
         if (raw_width <= 0 or raw_height == 0) return Error.Decode.InvalidDimensions;
         const width: u32 = @intCast(raw_width);
         const height: u32 = @intCast(@abs(raw_height));
         const is_top_down: bool = raw_height < 0;
-
-        const n_planes = std.mem.readInt(u16, info_header_data[26..][0..2], .little);
+        const n_planes = std.mem.readInt(u16, info_header_data[10..][0..2], .little);
         if (n_planes != 1) return Error.Decode.InvalidDimensions;
-
-        const bits_per_pixel = std.enums.fromInt(BitsPerPixel, std.mem.readInt(u32, info_header_data[28..][0..2], .little)) orelse
+        const bits_per_pixel = std.enums.fromInt(BitsPerPixel, std.mem.readInt(u32, info_header_data[12..][0..2], .little)) orelse
             return Error.Decode.InvalidBitsPerPixel;
         const n_possible_colors = @as(u32, 1) << @truncate(@as(u32, @intFromEnum(bits_per_pixel)));
-        const compression = std.enums.fromInt(Compression, info_header_data[30..][0..4]) orelse
+        const compression = std.enums.fromInt(Compression, info_header_data[16..][0..4]) orelse
             return Error.Decode.InvalidCompression;
         if (compression != .none) return Error.Decode.InvalidCompression;
-        const compressed_image_size = std.mem.readInt(u32, info_header_data[34..][0..4], .little);
-        const n_colors_used = std.mem.readInt(u32, info_header_data[42..][0..4], .little);
-        const important_colors = std.mem.readInt(u32, info_header_data[46..][0..4], .little);
+        const compressed_image_size = std.mem.readInt(u32, info_header_data[20..][0..4], .little);
+        const n_colors_used = std.mem.readInt(u32, info_header_data[32..][0..4], .little);
+        if (bits_per_pixel == .bit_8_pallet and n_colors_used != 256)
+            return Error.Decode.InvalidBitsPerPixel;
+        const important_colors = std.mem.readInt(u32, info_header_data[36..][0..4], .little);
 
+        const colors = try r.readAlloc(gpa, @sizeOf(RGB) * n_colors_used);
+        defer gpa.free(colors);
         const color_table: [][]u8 = switch (bits_per_pixel) {
             .rgb_24, .rgba => &.{},
-            else => try gpa.alloc(u8, 10),
+            else => try gpa.alloc(RGB, n_colors_used),
         };
+        errdefer gpa.free(color_table);
 
         return .{
             .file_size = file_size,
@@ -89,9 +92,13 @@ const Header = struct {
             .color_table = color_table,
         };
     }
+
+    pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
+        gpa.free(self.color_table);
+    }
 };
 
-const BitsPerPixel = enum {
+const BitsPerPixel = enum(u32) {
     monochrome = 1,
     bit_4_pallet = 4,
     bit_8_pallet = 8,
