@@ -17,9 +17,26 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     defer hdr.deinit(gpa);
 
     // parse data here
-    const compressed_image = try r.readAlloc(gpa, hdr.compressed_image_size);
-
-    return error.Unimplemented;
+    return .{
+        .extent = .{
+            .width = hdr.width,
+            .height = hdr.height,
+            .depth = hdr.depth,
+        },
+        .pixel_format = switch (hdr.bits_per_pixel) {
+            .monochrome => unreachable,
+            .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => .r8g8b8_srgb,
+            .rgba => .r8g8b8a8_srgb,
+        },
+        .pixels = switch (hdr.compression) {
+            .none => switch (hdr.bits_per_pixel) {
+                .monochrome => unreachable,
+                .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => .{ .rgb = try r.readAlloc(gpa, hdr.compressed_image_size) },
+                .rgba => .{ .rgba = try r.readAlloc(gpa, hdr.compressed_image_size) },
+            },
+            else => unreachable
+        },
+    };
 }
 
 const Header = struct {
