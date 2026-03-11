@@ -16,6 +16,23 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
     const hdr: Header = try .init(r, gpa);
     defer hdr.deinit(gpa);
 
+    const data: []u8 = try r.readAlloc(gpa, hdr.compressed_image_size);
+    errdefer gpa.free(data);
+    const pixels: BitType = blk: switch (hdr.bits_per_pixel) {
+        .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => {
+            switch (hdr.compression) {
+                .none => break :blk .{ .rgb = @ptrCast(@alignCast(data)) },
+                else => unreachable,
+            }
+        },
+        .rgba => {
+            switch (hdr.compression) {
+                .none => break :blk .{ .rgba = @ptrCast(@alignCast(data)) },
+                else => unreachable,
+            }
+        },
+    };
+
     // parse data here
     return .{
         .extent = .{
@@ -28,14 +45,7 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
             .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => .r8g8b8_srgb,
             .rgba => .r8g8b8a8_srgb,
         },
-        .pixels = switch (hdr.compression) {
-            .none => switch (hdr.bits_per_pixel) {
-                .monochrome => unreachable,
-                .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => .{ .rgb = try r.readAlloc(gpa, hdr.compressed_image_size) },
-                .rgba => .{ .rgba = try r.readAlloc(gpa, hdr.compressed_image_size) },
-            },
-            else => unreachable
-        },
+        .pixels = pixels,
     };
 }
 

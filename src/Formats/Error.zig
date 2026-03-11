@@ -1,4 +1,6 @@
 pub const Decode = error{
+    InvalidNumOfColors,
+    InvalidImportantColors,
     InvalidHeaderSize,
     InvalidBitsPerPixel,
     UnsupportedBitsPerPixel,
