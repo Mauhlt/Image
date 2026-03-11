@@ -1,9 +1,10 @@
-pub const DecodeError = error{
+pub const Decode = error{
     UnsupportedBitsPerPixel,
     UnexpectedSignature,
+    UnexpectedEndOfData,
     InvalidChunkType,
-    ChunkIsNotHeader,
     InvalidHeaderLength,
+    ChunkIsNotHeader,
 };
 
-pub const EncodeError = error{};
+pub const Encode = error{};

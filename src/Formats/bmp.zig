@@ -59,34 +59,126 @@ const Compression = enum(u32) {
 const Header = struct {
     pub const SIG: []const u8 = "BM";
 
-    pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Header {
+    pub fn read(
+        r: *std.Io.Reader,
+        gpa: std.mem.Allocator,
+    ) !Header {
         var data = try r.readAlloc(gpa, 54);
         try isSigSame(data[0..2], SIG);
         const pixel_data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
 
         const dib_header_size = std.mem.readInt(u32, data[14..][0..4], .little);
         if (dib_header_size < 40)
-            return Error.DecodeError.InvalidHeader;
+            return Error.Decode.InvalidHeader;
 
-        const width: u32 = @intCast(@max(0, std.mem.readInt(i32, data[18..][0..4], .little)));
-        const height: u32 = @intCast(@abs(std.mem.readInt(i32, data[22..][0..4], .little)));
+        const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
+        const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
+        const width: u32 = @intCast(@max(@as(i32, 0), raw_width));
+        const height: u32 = @intCast(@abs(raw_height));
         if (width == 0 or height == 0)
-            return Error.DecodeError.InvalidDimensions;
+            return Error.Decode.InvalidDimensions;
+        const is_top_down: bool = height < 0;
 
-        const bits_per_pixel = switch (std.mem.readInt(u16, data[28..][0..2], .little)) {
+        const bits_per_pixel = std.mem.readInt(u16, data[28..][0..2], .little);
+        const n_channels = switch (bits_per_pixel) {
             8 => 3,
             24 => 3,
             32 => 4,
-            else => return Error.DecodeError.UnsupportedBitsPerPixel,
+            else => return Error.Decode.UnsupportedBitsPerPixel,
         };
 
         const compression_val = std.enums.fromInt(
             Compression,
             std.mem.readInt(u32, data[30..][0..4], .little),
-        ) orelse return Error.DecodeError.UnsupportedCompression;
-        if (compression_val != 0) return Error.DecodeError.UnsupportedCompression;
+        ) orelse return Error.Decode.UnsupportedCompression;
+        if (compression_val != 0)
+            return Error.Decode.UnsupportedCompression;
 
-        return .{};
+        // color table
+        const n_colors: u32 = switch (n_channels) {
+            1 => 1,
+            4 => 16,
+            8 => 256,
+            16 => 65536,
+            24 => 16_000_000,
+        };
+        var color_table = try gpa.alloc([3]u8, n_colors);
+        const table_offset: usize = 14 * dib_header_size;
+        const table_size: usize = n_colors * 3;
+
+        if (data.len < table_offset + table_size)
+            return Error.Decode.UnexpectedEndOfData;
+
+        for (0..n_colors) |i| {
+            const entry_offset = table_offset + i * 4;
+            // stored bgr
+            color_table[i] = .{
+                data[entry_offset + 2], // r
+                data[entry_offset + 1], // g
+                data[entry_offset + 0], // b
+            };
+        }
+
+        const n_pixels_per_row = (width * bits_per_pixel + 31) / 8;
+
+        if (data.len < pixel_data_offset + n_pixels_per_row * height)
+            return Error.Decode.UnexpectedEndOfData;
+
+        const total_bytes: u32 = width * height * n_channels;
+        const pixels = try gpa.alloc(u8, total_bytes);
+        errdefer gpa.free(pixels);
+
+        for (0..height) |row| {
+            // bottom-up = default
+            // top-down if height is negative
+            const src_row = if (is_top_down) row else height - row - 1;
+            const src_offset: u32 = pixel_data_offset + src_row * n_pixels_per_row;
+            const dst_offset: u32 = row * @as(usize, width) * n_channels;
+
+            for (0..width) |col| {
+                switch (bits_per_pixel) {
+                    8 => {
+                        const idx = data[src_offset + col];
+                        const entry = color_table[idx];
+                        const dst = dst_offset + col * 3;
+                        pixels[dst] = entry[0];
+                        pixels[dst + 1] = entry[1];
+                        pixels[dst + 2] = entry[2];
+                    },
+                    24 => {
+                        const src = src_offset + col * n_channels;
+                        const dst = dst_offset + col * n_channels;
+                        pixels[dst] = data[src + 2];
+                        pixels[dst + 1] = data[src + 1];
+                        pixels[dst + 2] = data[src];
+                    },
+                    32 => {
+                        const src = src_offset + col * n_channels;
+                        const dst = dst_offset + col * n_channels;
+                        pixels[dst] = data[src + 2]; // r
+                        pixels[dst + 1] = data[src + 1]; // g
+                        pixels[dst + 2] = data[src]; // b
+                        pixels[dst + 3] = data[src + 3]; // +3 - wtf?
+                    },
+                }
+            }
+        }
+
+        return Image{
+            .extent = .{
+                .width = width,
+                .height = height,
+                .depth = 1,
+            },
+            .pixel_format = switch (n_channels) {
+                3 => .rgb_srgb,
+                4 => .rgba_srgb,
+            },
+            .pixels = switch (n_channels) {
+                3 => .{ .rgb = pixels },
+                4 => .{ .rgba = pixels },
+            },
+        };
     }
 
     /// writing to a file
