@@ -1,7 +1,10 @@
 pub const Decode = error{
+    InvalidHeaderSize,
+    InvalidBitsPerPixel,
     UnsupportedBitsPerPixel,
     UnexpectedSignature,
     UnexpectedEndOfData,
+    InvalidCompression,
     UnsupportedCompression,
     UnsupportedNumChannels,
     InvalidChunkType,
