@@ -15,11 +15,4 @@ pub fn main() !void {
     defer img.deinit(gpa);
 
     std.debug.print("{f}", .{img});
-
-    // switch (img.pixels) {
-    //     inline else => |data| {
-    //         std.debug.print("{}\n", .{data[0]});
-    //         std.debug.print("{}\n", .{data[img.width * img.height - 1]});
-    //     },
-    // }
 }
