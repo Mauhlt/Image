@@ -1,4 +1,5 @@
 pub const DecodeError = error{
+    UnsupportedBitsPerPixel,
     UnexpectedSignature,
     InvalidChunkType,
     ChunkIsNotHeader,

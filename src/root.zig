@@ -143,6 +143,7 @@ pub fn swap(self: *@This(), gpa: std.mem.Allocator) @This() {
     const len = self.extent.width * self.extent.height * self.extent.depth;
     const old_format = @tagName(self.pixel_format);
     var new_format_buf: [1024]u8 = undefined;
+    // makes assumption that converting from old format to new format, i can append an a8 to list of image values
     switch (self.pixels) {
         .rgb => |rgbs| {
             const rgbas: []RGBA = try gpa.alloc(RGBA, len);

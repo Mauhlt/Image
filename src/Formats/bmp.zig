@@ -1,4 +1,5 @@
 const std = @import("std");
+const Error = @import("Error.zig");
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 const Image = @import("../root.zig");
@@ -49,95 +50,43 @@ const BitsPerPixel = enum(u16) {
 };
 
 const Compression = enum(u32) {
-    rgb, // no compression
+    none = 0,
     rle8 = 1,
     rle4 = 2,
+    bitfields = 3,
 };
 
 const Header = struct {
     pub const SIG: []const u8 = "BM";
-    // header
-    file_size: u32,
-    reserved: u32,
-    data_offset: u32,
-    // info header
-    info_hdr_size: u32,
-    width: u32,
-    height: u32,
-    planes: u16,
-    bits_per_pixel: BitsPerPixel,
-    compression: Compression,
-    compressed_image_size: u32, // 0 = no compression
-    x_pixels_per_mm: u32,
-    y_pixels_per_mm: u32,
-    colors_used: u32, // for 8 bit / pixel bitmap = 100h or 256
-    important_colors: u32,
-    // color table
-    // number_of_colors: u64,
-    // color_table: [][4]u8, // rgb reserved
 
-    /// reading from a file
-    pub fn read(
-        r: *std.Io.Reader,
-        gpa: std.mem.Allocator,
-    ) !@This() {
-        _ = gpa;
-        // signature
-        const sig = try r.take(2);
-        try isSigSame(sig, SIG);
+    pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Header {
+        var data = try r.readAlloc(gpa, 54);
+        try isSigSame(data[0..2], SIG);
+        const pixel_data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
 
-        // header
-        const file_size = try r.takeInt(u32, .little);
-        // const curr_file_size = file_size - @as(@TypeOf(file_size), @truncate(sig.len));
-        const reserved = try r.takeInt(u32, .little);
-        const data_offset = try r.takeInt(u32, .little);
+        const dib_header_size = std.mem.readInt(u32, data[14..][0..4], .little);
+        if (dib_header_size < 40)
+            return Error.DecodeError.InvalidHeader;
 
-        // info header
-        const info_hdr_size = try r.takeInt(u32, .little); // changes based on dib or bmp
-        const width = try r.takeInt(u32, .little);
-        const height = try r.takeInt(u32, .little);
-        const planes = try r.takeInt(u16, .little);
-        const bits_per_pixel_num = try r.takeInt(u16, .little);
-        const bits_per_pixel = std.enums.fromInt(BitsPerPixel, bits_per_pixel_num) orelse
-            return error.InvalidBitsPerPixelEnumValue;
-        const compress_num = try r.takeInt(u32, .little);
-        const compression = std.enums.fromInt(Compression, compress_num) orelse
-            return error.InvalidEnumValue;
-        switch (compression) {
-            .rgb => {},
-            else => return error.UnsupportedCompressionNumber,
-        }
-        const compressed_image_size = try r.takeInt(u32, .little); // amount of bytes to read
-        const x_pixels_per_mm = try r.takeInt(u32, .little);
-        const y_pixels_per_mm = try r.takeInt(u32, .little);
-        const colors_used = try r.takeInt(u32, .little);
-        const important_colors = try r.takeInt(u32, .little);
+        const width: u32 = @intCast(@max(0, std.mem.readInt(i32, data[18..][0..4], .little)));
+        const height: u32 = @intCast(@abs(std.mem.readInt(i32, data[22..][0..4], .little)));
+        if (width == 0 or height == 0)
+            return Error.DecodeError.InvalidDimensions;
 
-        if (data_offset > 54) {
-            return error.UnsupportedDataOffset;
-        }
-
-        return .{
-            // hdr
-            .file_size = file_size,
-            .reserved = reserved,
-            .data_offset = data_offset,
-            // info hdr
-            .info_hdr_size = info_hdr_size,
-            .width = width,
-            .height = height,
-            .planes = planes,
-            .bits_per_pixel = bits_per_pixel,
-            .compression = compression,
-            .compressed_image_size = compressed_image_size,
-            .x_pixels_per_mm = x_pixels_per_mm,
-            .y_pixels_per_mm = y_pixels_per_mm,
-            .colors_used = colors_used,
-            .important_colors = important_colors,
-            // color table
-            // .number_of_colors = number_of_colors,
-            // .color_table = color_table,
+        const bits_per_pixel = switch (std.mem.readInt(u16, data[28..][0..2], .little)) {
+            8 => 3,
+            24 => 3,
+            32 => 4,
+            else => return Error.DecodeError.UnsupportedBitsPerPixel,
         };
+
+        const compression_val = std.enums.fromInt(
+            Compression,
+            std.mem.readInt(u32, data[30..][0..4], .little),
+        ) orelse return Error.DecodeError.UnsupportedCompression;
+        if (compression_val != 0) return Error.DecodeError.UnsupportedCompression;
+
+        return .{};
     }
 
     /// writing to a file
