@@ -13,41 +13,51 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // 4 bit + 8 bit bmps can be compressed
 
 pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
-    const total_bytes: u32 = width * height * n_channels;
+    const hdr: Header = try .read(r, gpa);
+    defer hdr.deinit(gpa);
+
+    const total_bytes: u32 = hdr.width * hdr.height * hdr.n_channels;
+
+    // read all the data
+    var data = try r.readAlloc(gpa, total_bytes);
+    defer gpa.free(data);
+
     const pixels = try gpa.alloc(u8, total_bytes);
     errdefer gpa.free(pixels);
 
-    for (0..height) |row| {
+    var row: u32 = 0;
+    while (row < hdr.height) : (row +%= 1) {
         // bottom-up = default
         // top-down if height is negative
-        const src_row = if (is_top_down) row else height - row - 1;
-        const src_offset: u32 = pixel_data_offset + src_row * n_pixels_per_row;
-        const dst_offset: u32 = row * @as(usize, width) * n_channels;
+        const src_row = if (hdr.is_top_down) row else hdr.height - row - 1;
+        const src_offset: u32 = hdr.pixel_data_offset + src_row * hdr.n_pixels_per_row;
+        const dst_offset: u32 = row * hdr.width * hdr.n_channels;
 
-        for (0..width) |col| {
-            switch (bits_per_pixel) {
+        var col: u32 = 0;
+        while (col < hdr.width) : (col +%= 1) {
+            switch (hdr.bits_per_pixel) {
                 8 => {
                     const idx = data[src_offset + col];
-                    const entry = color_table[idx];
+                    const entry = hdr.color_table[idx];
                     const dst = dst_offset + col * 3;
                     pixels[dst] = entry[0];
                     pixels[dst + 1] = entry[1];
                     pixels[dst + 2] = entry[2];
                 },
                 24 => {
-                    const src = src_offset + col * n_channels;
-                    const dst = dst_offset + col * n_channels;
+                    const src = src_offset + col * hdr.n_channels;
+                    const dst = dst_offset + col * hdr.n_channels;
                     pixels[dst] = data[src + 2];
                     pixels[dst + 1] = data[src + 1];
                     pixels[dst + 2] = data[src];
                 },
                 32 => {
-                    const src = src_offset + col * n_channels;
-                    const dst = dst_offset + col * n_channels;
+                    const src = src_offset + col * hdr.n_channels;
+                    const dst = dst_offset + col * hdr.n_channels;
                     pixels[dst] = data[src + 2]; // r
                     pixels[dst + 1] = data[src + 1]; // g
                     pixels[dst + 2] = data[src]; // b
-                    pixels[dst + 3] = data[src + 3]; // +3 - wtf?
+                    pixels[dst + 3] = data[src + 3]; // a
                 },
             }
         }
@@ -55,15 +65,15 @@ pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
 
     return Image{
         .extent = .{
-            .width = width,
-            .height = height,
+            .width = hdr.width,
+            .height = hdr.height,
             .depth = 1,
         },
-        .pixel_format = switch (n_channels) {
+        .pixel_format = switch (hdr.n_channels) {
             3 => .rgb_srgb,
             4 => .rgba_srgb,
         },
-        .pixels = switch (n_channels) {
+        .pixels = switch (hdr.n_channels) {
             3 => .{ .rgb = pixels },
             4 => .{ .rgba = pixels },
         },
@@ -144,7 +154,7 @@ const Header = struct {
         };
         var color_table = try gpa.alloc([n_channels]u8, n_colors);
         for (color_table) |*ct| ct.* = try gpa.alloc(u8, n_channels);
-        const table_offset: usize = 14 * dib_header_size;
+        const table_offset: usize = 14 + dib_header_size;
         const table_size: usize = n_colors * n_channels;
 
         if (data.len < table_offset + table_size)
@@ -207,38 +217,5 @@ const Header = struct {
         try w.writeInt(u32, self.colors_used, .little);
         try w.writeInt(u32, self.important_colors, .little);
         // color table - not implemented
-    }
-};
-
-const Body = union(enum) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-
-    pub fn read(
-        r: *std.Io.Reader,
-        gpa: std.mem.Allocator,
-        hdr: *const Header,
-    ) !@This() {
-        std.debug.assert(hdr.width > 0 and hdr.height > 0);
-        const data = try r.readAlloc(gpa, hdr.compressed_image_size);
-        switch (hdr.compression) {
-            .rgb => {},
-            else => return error.UnsupportedCompression,
-        }
-        return switch (hdr.bits_per_pixel) {
-            .rgba => .{ .rgba = @ptrCast(@alignCast(data)) },
-            else => .{ .rgb = @ptrCast(@alignCast(data)) },
-        };
-    }
-
-    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.writeAll(self.data);
-    }
-
-    pub fn free(
-        self: Body,
-        gpa: std.mem.Allocator,
-    ) void {
-        gpa.free(self.data);
     }
 };
