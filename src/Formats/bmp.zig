@@ -12,13 +12,22 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // rgb values stored bockwards - bgr
 // 4 bit + 8 bit bmps can be compressed
 
-pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !Image {
-    const hdr: Header = try .init(r, gpa);
+pub fn read(data: []const u8, gpa: std.mem.Allocator) !Image {
+    const hdr: Header = try .init(data, gpa);
     defer hdr.deinit(gpa);
 
-    const data: []u8 = try r.readAlloc(gpa, hdr.compressed_image_size);
-    errdefer gpa.free(data);
+    const n_channels: u32 = switch (hdr.bits_per_pixel) {
+        .monochrome => unreachable,
+        .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => 3,
+        .rgba => 4,
+    };
+    var i: u32 = 0;
+    while (i < data.len) : (i += n_channels) {
+        std.mem.swap(u8, &data[i], &data[i + n_channels - 1]);
+    }
+
     const pixels: BitType = blk: switch (hdr.bits_per_pixel) {
+        .monochrome => unreachable,
         .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => {
             switch (hdr.compression) {
                 .none => break :blk .{ .rgb = @ptrCast(@alignCast(data)) },
@@ -66,52 +75,46 @@ const Header = struct {
     important_colors: u32,
     color_table: []RGBA,
 
-    pub fn init(r: *std.Io.Reader, gpa: std.mem.Allocator) !@This() {
-        const header_data = try r.readAlloc(gpa, 14);
-        defer gpa.free(header_data);
-        const sig = header_data[0..2];
+    pub fn init(data: []const u8, gpa: std.mem.Allocator) !@This() {
+        const sig = data[0..2];
         try isSigSame(sig, SIG);
-        const file_size = std.mem.readInt(u32, header_data[2..][0..4], .little);
-        const data_offset = std.mem.readInt(u32, header_data[10..][0..4], .little);
+        const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
+        const data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
 
-        const info_header_data = try r.readAlloc(gpa, 40);
-        defer gpa.free(info_header_data);
-        const dib_hdr_size = std.mem.readInt(u32, info_header_data[0..][0..4], .little);
+        const dib_hdr_size = std.mem.readInt(u32, data[14..][0..4], .little);
         if (dib_hdr_size != 40) return Error.Decode.InvalidHeaderLength;
-        const raw_width = std.mem.readInt(i32, info_header_data[4..][0..4], .little);
-        const raw_height = std.mem.readInt(i32, info_header_data[8..][0..4], .little);
+        const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
+        const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
         if (raw_width <= 0 or raw_height == 0) return Error.Decode.InvalidDimensions;
         const width: u32 = @intCast(raw_width);
         const height: u32 = @intCast(@abs(raw_height));
         const is_top_down: bool = raw_height < 0;
-        const n_planes = std.mem.readInt(u16, info_header_data[12..][0..2], .little);
+        const n_planes = std.mem.readInt(u16, data[26..][0..2], .little);
         if (n_planes > 1) return Error.Decode.InvalidDimensions;
         const bits_per_pixel = std.enums.fromInt(BitsPerPixel, //
-            std.mem.readInt(u16, info_header_data[14..][0..2], .little)) orelse
+            std.mem.readInt(u16, data[28..][0..2], .little)) orelse
             return Error.Decode.InvalidBitsPerPixel;
         const n_possible_colors = @as(u32, 1) << //
             @truncate(@as(u32, @intFromEnum(bits_per_pixel)));
         const compression = std.enums.fromInt(Compression, //
-            std.mem.readInt(u32, info_header_data[16..][0..4], .little)) orelse
+            std.mem.readInt(u32, data[30..][0..4], .little)) orelse
             return Error.Decode.InvalidCompression;
         const compressed_image_size = //
-            std.mem.readInt(u32, info_header_data[20..][0..4], .little);
+            std.mem.readInt(u32, data[34..][0..4], .little);
         switch (bits_per_pixel) {
             .rgb_24 => if (compression != .none) return Error.Decode.InvalidCompression,
             else => {},
         }
-        const n_colors_used = std.mem.readInt(u32, info_header_data[32..][0..4], .little);
+        const n_colors_used = std.mem.readInt(u32, data[46..][0..4], .little);
         if (n_colors_used > n_possible_colors) return Error.Decode.InvalidNumOfColors;
-        const important_colors = std.mem.readInt(u32, info_header_data[36..][0..4], .little);
+        const important_colors = std.mem.readInt(u32, data[50..][0..4], .little);
         if (important_colors > n_colors_used) return Error.Decode.InvalidImportantColors;
 
-        const colors = try r.readAlloc(gpa, @sizeOf(RGB) * n_colors_used);
-        defer gpa.free(colors);
         const color_table: []RGBA = switch (bits_per_pixel) {
             .rgb_24, .rgba => &.{},
-            else => try gpa.alloc(RGBA, n_colors_used),
+            else => &.{},
         };
-        errdefer gpa.free(color_table);
+        errdefer if (color_table.len > 0) gpa.free(color_table);
 
         return .{
             .file_size = file_size,

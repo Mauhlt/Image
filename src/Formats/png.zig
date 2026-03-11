@@ -2,6 +2,7 @@ const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
+const Image = @import("root.zig");
 
 pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !void {
     const hdr = try .init(r, allo);
@@ -14,7 +15,21 @@ pub fn write(self: *const @This(), w: *std.Io.Writer) void {
     try self.body.write(w);
 }
 
+const ColorType = enum(u8) {
+    gray = 0,
+    true = 1,
+    index = 3,
+    gray_alpha = 4,
+    true_alpha = 6,
+};
+
 const Header = struct {
+    width: u32,
+    height: u32,
+    bit_depth: u8,
+    color_type: ColorType,
+    interlace: u8,
+
     pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !@This() {
         _ = r;
         _ = allo;

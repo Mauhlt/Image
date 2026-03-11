@@ -75,13 +75,17 @@ pub fn read(
     const file = try std.Io.Dir.cwd().openFile(io, filepath, .{ .mode = .read_only });
     defer file.close(io);
 
+    const stat = try file.stat(io);
+
     var read_buffer: [4096]u8 = undefined;
     var reader = file.reader(io, &read_buffer);
-    const io_reader: *std.Io.Reader = &reader.interface;
+
+    const data = reader.interface.readAlloc(gpa, stat.size);
+    defer gpa.free(data);
 
     const image_file_enum = try fromExt(filepath);
     return switch (image_file_enum) {
-        .bmp => BMP.read(io_reader, gpa),
+        .bmp => BMP.read(data, gpa),
         // .png => PNG.read(io_reader, gpa),
     };
 }
