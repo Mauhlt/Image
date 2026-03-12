@@ -14,7 +14,7 @@ pub fn main() !void {
     // var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
     // defer img.deinit(gpa);
 
-    var img = try Image.read(io, gpa, "src/Data/BasicArt.qoi");
+    var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
     defer img.deinit(gpa);
 
     std.debug.print("{f}", .{img});
