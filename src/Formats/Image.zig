@@ -1,12 +1,9 @@
 const std = @import("std");
 const vk = @import("Vulkan");
 /// Color Structs
-pub const RGB = struct { r: u8, g: u8, b: u8 };
-pub const RGBA = struct { r: u8, g: u8, b: u8, a: u8 };
-pub const BitType = union(enum) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-};
+const RGB = @import("RGB.zig");
+const RGBA = @import("RGBA.zig");
+const BitType = @import("BitType.zig").BitType;
 /// Image Formats
 const BMP = @import("bmp.zig");
 const PNG = @import("png.zig");

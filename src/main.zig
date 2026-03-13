@@ -1,7 +1,7 @@
 const std = @import("std");
 const Io = std.Io;
 
-const Image = @import("Image");
+const Image = @import("root.zig");
 
 pub fn main() !void {
     var threaded = std.Io.Threaded.init_single_threaded;
@@ -13,9 +13,9 @@ pub fn main() !void {
 
     // var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
     // defer img.deinit(gpa);
+    //
+    // std.debug.print("{f}", .{img});
 
-    var img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
-    defer img.deinit(gpa);
-
-    std.debug.print("{f}", .{img});
+    const data = try Image.read(io, gpa, "src/Data/BasicArt.bmp", .{ .n_threads = 4 });
+    defer gpa.free(data);
 }

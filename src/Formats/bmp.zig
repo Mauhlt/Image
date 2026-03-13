@@ -1,6 +1,5 @@
 const std = @import("std");
 const Error = @import("Error.zig");
-const RGBA = @import("RGBA.zig");
 const BitType = @import("Image.zig").BitType;
 const Image = @import("Image.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
@@ -77,7 +76,7 @@ const Header = struct {
     compressed_image_size: u32,
     n_colors_used: u32,
     important_colors: u32,
-    color_table: []RGBA,
+    // color_table: []u8,
 
     pub fn init(gpa: std.mem.Allocator, r: *std.Io.Reader) !@This() {
         const hdr = try r.readAlloc(gpa, 14);
@@ -117,11 +116,11 @@ const Header = struct {
         const important_colors = std.mem.readInt(u32, info_hdr[36..][0..4], .little);
         if (important_colors > n_colors_used) return Error.Decode.InvalidImportantColors;
 
-        const color_table: []RGBA = switch (bits_per_pixel) {
-            .rgb_24, .rgba => &.{},
-            else => &.{},
-        };
-        errdefer if (color_table.len > 0) gpa.free(color_table);
+        // const color_table: = switch (bits_per_pixel) {
+        //     .rgb_24, .rgba => &.{},
+        //     else => &.{},
+        // };
+        // errdefer if (color_table.len > 0) gpa.free(color_table);
 
         return .{
             .file_size = file_size,
@@ -137,7 +136,7 @@ const Header = struct {
             .compressed_image_size = compressed_image_size,
             .n_colors_used = n_colors_used,
             .important_colors = important_colors,
-            .color_table = color_table,
+            // .color_table = color_table,
         };
     }
 

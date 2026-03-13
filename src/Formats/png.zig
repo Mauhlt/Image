@@ -1,8 +1,6 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const RGB = @import("RGB.zig");
-const RGBA = @import("RGBA.zig");
-const Image = @import("root.zig");
+const Image = @import("Image.zig");
 
 pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !void {
     const hdr = try .init(r, allo);
@@ -40,21 +38,21 @@ const Header = struct {
     }
 };
 
-const Body = union(enum) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-
-    pub fn read(
-        r: *std.Io.Reader,
-        gpa: std.mem.Allocator,
-        hdr: *const Header,
-    ) !@This() {
-        _ = r;
-        const data = try gpa.alloc(RGBA, hdr.width * hdr.height);
-        defer gpa.free(data);
-    }
-
-    pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.writeAll(self.data);
-    }
-};
+// const Body = union(enum) {
+//     rgb: [*]RGB,
+//     rgba: [*]RGBA,
+//
+//     pub fn read(
+//         r: *std.Io.Reader,
+//         gpa: std.mem.Allocator,
+//         hdr: *const Header,
+//     ) !@This() {
+//         _ = r;
+//         const data = try gpa.alloc(RGBA, hdr.width * hdr.height);
+//         defer gpa.free(data);
+//     }
+//
+//     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
+//         try w.writeAll(self.data);
+//     }
+// };
