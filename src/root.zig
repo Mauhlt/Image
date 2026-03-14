@@ -43,55 +43,43 @@ pub fn read(
     const file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
 
-    const file_len = try file.length(io);
+    const file_len = file.length(io) catch 0;
     if (file_len == 0) return error.NoDataInFile;
 
     const max_cpu_threads = std.Thread.getCpuCount() catch 0;
-    const is_single_threaded: bool = @import("builtin").single_threaded or //
-        request.n_threads == 0 or //
-        max_cpu_threads == 0;
-    if (is_single_threaded) {
+    if (isSingleThreaded(request.n_threads)) {
         var buf: [BUF_LEN]u8 = undefined;
         var reader = file.reader(io, &buf);
         return reader.interface.readAlloc(gpa, file_len);
     }
 
-    const data = try gpa.alloc(u8, file_len);
-    errdefer gpa.free(data);
+    var mm = try file.createMemoryMap(io, .{
+        .len = file_len,
+        .protection = .{ .read = true },
+    });
+    defer mm.destroy(io);
+    try mm.read(io);
 
-    const n_threads: u64 = @min(UPPER_LIMIT_THREADS, @min(max_cpu_threads, @min(request.n_threads, file_len / BUF_LEN)));
+    const data: []const u8 = try mm.memory[0..file_len];
+    const n_threads: u64 = @reduce(
+        .Min,
+        @as(@Vector(4, bool), .{
+            UPPER_LIMIT_THREADS,
+            max_cpu_threads,
+            request.n_threads,
+            file_len / BUF_LEN,
+        }),
+    );
     const chunk_size = file_len / n_threads;
 
-    const work_list = try gpa.alloc(Work, n_threads);
-    defer gpa.free(work_list);
+    const futures = try gpa.alloc(std.Io.Future(u64), n_threads);
+    defer gpa.free(futures);
 
-    var start: u64 = 0;
-    var end: u64 = chunk_size;
-    for (0..n_threads - 1) |i| {
-        work_list[i] = .{
-            .file = file,
-            .io = io,
-            .start = start,
-            .end = end,
-            .data = data,
-        };
-        start = end;
-        end = start + chunk_size;
-    }
-    work_list[n_threads - 1] = .{
-        .file = file,
-        .io = io,
-        .start = start,
-        .end = file_len,
-        .data = data,
-    };
-
-    const threads = try gpa.alloc(std.Thread, n_threads);
-    defer gpa.free(threads);
     for (0..n_threads) |i| {
-        threads[i] = try std.Thread.spawn(.{}, readData, .{&work_list[i]});
+        const start = i * chunk_size;
+        const end = @min(start + chunk_size, file_len);
+        futures[i] = io.async(readData, .{data[start..end]});
     }
-    for (threads) |t| t.join();
 
     return data;
 }
@@ -114,4 +102,24 @@ fn readData(work: *Work) void {
         // @memcpy(work.data[offset .. offset + n_bytes_read], buf[0..n_bytes_read]);
         offset += n_bytes_read;
     }
+}
+
+pub fn read2(io: std.Io, path: []const u8) !void {
+    const file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
+    defer file.close();
+
+    const file_len = try file.length(io);
+    if (file_len == 0) return error.NoDataInFile;
+
+    var mmap = try file.createMemoryMap(io, .{ .len = 4096 });
+    defer mmap.destroy(io);
+
+    try mmap.read(io);
+}
+
+fn isSingleThreaded(n_threads: u64) bool {
+    const max_cpu_threads = std.Thread.getCpuCount() catch 0;
+    return @import("builtin").single_threaded or //
+        n_threads == 0 or //
+        max_cpu_threads == 0;
 }
