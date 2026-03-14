@@ -4,3 +4,5 @@
 .zig-cache/
 zig-out/
 zig-pkg/
+main.exe
+main.pdb
