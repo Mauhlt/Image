@@ -4,8 +4,7 @@ const Image = @import("Image.zig");
 
 pub fn read(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr = try .decode(gpa, data);
-    const body = try .decode(gpa, &hdr, data);
-    _ = body;
+    // const body = try .decode(gpa, &hdr, data);
     return Image{
         .extent = .{
             .width = hdr.width,
@@ -13,7 +12,7 @@ pub fn read(gpa: std.mem.Allocator, data: []const u8) !Image {
             .depth = 1,
         },
         .pixel_format = .r8g8b8a8_srgb,
-        .pixels = pixels,
+        .pixels = undefined,
     };
 }
 
