@@ -12,6 +12,9 @@ pub fn main() !void {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
-    // memory grabs the data then parses it
-    try Image.read(io, gpa, "src/Data/BasicArt.bmp");
+    // memory grabs the data then parses it - it works!
+    const img = try Image.read(io, gpa, "src/Data/BasicArt.bmp");
+    defer img.deinit(gpa);
+    // std.debug.print("Img:\n\t{} x {} x {}", .{ img.extent.width, img.extent.height, img.extent.depth });
+    // std.debug.print("\n\t{}\n\t{}\n", .{ img.pixels.rgb[0], img.pixels.rgb[img.extent.width * img.extent.height - 1] });
 }

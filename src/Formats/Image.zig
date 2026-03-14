@@ -1,6 +1,11 @@
 const std = @import("std");
 const vk = @import("Vulkan");
-const BitType = @import("BitType.zig").BitType;
+const RGB = @import("RGB.zig");
+const RGBA = @import("RGBA.zig");
+pub const BitType = union(enum) {
+    rgb: [*]const RGB,
+    rgba: [*]const RGBA,
+};
 
 extent: vk.Extent3D = .{
     .width = 0,
