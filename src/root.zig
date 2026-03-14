@@ -2,6 +2,7 @@ const std = @import("std");
 const Image = @import("Formats/Image.zig");
 const BMP = @import("Formats/BMP.zig");
 const PNG = @import("Formats/PNG.zig");
+const vk = @import("Vulkan");
 
 pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
@@ -79,3 +80,24 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "hif", .heic },
     .{ "dib", .bmp },
 });
+
+test "Loading Images" {
+    const gpa = std.testing.allocator;
+
+    // still slower on mt mode - why?
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+
+    const files = [_][]const u8{"src/Data/BasicArt.bmp"}; // , "src/Data/BasicArt.png" };
+    const widths = [_]u32{1536}; // , 100 };
+    const heights = [_]u32{864}; // , 100 };
+    const formats = [_]vk.Format{.b8g8r8_srgb}; // , .r8g8b8_srgb };
+    for (files, widths, heights, formats) |file, width, height, format| {
+        const img = try read(io, gpa, file);
+        defer img.deinit(gpa);
+        try std.testing.expectEqual(img.extent.width, width);
+        try std.testing.expectEqual(img.extent.height, height);
+        // try std.testing.expectEqual(img.extent.depth, 1);
+        try std.testing.expectEqual(img.pixel_format, format);
+    }
+}
