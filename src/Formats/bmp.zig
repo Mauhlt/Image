@@ -1,5 +1,7 @@
 const std = @import("std");
 const Error = @import("Error.zig");
+const RGB = @import("RGB.zig");
+const RGBA = @import("RGBA.zig");
 const BitType = @import("Image.zig").BitType;
 const Image = @import("Image.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
@@ -9,18 +11,31 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // each scan line is 0 padded to nearest 4-byte boundary
 // rgb values stored bockwards - bgr
 // 4 bit + 8 bit bmps can be compressed
-pub fn decode(data: []const u8) !void { // !Image {
+pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
-    // const body: Body = try .decode(data);
-
+    const len = hdr.width * hdr.height * hdr.depth;
+    const pixels_slice = data[hdr.data_offset .. hdr.data_offset + hdr.compressed_image_size];
+    const pixels: BitType = blk: switch (hdr.bits_per_pixel) {
+        .rgb_16, .rgb_24 => {
+            const pixels = try gpa.alloc(RGB, len);
+            @memcpy(pixels, @as([]const RGB, @ptrCast(@alignCast(pixels_slice))));
+            break :blk .{ .rgb = pixels.ptr };
+        },
+        .rgba => {
+            const pixels = try gpa.alloc(RGBA, len);
+            @memcpy(pixels, @as([]const RGBA, @ptrCast(@alignCast(pixels_slice))));
+            break :blk .{ .rgba = pixels.ptr };
+        },
+        else => unreachable,
+    };
     return Image{
         .extent = .{
             .width = hdr.width,
             .height = hdr.height,
             .depth = 1,
         },
-        .pixel_format = .b8g8r8a8_srgb, // .b8g8r8_srgb - select at runtime - not possible yet
-        .pixels = .{ .rgba = data },
+        .pixel_format = .b8g8r8_srgb,
+        .pixels = pixels,
     };
 }
 
@@ -121,5 +136,3 @@ const Compression = enum(u32) {
     rle8 = 1,
     rle4 = 2,
 };
-
-const Body = struct {};

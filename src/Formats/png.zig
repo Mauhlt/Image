@@ -2,10 +2,19 @@ const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
 const Image = @import("Image.zig");
 
-pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !void {
-    const hdr = try .init(r, allo);
-    const body = try .init(r, allo, &hdr);
+pub fn read(gpa: std.mem.Allocator, data: []const u8) !Image {
+    const hdr = try .decode(gpa, data);
+    const body = try .decode(gpa, &hdr, data);
     _ = body;
+    return Image{
+        .extent = .{
+            .width = hdr.width,
+            .height = hdr.height,
+            .depth = 1,
+        },
+        .pixel_format = .r8g8b8a8_srgb,
+        .pixels = pixels,
+    };
 }
 
 pub fn write(self: *const @This(), w: *std.Io.Writer) void {
