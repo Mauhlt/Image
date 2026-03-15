@@ -2,19 +2,39 @@ const std = @import("std");
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
+// need to
 
 pub fn decode(data: []const u8) !void { // !Image {
     const hdr: Header = try .decode(data);
     var i: usize = 14;
     while (i < data.len) : (i += 1) {
-        switch (data[i]) {
-            0xFF => {},
-            else => return error.InvalidDecodeSymbol,
+        const color = std.enums.fromInt(Colors, data[i]) orelse
+            return error.InvalidColorEnum;
+        switch (color) {
+            .rgb => {
+                const rgb: RGB = @bitCast(data[i + 1 ..][0..3]);
+            },
+            .rgba => {
+                const rgba: RGBA = @bitCast(data[i + 1 ..][0..4]);
+            },
         }
     }
 }
 
+const Colors = enum(u8) {
+    rgb = 0b11111110,
+    rgba = 0b11111111,
+};
+
 pub fn encode() void {}
+
+fn index(c: RGBA) u6 {
+    return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
+}
+
+fn diffRGB(self: RGB, other: RGB) RGB {}
+
+fn diffRGBA() RGBA {}
 
 const Channels = enum(u8) {
     rgb = 3,
