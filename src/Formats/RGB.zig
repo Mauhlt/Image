@@ -2,6 +2,12 @@ r: u8,
 g: u8,
 b: u8,
 
+pub fn eql(self: @This(), other: @This()) bool {
+    return self.r == other.r and //
+        self.g == other.g and //
+        self.b == other.b;
+}
+
 pub fn diff(self: @This(), other: @This()) @This() {
     return .{
         .r = self.r - other.r,
