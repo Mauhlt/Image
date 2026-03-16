@@ -1,24 +1,20 @@
 const std = @import("std");
 const vk = @import("Vulkan");
-const RGB = @import("Color.zig").RGB;
-const RGBA = @import("Color.zig").RGBA;
-pub const BitType = union(enum) {
-    rgb: [*]RGB,
-    rgba: [*]RGBA,
-};
+const RGBA = @import("RGBA.zig");
 
-extent: vk.Extent3D = .{
-    .width = 0,
-    .height = 0,
-    .depth = 1,
-},
-pixels: BitType, // stored as multi-item pointer as len is defined by extent
-pixel_format: vk.Format,
+width: u32,
+height: u32,
+pixels: []RGBA,
+format: vk.Format,
 
-/// Frees pixel data
 pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
-    const len = self.extent.width * self.extent.height * self.extent.depth;
-    switch (self.pixels) {
-        inline else => |data| gpa.free(data[0..len]),
-    }
+    gpa.free(self.pixels);
 }
+
+pub fn depth(self: *const @This()) u32 {
+    const len = self.width * self.height;
+    std.debug.assert(@mod(self.pixels.len, len) == 0);
+    return @as(u32, @truncate(self.pixels.len)) / len;
+}
+
+// TODO: convert data order and format

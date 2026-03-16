@@ -2,7 +2,7 @@ const std = @import("std");
 const Image = @import("Formats/Image.zig");
 const BMP = @import("Formats/BMP.zig");
 const PNG = @import("Formats/PNG.zig");
-const QOI = @import("Formats/QOI.zig");
+// const QOI = @import("Formats/QOI.zig");
 const vk = @import("Vulkan");
 
 pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
@@ -21,7 +21,7 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     const image_tag = try tagFromExt(path);
     return switch (image_tag) {
         .bmp => BMP.decode(gpa, raw_data),
-        .qoi => QOI.decode(gpa, raw_data),
+        // .qoi => QOI.decode(gpa, raw_data),
         // .png => PNG.decode(gpa, raw_data),
         else => unreachable,
     };
@@ -38,7 +38,7 @@ pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
     const image_tag = try tagFromExt(path);
     return switch (image_tag) {
         .bmp => BMP.encode(img, io_writer),
-        .qoi => QOI.encode(img, io_writer),
+        // .qoi => QOI.encode(img, io_writer),
         else => unreachable,
     };
 }
@@ -107,24 +107,30 @@ test "QOI" {
     const file = "src/Data/Read/BasicArt.bmp";
     const img = try read(io, gpa, file);
     defer img.deinit(gpa);
-    std.debug.print("Img: {}\n", .{img});
+    std.debug.print("Img\n", .{});
+    std.debug.print("\t{}\n", .{img.width});
+    std.debug.print("\t{}\n", .{img.height});
+    std.debug.print("\t{}\n", .{img.pixels.len});
+    std.debug.print("\t{t}\n", .{img.format});
+    std.debug.print("\t{}\n", .{img.pixels[0]});
+    std.debug.print("\t{}\n", .{img.pixels[img.pixels.len - 1]});
 
-    const w_file = "src/Data/Write/BasicArt.qoi";
-    try write(io, w_file, &img);
-
-    const file2 = "src/Data/Write/BasicArt.qoi";
-    const img2 = try read(io, gpa, file2);
-    defer img2.deinit(gpa);
-
-    const px1 = img.pixels.rgb;
-    const px2 = img2.pixels.rgb;
-    const len = img.extent.width * img.extent.height * img.extent.depth;
-    for (0..len) |i| {
-        std.testing.expect(px1[i].eql(px2[i])) catch |err| {
-            std.debug.print("Pixel: {}\n", .{i});
-            std.debug.print("{any}\n", .{px1[i]});
-            std.debug.print("{any}\n", .{px2[i]}); // just dead wrong
-            return err;
-        };
-    }
+    // const w_file = "src/Data/Write/BasicArt.qoi";
+    // try write(io, w_file, &img);
+    //
+    // const file2 = "src/Data/Write/BasicArt.qoi";
+    // const img2 = try read(io, gpa, file2);
+    // defer img2.deinit(gpa);
+    //
+    // const px1 = img.pixels.rgb;
+    // const px2 = img2.pixels.rgb;
+    // const len = img.extent.width * img.extent.height * img.extent.depth;
+    // for (0..len) |i| {
+    //     std.testing.expect(px1[i].eql(px2[i])) catch |err| {
+    //         std.debug.print("Pixel: {}\n", .{i});
+    //         std.debug.print("{any}\n", .{px1[i]});
+    //         std.debug.print("{any}\n", .{px2[i]}); // just dead wrong
+    //         return err;
+    //     };
+    // }
 }

@@ -1,8 +1,6 @@
 const std = @import("std");
-const RGB = @import("Color.zig").RGB;
-const RGBA = @import("Color.zig").RGBA;
-const BitType = @import("Image.zig").BitType;
 const Image = @import("Image.zig");
+const RGBA = @import("RGBA.zig");
 const Format = @import("Vulkan").Format;
 const isSigSame = @import("Misc.zig").isSigSame;
 
@@ -26,20 +24,14 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             .srgb => break :blk .r8g8b8a8_srgb,
         },
     };
-    const pixels: BitType = switch (hdr.channels) {
-        .rgb => .{ .rgb = (try gpa.alloc(RGB, n_pixels)).ptr },
-        .rgba => .{ .rgba = (try gpa.alloc(RGBA, n_pixels)).ptr },
-    };
+    const pixels = try gpa.alloc(RGBA, n_pixels);
     errdefer gpa.free(pixels);
 
     var img: Image = .{
-        .extent = .{
-            .width = hdr.width,
-            .height = hdr.height,
-            .depth = 1,
-        },
+        .width = hdr.width,
+        .height = hdr.height,
         .pixels = pixels,
-        .pixel_format = pixel_format,
+        .format = pixel_format,
     };
 
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0xFF };
@@ -120,150 +112,170 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     if (overflow == 1) return error.InvalidDimensions;
 
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0xFF };
-    var indices = [_]RGBA{prev} ** 64;
+    // var indices = [_]RGBA{prev} ** 64;
     var i: usize = 0;
 
     switch (img.pixels) {
         .rgb => |pixels| {
-            std.debug.print("RGB\n", .{});
+            var n_matches: u8 = 0;
             while (i < n_pixels) : (i += 1) {
-                // run
-                var n_matches: u8 = 0;
-                while (i + 64 <= n_pixels) {
-                    const px_64: @Vector(64, u24) = @as(*const [64]u24, @ptrCast(@alignCast(pixels[i..][0..64]))).*;
-                    const prev_64: @Vector(64, u24) = @splat(@as(u24, @bitCast(prev.rgb())));
-                    n_matches = @max(62, @clz(@as(u64, @bitCast(px_64 != prev_64))));
+                while (i + 64 < n_pixels) {
+                    const px64: @Vector(64, u24) = @as(*const [64]u24, @ptrCast(@alignCast(pixels[i..][0..64]))).*;
+                    const prev64: @Vector(64, u24) = @splat(@as(u24, @bitCast(prev.rgb())));
+                    n_matches = @max(62, @clz(@as(u64, @bitCast(px64 != prev64))));
                     if (n_matches <= 1) break;
                     const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
                     try w.writeInt(u8, run, .little);
                     i += n_matches;
-                } else {
-                    while (i < n_pixels and pixels[i].eql(prev.rgb())) : ({
-                        i += 1;
-                        n_matches += 1;
-                    }) {}
-                    if (n_matches > 1) {
-                        const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
-                        try w.writeInt(u8, run, .little);
-                        i += n_matches;
-                    }
                 }
-                // index
-                const px = pixels[i].rgba();
-                const idx = hash(px);
-                if (indices[idx].eql(px)) {
-                    const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
-                    try w.writeInt(u8, index, .little);
-                    i += 1;
-                    prev = px;
-                    continue;
-                }
-                // diff
-                indices[idx] = px;
-                const dr = px.r -% prev.r +% 2;
-                const dg = px.g -% prev.g +% 2;
-                const db = px.b -% prev.b +% 2;
-                const dr_dg = dr -% dg;
-                const db_dg = db -% dg;
-                if (dr <= 3 and dg <= 3 and db <= 3) {
-                    const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 | dr << 4 | dg << 2 | db;
-                    try w.writeInt(u8, diff, .little);
-                    i += 1;
-                } else if (dg >= -32 and dg <= 31 and //
-                    dr_dg >= -8 and dr_dg <= 7 and //
-                    db_dg >= -8 and db_dg <= 7)
-                {
-                    const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
-                    const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
-                    try w.writeInt(u8, luma1, .little);
-                    try w.writeInt(u8, luma2, .little);
-                    i += 2;
-                } else {
-                    try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
-                    try w.writeInt(u8, px.r, .little);
-                    try w.writeInt(u8, px.g, .little);
-                    try w.writeInt(u8, px.b, .little);
-                    i += 4;
-                }
-                prev = px;
             }
         },
         .rgba => |pixels| {
-            std.debug.print("RGBA\n", .{});
-            while (i < n_pixels) : (i += 1) {
-                // run
-                var n_matches: u8 = 0;
-                while (i + 64 <= n_pixels) {
-                    const px_64: @Vector(64, u32) = @bitCast(pixels[i..][0..64].*);
-                    const prev_64: @Vector(64, u32) = @splat(@as(u32, @bitCast(prev)));
-                    n_matches = @max(62, @clz(@as(u64, @bitCast(px_64 != prev_64))));
-                    if (n_matches <= 1) break;
-                    const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
-                    try w.writeInt(u8, run, .little);
-                    i += n_matches;
-                } else {
-                    while (i < n_pixels and pixels[i].eql(prev)) : ({
-                        i += 1;
-                        n_matches += 1;
-                    }) {}
-                    if (n_matches > 1) {
-                        const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
-                        try w.writeInt(u8, run, .little);
-                        i += n_matches;
-                    }
-                }
-                const px = pixels[i];
-                // index
-                const idx = hash(px);
-                if (indices[idx].eql(px)) {
-                    const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
-                    try w.writeInt(u8, index, .little);
-                    i += 1;
-                    prev = px;
-                    continue;
-                }
-                indices[idx] = px;
-                if (px.a == prev.a) {
-                    const dr = px.r - prev.r;
-                    const dg = px.g - prev.g;
-                    const db = px.b - prev.b;
-                    const dr_dg = dr - dg;
-                    const db_dg = db - dg;
-                    if (dr >= -2 and dr <= 1 and //
-                        dg >= -2 and dg <= 1 and //
-                        db >= -2 and db <= 1)
-                    { // diff
-                        const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 |
-                            @as(u8, @intCast(dr + 2)) << 4 |
-                            @as(u8, @intCast(dg + 2)) << 2 |
-                            @as(u8, @intCast(db + 2));
-                        try w.writeInt(u8, diff, .little);
-                        i += 1;
-                    } else if (dg >= -32 and dg <= 31 and
-                        dr_dg >= -8 and dr_dg <= 7 and
-                        db_dg >= -8 and db_dg <= 7)
-                    { // luma
-                        const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
-                        const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
-                        try w.writeInt(u8, luma1, .little);
-                        try w.writeInt(u8, luma2, .little);
-                    } else { // rgb
-                        try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
-                        try w.writeInt(u8, px.r, .little);
-                        try w.writeInt(u8, px.g, .little);
-                        try w.writeInt(u8, px.b, .little);
-                    }
-                } else { // rgba
-                    try w.writeInt(u8, @intFromEnum(ByteTag.rgba), .little);
-                    try w.writeInt(u8, px.r, .little);
-                    try w.writeInt(u8, px.g, .little);
-                    try w.writeInt(u8, px.b, .little);
-                    try w.writeInt(u8, px.a, .little);
-                }
-                prev = px;
-            }
+            _ = pixels;
+            // var n_matches: u8 = 0;
+            // while (i < n_pixels) : (i += 1) {
+            //     while (i + 64 < n_pixels) {
+            //         const px64: @Vector(64, RGBA) = pixels[i..][0..64].*;
+            //         const prev64: @Vector(64, RGBA) = @splat(prev);
+            //     }
+            // }
         },
     }
+    //             while (i + 64 <= n_pixels) {
+    //                 const px_64: @Vector(64, u24) = @as([64]u24, @bitCast(pixels[i..][0..64].*));
+    //                 const prev_64: @Vector(64, u24) = @splat(@as(u24, @bitCast(prev.rgb())));
+    //                 n_matches = @max(62, @clz(@as(u64, @bitCast(px_64 != prev_64))));
+    //                 if (n_matches <= 1) break;
+    //                 const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
+    //                 try w.writeInt(u8, run, .little);
+    //                 i += n_matches;
+    //             } else {
+    //                 while (i < n_pixels and pixels[i].eql(prev.rgb())) : ({
+    //                     i += 1;
+    //                     n_matches += 1;
+    //                 }) {}
+    //                 if (n_matches > 1) {
+    //                     const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
+    //                     try w.writeInt(u8, run, .little);
+    //                     i += n_matches;
+    //                 }
+    //             }
+    //             // index
+    //             const px = pixels[i].rgba();
+    //             const idx = hash(px);
+    //             if (indices[idx].eql(px)) {
+    //                 const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
+    //                 try w.writeInt(u8, index, .little);
+    //                 i += 1;
+    //                 prev = px;
+    //                 continue;
+    //             }
+    //             // diff
+    //             indices[idx] = px;
+    //             const dr = px.r -% prev.r +% 2;
+    //             const dg = px.g -% prev.g +% 2;
+    //             const db = px.b -% prev.b +% 2;
+    //             const dr_dg = dr -% dg;
+    //             const db_dg = db -% dg;
+    //             if (dr <= 3 and dg <= 3 and db <= 3) {
+    //                 const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 | dr << 4 | dg << 2 | db;
+    //                 try w.writeInt(u8, diff, .little);
+    //                 i += 1;
+    //             } else if (dg >= -32 and dg <= 31 and //
+    //                 dr_dg >= -8 and dr_dg <= 7 and //
+    //                 db_dg >= -8 and db_dg <= 7)
+    //             {
+    //                 const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
+    //                 const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
+    //                 try w.writeInt(u8, luma1, .little);
+    //                 try w.writeInt(u8, luma2, .little);
+    //                 i += 2;
+    //             } else {
+    //                 try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
+    //                 try w.writeInt(u8, px.r, .little);
+    //                 try w.writeInt(u8, px.g, .little);
+    //                 try w.writeInt(u8, px.b, .little);
+    //                 i += 4;
+    //             }
+    //             prev = px;
+    //         }
+    //     },
+    //     .rgba => |pixels| {
+    //         std.debug.print("RGBA\n", .{});
+    //         while (i < n_pixels) : (i += 1) {
+    //             // run
+    //             var n_matches: u8 = 0;
+    //             while (i + 64 <= n_pixels) {
+    //                 const px_64: @Vector(64, u32) = @bitCast(pixels[i..][0..64].*);
+    //                 const prev_64: @Vector(64, u32) = @splat(@as(u32, @bitCast(prev)));
+    //                 n_matches = @max(62, @clz(@as(u64, @bitCast(px_64 != prev_64))));
+    //                 if (n_matches <= 1) break;
+    //                 const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
+    //                 try w.writeInt(u8, run, .little);
+    //                 i += n_matches;
+    //             } else {
+    //                 while (i < n_pixels and pixels[i].eql(prev)) : ({
+    //                     i += 1;
+    //                     n_matches += 1;
+    //                 }) {}
+    //                 if (n_matches > 1) {
+    //                     const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
+    //                     try w.writeInt(u8, run, .little);
+    //                     i += n_matches;
+    //                 }
+    //             }
+    //             const px = pixels[i];
+    //             // index
+    //             const idx = hash(px);
+    //             if (indices[idx].eql(px)) {
+    //                 const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
+    //                 try w.writeInt(u8, index, .little);
+    //                 i += 1;
+    //                 prev = px;
+    //                 continue;
+    //             }
+    //             indices[idx] = px;
+    //             if (px.a == prev.a) {
+    //                 const dr = px.r - prev.r;
+    //                 const dg = px.g - prev.g;
+    //                 const db = px.b - prev.b;
+    //                 const dr_dg = dr - dg;
+    //                 const db_dg = db - dg;
+    //                 if (dr >= -2 and dr <= 1 and //
+    //                     dg >= -2 and dg <= 1 and //
+    //                     db >= -2 and db <= 1)
+    //                 { // diff
+    //                     const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 |
+    //                         @as(u8, @intCast(dr + 2)) << 4 |
+    //                         @as(u8, @intCast(dg + 2)) << 2 |
+    //                         @as(u8, @intCast(db + 2));
+    //                     try w.writeInt(u8, diff, .little);
+    //                     i += 1;
+    //                 } else if (dg >= -32 and dg <= 31 and
+    //                     dr_dg >= -8 and dr_dg <= 7 and
+    //                     db_dg >= -8 and db_dg <= 7)
+    //                 { // luma
+    //                     const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
+    //                     const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
+    //                     try w.writeInt(u8, luma1, .little);
+    //                     try w.writeInt(u8, luma2, .little);
+    //                 } else { // rgb
+    //                     try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
+    //                     try w.writeInt(u8, px.r, .little);
+    //                     try w.writeInt(u8, px.g, .little);
+    //                     try w.writeInt(u8, px.b, .little);
+    //                 }
+    //             } else { // rgba
+    //                 try w.writeInt(u8, @intFromEnum(ByteTag.rgba), .little);
+    //                 try w.writeInt(u8, px.r, .little);
+    //                 try w.writeInt(u8, px.g, .little);
+    //                 try w.writeInt(u8, px.b, .little);
+    //                 try w.writeInt(u8, px.a, .little);
+    //             }
+    //             prev = px;
+    //         }
+    //     },
+    // }
     try w.writeAll(&END_MARKER);
 }
 
