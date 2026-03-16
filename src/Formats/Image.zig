@@ -3,8 +3,8 @@ const vk = @import("Vulkan");
 const RGB = @import("Color.zig").RGB;
 const RGBA = @import("Color.zig").RGBA;
 pub const BitType = union(enum) {
-    rgb: [*]const RGB,
-    rgba: [*]const RGBA,
+    rgb: [*]RGB,
+    rgba: [*]RGBA,
 };
 
 extent: vk.Extent3D = .{

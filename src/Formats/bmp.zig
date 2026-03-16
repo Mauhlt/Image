@@ -41,7 +41,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
 }
 
-pub fn encode() void {
+pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
+    _ = img;
+    _ = w;
     // hdr.encode();
     // body.encode();
 }

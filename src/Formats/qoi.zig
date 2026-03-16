@@ -92,12 +92,8 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                         const run: u8 = (b1 & 0x3F) + 1;
                         std.debug.assert(j + run < n_pixels);
                         switch (img.pixels) {
-                            .rgb => |px| {
-                                for (0..run) |k| px[k] = prev.rgb();
-                            },
-                            .rgba => |px| {
-                                for (0..run) |k| px[k] = prev;
-                            },
+                            .rgb => |px| @memset(px[j..][0..run], prev.rgb()),
+                            .rgba => |px| @memset(px[j..][0..run], prev),
                         }
                         j += run;
                         continue; // skip updates to prev + indices
@@ -108,7 +104,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         // updates
         indices[hash(prev)] = prev;
         switch (img.pixels) {
-            .rgb => |px| px[j] = .{ .r = prev.r, .g = prev.g, .b = prev.b },
+            .rgb => |px| px[j] = prev.rgb(),
             .rgba => |px| px[j] = prev,
         }
         j += 1;
