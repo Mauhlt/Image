@@ -21,6 +21,7 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     const image_tag = try tagFromExt(path);
     return switch (image_tag) {
         .bmp => BMP.decode(gpa, raw_data),
+        .qoi => QOI.decode(gpa, raw_data),
         // .png => PNG.decode(gpa, raw_data),
         else => unreachable,
     };
@@ -36,6 +37,7 @@ pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
 
     const image_tag = try tagFromExt(path);
     return switch (image_tag) {
+        .bmp => BMP.encode(img, io_writer),
         .qoi => QOI.encode(img, io_writer),
         else => unreachable,
     };
