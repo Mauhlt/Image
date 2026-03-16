@@ -103,6 +103,7 @@ test "QOI" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
+    // ground truth
     const file = "src/Data/Read/BasicArt.bmp";
     const img = try read(io, gpa, file);
     defer img.deinit(gpa);
@@ -114,5 +115,16 @@ test "QOI" {
     const file2 = "src/Data/Write/BasicArt.qoi";
     const img2 = try read(io, gpa, file2);
     defer img2.deinit(gpa);
-    try std.testing.expectEqualDeep(img, img2);
+
+    const px1 = img.pixels.rgb;
+    const px2 = img2.pixels.rgb;
+    const len = img.extent.width * img.extent.height * img.extent.depth;
+    for (0..len) |i| {
+        std.testing.expect(px1[i].eql(px2[i])) catch |err| {
+            std.debug.print("Pixel: {}\n", .{i});
+            std.debug.print("{any}\n", .{px1[i]});
+            std.debug.print("{any}\n", .{px2[i]}); // just dead wrong
+            return err;
+        };
+    }
 }
