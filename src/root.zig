@@ -27,7 +27,7 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
 }
 
 pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
-    var file = try std.Io.Dir.cwd().createFile(io, path, .{ .exclusive = true });
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{});
     defer file.close(io);
 
     var wbuf: [4096]u8 = undefined;
@@ -96,6 +96,7 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
 // }
 
 test "QOI" {
+    // write qoi img
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();

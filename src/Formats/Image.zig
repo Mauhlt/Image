@@ -1,7 +1,7 @@
 const std = @import("std");
 const vk = @import("Vulkan");
-const RGB = @import("RGB.zig");
-const RGBA = @import("RGBA.zig");
+const RGB = @import("Color.zig").RGB;
+const RGBA = @import("Color.zig").RGBA;
 pub const BitType = union(enum) {
     rgb: [*]const RGB,
     rgba: [*]const RGBA,
