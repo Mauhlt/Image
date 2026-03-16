@@ -115,6 +115,10 @@ test "QOI" {
     std.debug.print("\t{}\n", .{img.pixels[0]});
     std.debug.print("\t{}\n", .{img.pixels[img.pixels.len - 1]});
 
+    // write bmp as bmp
+    const file1 = "src/Data/Write/BasicArt.bmp";
+    try write(io, file1, &img);
+
     // const w_file = "src/Data/Write/BasicArt.qoi";
     // try write(io, w_file, &img);
     //
