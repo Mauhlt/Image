@@ -20,9 +20,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             var j: u32 = 0;
             for (0..n_pixels) |i| {
                 pixels[i] = .{
-                    .b = pixels_slice[j],
-                    .g = pixels_slice[j + 1],
                     .r = pixels_slice[j + 2],
+                    .g = pixels_slice[j + 1],
+                    .b = pixels_slice[j],
                 };
                 j += 3;
             }
@@ -31,9 +31,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             var j: u32 = 0;
             for (0..n_pixels) |i| {
                 pixels[i] = .{
-                    .b = pixels_slice[j],
-                    .g = pixels_slice[j + 1],
                     .r = pixels_slice[j + 2],
+                    .g = pixels_slice[j + 1],
+                    .b = pixels_slice[j],
                     .a = pixels_slice[j + 3],
                 };
                 j += 4;
@@ -86,11 +86,15 @@ const Header = struct {
         if (overflow == 1) return error.ImageOverflowed;
         const depth = img.depth();
         if (depth > std.math.maxInt(u16)) return Error.Decode.InvalidDimensions;
+        const data_offset: u32 = 54;
+        const dib_hdr_size: u32 = 40;
 
         return .{
-            .file_size = 54 + len * 3,
-            .data_offset = 54,
-            .dib_hdr_size = 40,
+            // hdr
+            .file_size = data_offset + len * 3,
+            .data_offset = data_offset,
+            // dib
+            .dib_hdr_size = dib_hdr_size,
             .width = img.width,
             .height = img.height,
             .depth = depth,
@@ -98,7 +102,7 @@ const Header = struct {
             .bits_per_pixel = .rgb_24,
             .compression = .none,
             .compressed_image_size = len * 3,
-            .n_possible_colors = std.math.maxInt(u32), // FIXME
+            .n_possible_colors = 0, // FIXME
             .n_colors_used = 0,
             .important_colors = 0,
         };
@@ -108,7 +112,7 @@ const Header = struct {
         // bmp
         try w.writeAll(SIG); // 2
         try w.writeInt(u32, self.file_size, .little); // 6
-        try w.writeInt(u32, undefined, .little); // 10
+        try w.writeInt(u32, 0, .little); // 10
         try w.writeInt(u32, self.data_offset, .little); // 14
         // dib
         try w.writeInt(u32, self.dib_hdr_size, .little); // 18
@@ -118,8 +122,8 @@ const Header = struct {
         try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little); // 30
         try w.writeInt(u32, @intFromEnum(self.compression), .little); // 34
         try w.writeInt(u32, self.compressed_image_size, .little); // 38
-        try w.writeInt(u32, 300, .little); // 42
-        try w.writeInt(u32, 300, .little); // 46
+        try w.writeInt(u32, 0, .little); // 42
+        try w.writeInt(u32, 0, .little); // 46
         try w.writeInt(u32, 0, .little); // 50
         try w.writeInt(u32, 0, .little); // 54
     }
@@ -152,7 +156,7 @@ const Header = struct {
         switch (bits_per_pixel) {
             .rgb_24 => if (compression != .none)
                 return Error.Decode.InvalidCompression,
-            else => {},
+            else => unreachable,
         }
         const n_colors_used = std.mem.readInt(u32, data[46..][0..4], .little);
         if (n_colors_used > n_possible_colors) {
@@ -161,8 +165,9 @@ const Header = struct {
             return Error.Decode.InvalidNumOfColors;
         }
         const important_colors = std.mem.readInt(u32, data[50..][0..4], .little);
-        if (important_colors > n_colors_used)
+        if (important_colors > n_colors_used) {
             return Error.Decode.InvalidImportantColors;
+        }
 
         // const color_table: = switch (bits_per_pixel) {
         //     .rgb_24, .rgba => &.{},
