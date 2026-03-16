@@ -55,10 +55,11 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 
     if (hdr.compression == .none) {
         switch (img.format) {
-            .r8g8b8_srgb => try img.writeRGB(img.pixels, w),
-            .r8g8b8a8_srgb => try img.writeRGBA(img.pixels, w),
-            .b8g8r8_srgb => try img.writeBGR(img.pixels, w),
-            .b8g8r8a8_srgb => try img.writeBGRA(img.pixels, w),
+            .r8g8b8_srgb => try img.writeRGB(w),
+            .r8g8b8a8_srgb => try img.writeRGBA(w),
+            .b8g8r8_srgb => try img.writeBGR(w),
+            .b8g8r8a8_srgb => try img.writeBGRA(w),
+            else => unreachable,
         }
     }
 }
@@ -83,6 +84,8 @@ const Header = struct {
     pub fn fromImage(img: *const Image) !@This() {
         const len, const overflow = @mulWithOverflow(img.width, img.height);
         if (overflow == 1) return error.ImageOverflowed;
+        const depth = img.depth();
+        if (depth > std.math.maxInt(u16)) return Error.Decode.InvalidDimensions;
 
         return .{
             .file_size = 54 + len * 3,
@@ -90,7 +93,7 @@ const Header = struct {
             .dib_hdr_size = 40,
             .width = img.width,
             .height = img.height,
-            .depth = 1,
+            .depth = depth,
             .is_top_down = false,
             .bits_per_pixel = .rgb_24,
             .compression = .none,
@@ -103,20 +106,22 @@ const Header = struct {
 
     pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
         // bmp
-        try w.writeAll(SIG);
-        try w.writeInt(u32, self.file_size, .little);
-        try w.writeInt(u32, undefined, .little); // reserved
-        try w.writeInt(u32, self.data_offset, .little);
+        try w.writeAll(SIG); // 2
+        try w.writeInt(u32, self.file_size, .little); // 6
+        try w.writeInt(u32, undefined, .little); // 10
+        try w.writeInt(u32, self.data_offset, .little); // 14
         // dib
-        try w.writeInt(u32, self.dib_hdr_size, .little);
-        try w.writeInt(u32, self.width, .little);
-        try w.writeInt(u32, self.height, .little);
-        try w.writeInt(u32, self.depth, .little);
-        try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little);
-        try w.writeInt(u32, @intFromEnum(self.compression), .little); // compression
-        try w.writeInt(u32, self.compressed_image_size, .little); // compressed image size
-        try w.writeInt(u32, 0, .little); // n_colors_used
-        try w.writeInt(u32, 0, .little); // n important colors used
+        try w.writeInt(u32, self.dib_hdr_size, .little); // 18
+        try w.writeInt(u32, self.width, .little); // 22
+        try w.writeInt(u32, self.height, .little); // 26
+        try w.writeInt(u16, @truncate(self.depth), .little); // 28
+        try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little); // 30
+        try w.writeInt(u32, @intFromEnum(self.compression), .little); // 34
+        try w.writeInt(u32, self.compressed_image_size, .little); // 38
+        try w.writeInt(u32, 300, .little); // 42
+        try w.writeInt(u32, 300, .little); // 46
+        try w.writeInt(u32, 0, .little); // 50
+        try w.writeInt(u32, 0, .little); // 54
     }
 
     pub fn decode(data: []const u8) !@This() {
@@ -150,8 +155,11 @@ const Header = struct {
             else => {},
         }
         const n_colors_used = std.mem.readInt(u32, data[46..][0..4], .little);
-        if (n_colors_used > n_possible_colors)
+        if (n_colors_used > n_possible_colors) {
+            std.debug.print("# of Colors Used: {}\n", .{n_colors_used});
+            std.debug.print("# of Possible Colors: {}\n", .{n_possible_colors});
             return Error.Decode.InvalidNumOfColors;
+        }
         const important_colors = std.mem.readInt(u32, data[50..][0..4], .little);
         if (important_colors > n_colors_used)
             return Error.Decode.InvalidImportantColors;
