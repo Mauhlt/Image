@@ -1,47 +1,57 @@
 const std = @import("std");
 const Error = @import("Error.zig");
-const RGB = @import("Color.zig").RGB;
-const RGBA = @import("Color.zig").RGBA;
-const BitType = @import("Image.zig").BitType;
 const Image = @import("Image.zig");
+const RGBA = @import("RGBA.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
-// scanlines = bottom to top
-// each scan line is 0 padded to nearest 4-byte boundary
-// rgb values stored bockwards - bgr
-// 4 bit + 8 bit bmps can be compressed
+// default: top-down scanline, pad 4-byte boundary, brg format, srgb, no compression
+// TODO: implement 4RLE + 8RLE
+// 4RLE + 8RLE
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
-    const len = hdr.width * hdr.height * hdr.depth;
+    const n_pixels = hdr.width * hdr.height * hdr.depth;
     const start = hdr.data_offset;
     const end = start + hdr.compressed_image_size;
     const pixels_slice = data[start..end];
-    const pixels: BitType = blk: switch (hdr.bits_per_pixel) {
-        .rgb_16, .rgb_24 => {
-            const pixels = try gpa.alloc(RGB, len);
-            @memcpy(std.mem.sliceAsBytes(pixels[0..]), pixels_slice);
-            break :blk .{ .rgb = pixels.ptr };
+    const pixels = try gpa.alloc(RGBA, n_pixels);
+    switch (hdr.bits_per_pixel) {
+        .rgb_24 => {
+            var j: u32 = 0;
+            for (0..n_pixels) |i| {
+                pixels[i] = .{
+                    .r = pixels_slice[j],
+                    .g = pixels_slice[j + 1],
+                    .b = pixels_slice[j + 2],
+                };
+                j += 3;
+            }
         },
         .rgba => {
-            const pixels = try gpa.alloc(RGBA, len);
-            @memcpy(pixels, @as([]const RGBA, @ptrCast(@alignCast(pixels_slice))));
-            break :blk .{ .rgba = pixels.ptr };
+            var j: u32 = 0;
+            for (0..n_pixels) |i| {
+                pixels[i] = .{
+                    .r = pixels_slice[j],
+                    .g = pixels_slice[j + 1],
+                    .b = pixels_slice[j + 2],
+                    .a = pixels_slice[j + 3],
+                };
+                j += 4;
+            }
         },
         else => unreachable,
-    };
-    return Image{
-        .extent = .{
-            .width = hdr.width,
-            .height = hdr.height,
-            .depth = 1,
-        },
-        .pixel_format = .b8g8r8_srgb,
+    }
+    return .{
+        .width = hdr.width,
+        .height = hdr.height,
+        .format = .b8g8r8_srgb,
         .pixels = pixels,
     };
 }
 
 pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
+    const hdr: Header = try .fromImage();
+    hdr.encode();
     _ = img;
     _ = w;
     // hdr.encode();
@@ -64,6 +74,44 @@ const Header = struct {
     n_colors_used: u32,
     important_colors: u32,
     // color_table: []u8,
+
+    pub fn fromImage(img: *const Image) !@This() {
+        const len, const overflow = @mulWithOverflow(img.width, img.height);
+        if (overflow == 1) return error.ImageOverflowed;
+
+        return .{
+            .file_size = 54 + len * 3,
+            .data_offset = 54,
+            .dib_hdr_size = 40,
+            .width = img.width,
+            .height = img.height,
+            .depth = 1,
+            .is_top_down = false,
+            .bits_per_pixel = .rgb_24,
+            .compression = .none,
+            .compressed_image_size = len * 3,
+            .n_colors_used = 0,
+            .important_colors = 0,
+        };
+    }
+
+    pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
+        try w.writeAll(SIG);
+        try w.writeInt(u32, self.file_size, .little);
+        try w.writeInt(u32, undefined, .little); // reserved
+        try w.writeInt(u32, self.data_offset, .little);
+
+        try w.writeInt(u32, self.dib_hdr_size, .little);
+        try w.writeInt(u32, self.width, .little);
+        try w.writeInt(u32, self.height, .little);
+        try w.writeInt(u32, self.depth, .little);
+        try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little);
+        // try w.writeInt(u32, 0, .little); // n possible colors
+        try w.writeInt(u32, @intFromEnum(self.compression), .little); // compression
+        try w.writeInt(u32, self.compressed_image_size, .little); // compressed image size
+        try w.writeInt(u32, 0, .little); // n_colors_used
+        try w.writeInt(u32, 0, .little);
+    }
 
     pub fn decode(data: []const u8) !@This() {
         try isSigSame(data[0..2], SIG);
@@ -91,13 +139,16 @@ const Header = struct {
         const compressed_image_size = //
             std.mem.readInt(u32, data[34..][0..4], .little);
         switch (bits_per_pixel) {
-            .rgb_24 => if (compression != .none) return Error.Decode.InvalidCompression,
+            .rgb_24 => if (compression != .none)
+                return Error.Decode.InvalidCompression,
             else => {},
         }
         const n_colors_used = std.mem.readInt(u32, data[46..][0..4], .little);
-        if (n_colors_used > n_possible_colors) return Error.Decode.InvalidNumOfColors;
+        if (n_colors_used > n_possible_colors)
+            return Error.Decode.InvalidNumOfColors;
         const important_colors = std.mem.readInt(u32, data[50..][0..4], .little);
-        if (important_colors > n_colors_used) return Error.Decode.InvalidImportantColors;
+        if (important_colors > n_colors_used)
+            return Error.Decode.InvalidImportantColors;
 
         // const color_table: = switch (bits_per_pixel) {
         //     .rgb_24, .rgba => &.{},
@@ -122,8 +173,6 @@ const Header = struct {
             // .color_table = color_table,
         };
     }
-
-    pub fn encode() void {}
 };
 
 const BitsPerPixel = enum(u16) {
