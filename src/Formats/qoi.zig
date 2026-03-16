@@ -117,10 +117,10 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0xFF };
     var indices = [_]RGBA{prev} ** 64;
+    var i: usize = 0;
 
     switch (img.pixels) {
         .rgb => |pixels| {
-            var i: usize = 0;
             while (i < n_pixels) : (i += 1) {
                 // run
                 var pix_64: @Vector(64, RGB) = @bitCast(pixels[i..][0..64].*);
@@ -181,6 +181,82 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                     try w.writeInt(u8, px.g, .little);
                     try w.writeInt(u8, px.b, .little);
                     i += 4;
+                }
+                prev = px;
+            }
+            @memcpy(pixels[i .. i + END_MARKER.len], &END_MARKER);
+            i += 8;
+            std.debug.assert(i == n_pixels + 8);
+        },
+        .rgba => |pixels| {
+            while (i < n_pixels) : (i += 1) {
+                // run
+                var pix_64: @Vector(64, RGB) = @bitCast(pixels[i..][0..64].*);
+                const prev_64: @Vector(64, RGB) = @splat(prev);
+                var n_matches: u64 = @clz(pix_64 != prev_64);
+                while (n_matches > 1) {
+                    const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | @as(u8, @intCast(n_matches - 1));
+                    try w.writeInt(u8, run, .little);
+                    i += n_matches;
+                    pix_64 = @bitCast(pixels[i..][0..64].*);
+                    n_matches = @clz(pix_64 != prev_64);
+                }
+
+                // index
+                const px = pixels[i];
+                const idx = hash(px);
+                if (indices[idx].eql(px)) {
+                    const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
+                    try w.writeInt(u8, index, .little);
+                    i += 1;
+                    prev = px;
+                    continue;
+                }
+
+                // hash pixel + store
+                indices[idx] = px;
+
+                if (px.a == prev.a) {
+                    const dr = px.r - prev.r;
+                    const dg = px.g - prev.g;
+                    const db = px.b - prev.b;
+
+                    const dr_dg = dr - dg;
+                    const db_dg = db - db;
+                    if (dr >= -2 and dr <= 1 and //
+                        dg >= -2 and dg <= 1 and //
+                        db >= -2 and db <= 1)
+                    {
+                        const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 |
+                            @as(u8, @intCast(dr + 2)) << 4 |
+                            @as(u8, @intCast(dg + 2)) << 2 |
+                            @as(u8, @intCast(db + 2));
+                        try w.writeInt(u8, diff, .little);
+                        i += 1;
+                    } else if (dg >= -32 and dg <= 31 and
+                        dr_dg >= -8 and dr_dg <= 7 and
+                        db_dg >= -8 and db_dg <= 7)
+                    {
+                        const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
+                        const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
+                        try w.writeInt(u8, luma1, .little);
+                        try w.writeInt(u8, luma2, .little);
+                        i += 2;
+                    } else {
+                        // RGB
+                        try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
+                        try w.writeInt(u8, px.r, .little);
+                        try w.writeInt(u8, px.g, .little);
+                        try w.writeInt(u8, px.b, .little);
+                        i += 4;
+                    }
+                } else {
+                    try w.writeInt(u8, @intFromEnum(ByteTag.rgba), .little);
+                    try w.writeInt(u8, px.r, .little);
+                    try w.writeInt(u8, px.g, .little);
+                    try w.writeInt(u8, px.b, .little);
+                    try w.writeInt(u8, px.a, .little);
+                    i += 5;
                 }
                 prev = px;
             }
