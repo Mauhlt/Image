@@ -9,6 +9,8 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // - track number of pixels - make sure it matches n_pixels
 // - track amount of data left - do not go over
 
+const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
+
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (data.len < 22) return error.InvalidData; // @sizeOf(Header) + @sizeOf(END_MARKER)
     const hdr: Header = try .decode(data[0..14]);
@@ -81,7 +83,11 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                         const run: u8 = (b1 & 0x3F) + 1;
                         std.debug.assert(j + run < n_pixels);
                         switch (img.pixels) {
-                            .rgb => |px| @memset(px[j .. j + run], .{ .r = prev.r, .g = prev.g, .b = prev.b }),
+                            .rgb => |px| @memset(px[j .. j + run], .{
+                                .r = prev.r,
+                                .g = prev.g,
+                                .b = prev.b,
+                            }),
                             .rgba => |px| @memset(px[j .. j + run], prev),
                         }
                         j += run;
@@ -109,11 +115,81 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     const n_pixels, const overflow = @mulWithOverflow(hdr.width, hdr.height);
     if (@as(bool, overflow)) return error.InvalidDimensions;
 
-    var i: usize = 0;
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0xFF };
     var indices = [_]RGBA{prev} ** 64;
 
-    while (i < n_pixels) : (i += 1) {}
+    switch (img.pixels) {
+        .rgb => |pixels| {
+            var i: usize = 0;
+            while (i < n_pixels) : (i += 1) {
+                // run
+                var pix_64: @Vector(64, RGB) = @bitCast(pixels[i..][0..64].*);
+                const prev_64: @Vector(64, RGB) = @splat(prev);
+                var n_matches: u64 = @clz(pix_64 != prev_64);
+                while (n_matches > 1) {
+                    const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | @as(u8, @intCast(n_matches - 1));
+                    try w.writeInt(u8, run, .little);
+                    i += n_matches;
+                    pix_64 = @bitCast(pixels[i..][0..64].*);
+                    n_matches = @clz(pix_64 != prev_64);
+                }
+
+                // index
+                const px = pixels[i];
+                const idx = hash(px);
+                if (indices[idx].eql(px)) {
+                    const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
+                    try w.writeInt(u8, index, .little);
+                    i += 1;
+                    prev = px;
+                    continue;
+                }
+
+                // hash pixel + store
+                indices[idx] = px;
+
+                const dr = px.r - prev.r;
+                const dg = px.g - prev.g;
+                const db = px.b - prev.b;
+
+                const dr_dg = dr - dg;
+                const db_dg = db - db;
+
+                if (dr >= -2 and dr <= 1 and //
+                    dg >= -2 and dg <= 1 and //
+                    db >= -2 and db <= 1)
+                {
+                    const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 |
+                        @as(u8, @intCast(dr + 2)) << 4 |
+                        @as(u8, @intCast(dg + 2)) << 2 |
+                        @as(u8, @intCast(db + 2));
+                    try w.writeInt(u8, diff, .little);
+                    i += 1;
+                } else if (dg >= -32 and dg <= 31 and
+                    dr_dg >= -8 and dr_dg <= 7 and
+                    db_dg >= -8 and db_dg <= 7)
+                {
+                    const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
+                    const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
+                    try w.writeInt(u8, luma1, .little);
+                    try w.writeInt(u8, luma2, .little);
+                    i += 2;
+                } else {
+                    // RGB
+                    try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
+                    try w.writeInt(u8, px.r, .little);
+                    try w.writeInt(u8, px.g, .little);
+                    try w.writeInt(u8, px.b, .little);
+                    i += 4;
+                }
+                prev = px;
+            }
+            @memcpy(pixels[i .. i + END_MARKER.len], &END_MARKER);
+            i += 8;
+            std.debug.assert(i == n_pixels + 8);
+        },
+        else => unreachable,
+    }
 }
 
 const ByteTag = enum(u8) {
@@ -150,19 +226,25 @@ const Header = struct {
     channels: Channels,
     colorspace: Colorspace,
 
-    pub fn fromImage(img: *const Image) @This() {
+    pub fn fromImage(img: *const Image) !@This() {
+        var channels: Channels = undefined;
+        var colorspace: Colorspace = undefined;
+        switch (img.pixel_format) {
+            .r8g8b8_srgb => {
+                channels = .rgb;
+                colorspace = .srgb;
+            },
+            .r8g8b8a8_srgb => {
+                channels = .rgba;
+                colorspace = .linear;
+            },
+            else => return error.UnsupportedFormat,
+        }
         return .{
             .width = img.width,
             .height = img.height,
-            .channels = switch (img.pixel_format) {
-                .r8g8b8_srgb => .rgb,
-                .r8g8b8a8_srgb => .rgba,
-                else => unreachable,
-            },
-            .colorspace = switch (img.pixel_format) {
-                .r8g8b8_srgb, .r8g8b8a8_srgb => .srgb,
-                .r8g8b8_snorm, .r8b8g8a8_snorm => .linear,
-            },
+            .channels = channels,
+            .colorspace = colorspace,
         };
     }
 
