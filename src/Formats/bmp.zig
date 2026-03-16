@@ -1,7 +1,7 @@
 const std = @import("std");
 const Error = @import("Error.zig");
-const RGB = @import("RGB.zig");
-const RGBA = @import("RGBA.zig");
+const RGB = @import("Color.zig").RGB;
+const RGBA = @import("Color.zig").RGBA;
 const BitType = @import("Image.zig").BitType;
 const Image = @import("Image.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
@@ -14,11 +14,13 @@ const isSigSame = @import("Misc.zig").isSigSame;
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     const len = hdr.width * hdr.height * hdr.depth;
-    const pixels_slice = data[hdr.data_offset .. hdr.data_offset + hdr.compressed_image_size];
+    const start = hdr.data_offset;
+    const end = start + hdr.compressed_image_size;
+    const pixels_slice = data[start..end];
     const pixels: BitType = blk: switch (hdr.bits_per_pixel) {
         .rgb_16, .rgb_24 => {
             const pixels = try gpa.alloc(RGB, len);
-            @memcpy(pixels, @as([]const RGB, @ptrCast(@alignCast(pixels_slice))));
+            @memcpy(std.mem.sliceAsBytes(pixels[0..]), pixels_slice);
             break :blk .{ .rgb = pixels.ptr };
         },
         .rgba => {
