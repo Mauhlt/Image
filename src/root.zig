@@ -2,9 +2,10 @@ const std = @import("std");
 const Image = @import("Formats/Image.zig");
 const BMP = @import("Formats/BMP.zig");
 const PNG = @import("Formats/PNG.zig");
+const QOI = @import("Formats/QOI.zig");
 const vk = @import("Vulkan");
 
-pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !void { // !Image {
+pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
     const file_len = try file.length(io);
@@ -19,22 +20,25 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !void { // !Im
 
     const image_tag = try tagFromExt(path);
     return switch (image_tag) {
-        // .bmp => BMP.decode(gpa, raw_data),
-        .png => PNG.decode(gpa, raw_data),
+        .bmp => BMP.decode(gpa, raw_data),
+        // .png => PNG.decode(gpa, raw_data),
         else => unreachable,
     };
 }
 
-pub fn write(io: std.Io, gpa: std.mem.Allocator, path: []const u8, img: Image) !void {
-    _ = gpa;
-    _ = img;
-    var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .write_only });
+pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{ .exclusive = true });
     defer file.close(io);
 
     var wbuf: [4096]u8 = undefined;
     var writer = file.writer(io, &wbuf);
     const io_writer = &writer.interface;
-    _ = io_writer;
+
+    const image_tag = try tagFromExt(path);
+    return switch (image_tag) {
+        .qoi => QOI.encode(img, io_writer),
+        else => unreachable,
+    };
 }
 
 fn tagFromExt(path: []const u8) !ImageTag {
@@ -81,32 +85,26 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "dib", .bmp },
 });
 
-test "PNG" {
+// test "PNG" {
+//     const gpa = std.testing.allocator;
+//     var threaded: std.Io.Threaded = .init(gpa, .{});
+//     const io = threaded.io();
+//
+//     const file = "src/Data/BasicArt.png";
+//     try read(io, gpa, file);
+//     // try write(io, gpa, file);
+// }
+
+test "QOI" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
-    const file = "src/Data/BasicArt.png";
-    try read(io, gpa, file);
-}
+    const file = "src/Data/Read/BasicArt.bmp";
+    const img = try read(io, gpa, file);
+    defer img.deinit(gpa);
+    std.debug.print("Img: {}\n", .{img});
 
-// test "Loading Images" {
-//     const gpa = std.testing.allocator;
-//
-//     // still slower on mt mode - why?
-//     var threaded: std.Io.Threaded = .init(gpa, .{});
-//     const io = threaded.io();
-//
-//     // const files = [_][]const u8{"src/Data/BasicArt.bmp"}; // , "src/Data/BasicArt.png" };
-//     const widths = [_]u32{1536}; // , 100 };
-//     const heights = [_]u32{864}; // , 100 };
-//     const formats = [_]vk.Format{.b8g8r8_srgb}; // , .r8g8b8_srgb };
-//     for (files, widths, heights, formats) |file, width, height, format| {
-//         const img = try read(io, gpa, file);
-//         defer img.deinit(gpa);
-//         try std.testing.expectEqual(img.extent.width, width);
-//         try std.testing.expectEqual(img.extent.height, height);
-//         // try std.testing.expectEqual(img.extent.depth, 1);
-//         try std.testing.expectEqual(img.pixel_format, format);
-//     }
-// }
+    const w_file = "src/Data/Write/BasicArt.qoi";
+    try write(io, w_file, &img);
+}
