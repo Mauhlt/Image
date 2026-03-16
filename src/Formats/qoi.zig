@@ -125,34 +125,28 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 
     switch (img.pixels) {
         .rgb => |pixels| {
+            std.debug.print("RGB\n", .{});
             while (i < n_pixels) : (i += 1) {
                 // run
-                if (i + 64 < n_pixels) {
-                    var px_64: @Vector(64, u24) = //
-                        @as(*const [64]u24, @ptrCast(@alignCast(pixels[i..][0..64]))).*;
-                    const prev_64: @Vector(64, u24) = //
-                        @splat(@as(u24, @bitCast(RGB{ .r = prev.r, .g = prev.g, .b = prev.b })));
-                    var n_matches = @clz(@as(u64, @bitCast(px_64 != prev_64)));
-                    while (n_matches > 1 and i + 64 < n_pixels) {
-                        const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | //
-                            @as(u8, @intCast(n_matches - 1));
-                        try w.writeInt(u8, run, .little);
-                        i += n_matches;
-                        px_64 = @as(*const [64]u24, @ptrCast(@alignCast(pixels[i..][0..64]))).*;
-                        n_matches = @clz(@as(u64, @bitCast(px_64 != prev_64)));
-                    } else if (n_matches > 1 and i + 64 > n_pixels) {
-                        const run = @as(u8, @intFromEnum(BitTag.run)) << 6 |
-                            @as(u8, @intCast(n_matches - 1));
+                var n_matches: u8 = 0;
+                while (i + 64 <= n_pixels) {
+                    const px_64: @Vector(64, u24) = @as(*const [64]u24, @ptrCast(@alignCast(pixels[i..][0..64]))).*;
+                    const prev_64: @Vector(64, u24) = @splat(@as(u24, @bitCast(prev.rgb())));
+                    n_matches = @max(62, @clz(@as(u64, @bitCast(px_64 != prev_64))));
+                    if (n_matches <= 1) break;
+                    const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
+                    try w.writeInt(u8, run, .little);
+                    i += n_matches;
+                } else {
+                    while (i < n_pixels and pixels[i].eql(prev.rgb())) : ({
+                        i += 1;
+                        n_matches += 1;
+                    }) {}
+                    if (n_matches > 1) {
+                        const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
                         try w.writeInt(u8, run, .little);
                         i += n_matches;
                     }
-                } else {
-                    var n_matches: u8 = 0;
-                    for (i..n_pixels) |j| n_matches += @intFromBool(pixels[j].eql(prev.rgb()));
-                    const run = @as(u8, @intFromEnum(BitTag.run)) << 6 |
-                        @as(u8, @intCast(n_matches - 1));
-                    try w.writeInt(u8, run, .little);
-                    i += n_matches;
                 }
                 // index
                 const px = pixels[i].rgba();
@@ -195,32 +189,31 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
             }
         },
         .rgba => |pixels| {
+            std.debug.print("RGBA\n", .{});
             while (i < n_pixels) : (i += 1) {
-                if (i + 64 < n_pixels) {
-                    var px_64: @Vector(64, u32) = @bitCast(pixels[i..][0..64].*);
+                // run
+                var n_matches: u8 = 0;
+                while (i + 64 <= n_pixels) {
+                    const px_64: @Vector(64, u32) = @bitCast(pixels[i..][0..64].*);
                     const prev_64: @Vector(64, u32) = @splat(@as(u32, @bitCast(prev)));
-                    var n_matches: u64 = @clz(@as(u64, @bitCast(px_64 != prev_64)));
-                    while (n_matches > 1 and i + 64 < n_pixels) {
-                        const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | @as(u8, @intCast(n_matches - 1));
-                        try w.writeInt(u8, run, .little);
-                        i += n_matches;
-                        px_64 = @bitCast(pixels[i..][0..64].*);
-                        n_matches = @clz(@as(u64, @bitCast(px_64 != prev_64)));
-                    } else if (n_matches > 64 and i + 64 > n_pixels) {
-                        const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | @as(u8, @intCast(n_matches - 1));
+                    n_matches = @max(62, @clz(@as(u64, @bitCast(px_64 != prev_64))));
+                    if (n_matches <= 1) break;
+                    const run: u8 = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
+                    try w.writeInt(u8, run, .little);
+                    i += n_matches;
+                } else {
+                    while (i < n_pixels and pixels[i].eql(prev)) : ({
+                        i += 1;
+                        n_matches += 1;
+                    }) {}
+                    if (n_matches > 1) {
+                        const run = @as(u8, @intFromEnum(BitTag.run)) << 6 | (n_matches - 1);
                         try w.writeInt(u8, run, .little);
                         i += n_matches;
                     }
-                } else {
-                    var n_matches: u8 = 0;
-                    for (i..n_pixels) |j| n_matches += @intFromBool(pixels[j].eql(prev));
-                    const run = @as(u8, @intFromEnum(BitTag.run)) << 6 |
-                        @as(u8, @intCast(n_matches - 1));
-                    try w.writeInt(u8, run, .little);
-                    i += n_matches;
                 }
-
                 const px = pixels[i];
+                // index
                 const idx = hash(px);
                 if (indices[idx].eql(px)) {
                     const index = @as(u8, @intFromEnum(BitTag.index)) << 6 | @as(u8, idx);
@@ -229,7 +222,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                     prev = px;
                     continue;
                 }
-
                 indices[idx] = px;
                 if (px.a == prev.a) {
                     const dr = px.r - prev.r;
@@ -240,7 +232,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                     if (dr >= -2 and dr <= 1 and //
                         dg >= -2 and dg <= 1 and //
                         db >= -2 and db <= 1)
-                    {
+                    { // diff
                         const diff = @as(u8, @intFromEnum(BitTag.diff)) << 6 |
                             @as(u8, @intCast(dr + 2)) << 4 |
                             @as(u8, @intCast(dg + 2)) << 2 |
@@ -250,18 +242,18 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                     } else if (dg >= -32 and dg <= 31 and
                         dr_dg >= -8 and dr_dg <= 7 and
                         db_dg >= -8 and db_dg <= 7)
-                    {
+                    { // luma
                         const luma1 = @as(u8, @intFromEnum(BitTag.luma)) << 6 | @as(u8, @intCast(dg + 32));
                         const luma2 = @as(u8, @intCast(dr_dg + 8)) << 4 | @as(u8, @intCast(db_dg + 8));
                         try w.writeInt(u8, luma1, .little);
                         try w.writeInt(u8, luma2, .little);
-                    } else {
+                    } else { // rgb
                         try w.writeInt(u8, @intFromEnum(ByteTag.rgb), .little);
                         try w.writeInt(u8, px.r, .little);
                         try w.writeInt(u8, px.g, .little);
                         try w.writeInt(u8, px.b, .little);
                     }
-                } else {
+                } else { // rgba
                     try w.writeInt(u8, @intFromEnum(ByteTag.rgba), .little);
                     try w.writeInt(u8, px.r, .little);
                     try w.writeInt(u8, px.g, .little);
