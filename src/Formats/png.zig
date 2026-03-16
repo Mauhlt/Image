@@ -9,7 +9,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
     try isSigSame(SIG, data[0..SIG.len]);
     i += SIG.len;
 
-    // i.* += @sizeOf(@TypeOf(len)) + @sizeOf(@TypeOf(_type));
     while (true) {
         const chunk: ChunkHeader = try .decode(data[i..]);
         std.debug.print("{f}\n", .{chunk});
