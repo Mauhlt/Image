@@ -115,9 +115,18 @@ test "QOI" {
     std.debug.print("\t{}\n", .{img.pixels[0]});
     std.debug.print("\t{}\n", .{img.pixels[img.pixels.len - 1]});
 
-    // write bmp as bmp
+    // write bmp -> load file -> check each value
     const file1 = "src/Data/Write/BasicArt.bmp";
     try write(io, file1, &img);
+    const img2 = try read(io, gpa, file1);
+    defer img2.deinit(gpa);
+    std.debug.print("Img\n", .{});
+    std.debug.print("\t{}\n", .{img.width});
+    std.debug.print("\t{}\n", .{img.height});
+    std.debug.print("\t{}\n", .{img.pixels.len});
+    std.debug.print("\t{t}\n", .{img.format});
+    std.debug.print("\t{}\n", .{img.pixels[0]});
+    std.debug.print("\t{}\n", .{img.pixels[img.pixels.len - 1]});
 
     // const w_file = "src/Data/Write/BasicArt.qoi";
     // try write(io, w_file, &img);
