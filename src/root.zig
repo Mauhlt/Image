@@ -108,4 +108,9 @@ test "QOI" {
 
     const w_file = "src/Data/Write/BasicArt.qoi";
     try write(io, w_file, &img);
+
+    const file2 = "src/Data/Write/BasicArt.qoi";
+    const img2 = try read(io, gpa, file2);
+    defer img2.deinit(gpa);
+    try std.testing.expectEqualDeep(img, img2);
 }
