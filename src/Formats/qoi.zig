@@ -1,6 +1,7 @@
 const std = @import("std");
 const RGB = @import("Color.zig").RGB;
 const RGBA = @import("Color.zig").RGBA;
+const BitType = @import("Image.zig").BitType;
 const Image = @import("Image.zig");
 const Format = @import("Vulkan").Format;
 const isSigSame = @import("Misc.zig").isSigSame;
@@ -15,7 +16,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (data.len < 22) return error.InvalidData; // @sizeOf(Header) + @sizeOf(END_MARKER)
     const hdr: Header = try .decode(data[0..14]);
     const n_pixels = hdr.width * hdr.height;
-    const pixel_formats: Format = blk: switch (hdr.channels) {
+    const pixel_format: Format = blk: switch (hdr.channels) {
         .rgb => switch (hdr.colorspace) {
             .linear => break :blk .r8g8b8_snorm,
             .srgb => break :blk .r8g8b8_srgb,
@@ -25,9 +26,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             .srgb => break :blk .r8g8b8a8_srgb,
         },
     };
-    const pixels = try switch (hdr.channels) {
-        .rgb => gpa.alloc(RGB, n_pixels),
-        .rgba => gpa.alloc(RGBA, n_pixels),
+    const pixels: BitType = switch (hdr.channels) {
+        .rgb => .{ .rgb = (try gpa.alloc(RGB, n_pixels)).ptr },
+        .rgba => .{ .rgba = (try gpa.alloc(RGBA, n_pixels)).ptr },
     };
     errdefer gpa.free(pixels);
 
@@ -38,7 +39,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             .depth = 1,
         },
         .pixels = pixels,
-        .pixels_format = pixel_formats,
+        .pixel_format = pixel_format,
     };
 
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0xFF };
@@ -52,8 +53,16 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         i += 1;
         const byte_tag: ByteTag = @enumFromInt(b1);
         switch (byte_tag) {
-            .rgb, .rgba => inline for (@tagName(byte_tag), 0..) |field_name, k| {
-                @field(prev, field_name) = data[i + k];
+            .rgb => {
+                prev.r = data[i];
+                prev.g = data[i + 1];
+                prev.b = data[i + 2];
+            },
+            .rgba => {
+                prev.r = data[i];
+                prev.g = data[i + 1];
+                prev.b = data[i + 2];
+                prev.a = data[i + 3];
             },
             else => {
                 const bit_tag: BitTag = @enumFromInt(b1 >> 6);
@@ -83,12 +92,12 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                         const run: u8 = (b1 & 0x3F) + 1;
                         std.debug.assert(j + run < n_pixels);
                         switch (img.pixels) {
-                            .rgb => |px| @memset(px[j .. j + run], .{
-                                .r = prev.r,
-                                .g = prev.g,
-                                .b = prev.b,
-                            }),
-                            .rgba => |px| @memset(px[j .. j + run], prev),
+                            .rgb => |px| {
+                                for (0..run) |k| px[k] = prev.rgb();
+                            },
+                            .rgba => |px| {
+                                for (0..run) |k| px[k] = prev;
+                            },
                         }
                         j += run;
                         continue; // skip updates to prev + indices
@@ -291,12 +300,18 @@ const Header = struct {
         const channels: Channels = switch (img.pixel_format) {
             .r8g8b8_srgb, .r8g8b8_snorm, .b8g8r8_srgb, .b8g8r8_snorm => .rgb,
             .r8g8b8a8_srgb, .r8g8b8a8_snorm, .b8g8r8a8_srgb, .b8g8r8a8_snorm => .rgba,
-            else => unreachable,
+            else => {
+                std.debug.print("{t}\n", .{img.pixel_format});
+                unreachable;
+            },
         };
         const colorspace: Colorspace = switch (img.pixel_format) {
             .r8g8b8_snorm, .r8g8b8a8_snorm, .b8g8r8_snorm, .b8g8r8a8_snorm => .linear,
             .r8g8b8_srgb, .r8g8b8a8_srgb, .b8g8r8_srgb, .b8g8r8a8_srgb => .srgb,
-            else => unreachable,
+            else => {
+                std.debug.print("{t}\n", .{img.pixel_format});
+                unreachable;
+            },
         };
         return .{
             .width = img.extent.width,
@@ -312,7 +327,7 @@ const Header = struct {
         const height = std.mem.readInt(u32, data[8..][0..4], .big);
         if (width == 0 or height == 0) return error.InvalidDimensions;
         _, const overflow: u1 = @mulWithOverflow(width, height);
-        if (@as(bool, overflow)) return error.InvalidDimensions;
+        if (overflow == 1) return error.InvalidDimensions;
         const channels = std.enums.fromInt(Channels, data[12]) orelse
             return error.InvalidChannel;
         const colorspace = std.enums.fromInt(Colorspace, data[13]) orelse
