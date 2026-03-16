@@ -20,9 +20,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             var j: u32 = 0;
             for (0..n_pixels) |i| {
                 pixels[i] = .{
-                    .r = pixels_slice[j],
+                    .b = pixels_slice[j],
                     .g = pixels_slice[j + 1],
-                    .b = pixels_slice[j + 2],
+                    .r = pixels_slice[j + 2],
                 };
                 j += 3;
             }
@@ -31,9 +31,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             var j: u32 = 0;
             for (0..n_pixels) |i| {
                 pixels[i] = .{
-                    .r = pixels_slice[j],
+                    .b = pixels_slice[j],
                     .g = pixels_slice[j + 1],
-                    .b = pixels_slice[j + 2],
+                    .r = pixels_slice[j + 2],
                     .a = pixels_slice[j + 3],
                 };
                 j += 4;
@@ -50,12 +50,17 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 }
 
 pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
-    const hdr: Header = try .fromImage();
-    hdr.encode();
-    _ = img;
-    _ = w;
-    // hdr.encode();
-    // body.encode();
+    const hdr: Header = try .fromImage(img);
+    try hdr.encode(w);
+
+    if (hdr.compression == .none) {
+        switch (img.format) {
+            .r8g8b8_srgb => try img.writeRGB(img.pixels, w),
+            .r8g8b8a8_srgb => try img.writeRGBA(img.pixels, w),
+            .b8g8r8_srgb => try img.writeBGR(img.pixels, w),
+            .b8g8r8a8_srgb => try img.writeBGRA(img.pixels, w),
+        }
+    }
 }
 
 const Header = struct {
@@ -90,27 +95,28 @@ const Header = struct {
             .bits_per_pixel = .rgb_24,
             .compression = .none,
             .compressed_image_size = len * 3,
+            .n_possible_colors = std.math.maxInt(u32), // FIXME
             .n_colors_used = 0,
             .important_colors = 0,
         };
     }
 
     pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
+        // bmp
         try w.writeAll(SIG);
         try w.writeInt(u32, self.file_size, .little);
         try w.writeInt(u32, undefined, .little); // reserved
         try w.writeInt(u32, self.data_offset, .little);
-
+        // dib
         try w.writeInt(u32, self.dib_hdr_size, .little);
         try w.writeInt(u32, self.width, .little);
         try w.writeInt(u32, self.height, .little);
         try w.writeInt(u32, self.depth, .little);
         try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little);
-        // try w.writeInt(u32, 0, .little); // n possible colors
         try w.writeInt(u32, @intFromEnum(self.compression), .little); // compression
         try w.writeInt(u32, self.compressed_image_size, .little); // compressed image size
         try w.writeInt(u32, 0, .little); // n_colors_used
-        try w.writeInt(u32, 0, .little);
+        try w.writeInt(u32, 0, .little); // n important colors used
     }
 
     pub fn decode(data: []const u8) !@This() {

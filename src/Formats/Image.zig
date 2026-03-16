@@ -17,4 +17,36 @@ pub fn depth(self: *const @This()) u32 {
     return @as(u32, @truncate(self.pixels.len)) / len;
 }
 
-// TODO: convert data order and format
+pub fn writeRGB(self: *const @This(), w: *std.Io.Writer) !void {
+    for (self.pixels) |pixel| {
+        try w.writeInt(u8, pixel.r, .little);
+        try w.writeInt(u8, pixel.g, .little);
+        try w.writeInt(u8, pixel.b, .little);
+    }
+}
+
+pub fn writeRGBA(self: *const @This(), w: *std.Io.Writer) !void {
+    for (self.pixels) |pixel| {
+        try w.writeInt(u8, pixel.r, .little);
+        try w.writeInt(u8, pixel.g, .little);
+        try w.writeInt(u8, pixel.b, .little);
+        try w.writeInt(u8, pixel.a, .little);
+    }
+}
+
+pub fn writeGBR(self: *const @This(), w: *std.Io.Writer) !void {
+    for (self.pixels) |pixel| {
+        try w.writeInt(u8, pixel.b, .little);
+        try w.writeInt(u8, pixel.g, .little);
+        try w.writeInt(u8, pixel.r, .little);
+    }
+}
+
+pub fn writeGBRA(self: *const @This(), w: *std.Io.Writer) !void {
+    for (self.pixels) |pixel| {
+        try w.writeInt(u8, pixel.b, .little);
+        try w.writeInt(u8, pixel.g, .little);
+        try w.writeInt(u8, pixel.r, .little);
+        try w.writeInt(u8, pixel.a, .little);
+    }
+}
