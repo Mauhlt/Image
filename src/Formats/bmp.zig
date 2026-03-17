@@ -53,14 +53,16 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     const hdr: Header = try .fromImage(img);
     try hdr.encode(w);
 
-    if (hdr.compression == .none) {
-        switch (img.format) {
+    switch (hdr.compression) {
+        .none => switch (img.format) {
             .r8g8b8_srgb => try img.writeRGB(w),
             .r8g8b8a8_srgb => try img.writeRGBA(w),
             .b8g8r8_srgb => try img.writeBGR(w),
             .b8g8r8a8_srgb => try img.writeBGRA(w),
             else => unreachable,
-        }
+        },
+        .rle4 => {},
+        .rle8 => {},
     }
 }
 
@@ -79,7 +81,7 @@ const Header = struct {
     compressed_image_size: u32,
     n_colors_used: u32,
     important_colors: u32,
-    // color_table: []u8,
+    color_table: []const RGBA = &.{},
 
     pub fn fromImage(img: *const Image) !@This() {
         const len, const overflow = @mulWithOverflow(img.width, img.height);
@@ -128,6 +130,7 @@ const Header = struct {
         try w.writeInt(u32, 0, .little); // 54
     }
 
+    // need file size to understand this
     pub fn decode(data: []const u8) !@This() {
         try isSigSame(data[0..2], SIG);
         const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
@@ -191,6 +194,12 @@ const Header = struct {
             .important_colors = important_colors,
             // .color_table = color_table,
         };
+    }
+
+    pub fn deinit(self: *const Header, gpa: std.mem.Allocator) void {
+        if (self.color_table.len > 0) {
+            gpa.free(self.color_table);
+        }
     }
 };
 
