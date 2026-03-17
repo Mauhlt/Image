@@ -19,34 +19,24 @@ pub fn depth(self: *const @This()) u32 {
 
 pub fn writeRGB(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeInt(u8, pixel.r, .little);
-        try w.writeInt(u8, pixel.g, .little);
-        try w.writeInt(u8, pixel.b, .little);
+        try w.writeAll(&.{ pixel.r, pixel.g, pixel.b });
     }
 }
 
 pub fn writeRGBA(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeInt(u8, pixel.r, .little);
-        try w.writeInt(u8, pixel.g, .little);
-        try w.writeInt(u8, pixel.b, .little);
-        try w.writeInt(u8, pixel.a, .little);
+        try w.writeAll(&.{ pixel.r, pixel.g, pixel.b, pixel.a });
     }
 }
 
 pub fn writeBGR(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeInt(u8, pixel.b, .little);
-        try w.writeInt(u8, pixel.g, .little);
-        try w.writeInt(u8, pixel.r, .little);
+        try w.writeAll(&.{ pixel.b, pixel.g, pixel.r });
     }
 }
 
 pub fn writeBGRA(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeInt(u8, pixel.b, .little);
-        try w.writeInt(u8, pixel.g, .little);
-        try w.writeInt(u8, pixel.r, .little);
-        try w.writeInt(u8, pixel.a, .little);
+        try w.writeAll(&.{ pixel.b, pixel.g, pixel.r, pixel.a });
     }
 }

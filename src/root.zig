@@ -1,4 +1,5 @@
 const std = @import("std");
+const RGBA = @import("Formats/RGBA.zig");
 const Image = @import("Formats/Image.zig");
 const BMP = @import("Formats/BMP.zig");
 const PNG = @import("Formats/PNG.zig");
@@ -107,13 +108,17 @@ test "QOI" {
     const file = "src/Data/Read/BasicArt.bmp";
     const img = try read(io, gpa, file);
     defer img.deinit(gpa);
-    std.debug.print("Img\n", .{});
-    std.debug.print("\t{}\n", .{img.width});
-    std.debug.print("\t{}\n", .{img.height});
-    std.debug.print("\t{}\n", .{img.pixels.len});
-    std.debug.print("\t{t}\n", .{img.format});
-    std.debug.print("\t{}\n", .{img.pixels[0]});
-    std.debug.print("\t{}\n", .{img.pixels[img.pixels.len - 1]});
+    try std.testing.expectEqual(img.width, 1536);
+    try std.testing.expectEqual(img.height, 864);
+    try std.testing.expectEqual(img.pixels.len, 1_327_104);
+    try std.testing.expectEqual(img.format, .b8g8r8_srgb);
+    const expected_pixel: RGBA = .{ .r = 255, .g = 201, .b = 13, .a = 255 };
+    try std.testing.expectEqual(img.pixels[0].r, expected_pixel.r);
+    try std.testing.expectEqual(img.pixels[0].g, expected_pixel.g);
+    try std.testing.expectEqual(img.pixels[0].b, expected_pixel.b);
+    try std.testing.expectEqual(img.pixels[img.pixels.len - 1].r, expected_pixel.r);
+    try std.testing.expectEqual(img.pixels[img.pixels.len - 1].g, expected_pixel.g);
+    try std.testing.expectEqual(img.pixels[img.pixels.len - 1].b, expected_pixel.b);
 
     // write bmp -> load file -> check each value
     const file1 = "src/Data/Write/BasicArt.bmp";
