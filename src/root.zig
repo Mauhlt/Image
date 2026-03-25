@@ -9,13 +9,6 @@ const vk = @import("Vulkan");
 pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
-    const file_len = try file.length(io);
-    std.debug.print("{}\n", .{file_len});
-
-    var read_buffer: [4096]u8 = undefined;
-    var reader = file.reader(io, &read_buffer);
-    const io_reader: *std.Io.Reader = &reader.interface;
-    _ = io_reader;
 
     // test different ways to load the data
     const data1 = try readData(io, gpa);
@@ -25,22 +18,41 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     errdefer gpa.free(data2);
 }
 
-fn readData(io: std.Io, gpa: std.mem.Allocator, file: *std.fs.File) !void {
-    _ = io;
-    const n = 10;
-    const threads = try gpa.alloc(std.Thread, n - 1);
+fn readDataPositional(io: std.Io, gpa: std.mem.Allocator, file: std.Io.File) ![]u8 {
+    const len = file.length(io);
+    var data = try gpa.alloc(u8, len);
+    errdefer gpa.free(data);
+
+    const n = (std.Thread.getCpuCount() catch 2) - 1;
+    const threads = try gpa.alloc(std.Thread, n);
     defer gpa.free(threads);
 
-    for (0..n) |i| {
-        threads[i] = try std.Thread.spawn(.{}, file.readPositionalAll);
+    const data_per_thread = (len / n) - @mod(len / n, 64);
+    var j: usize = 0;
+    for (0..n - 1) |i| {
+        threads[i] = try std.Thread.spawn(
+            .{},
+            file.readPositionalAll,
+            .{ io, data[j .. j + data_per_thread], j },
+        );
+        j += data_per_thread;
     }
+    threads[n - 1] = try std.Thread.spawn(
+        .{},
+        file.readPositionalAll,
+        .{ io, data[j..data.len], j },
+    );
+    for (0..n) |i| threads[i].join();
+
+    return data;
 }
 
-fn readData2(io: std.Io, file: *std.fs.File) !void {
+fn readDataMmap(io: std.Io, file: std.Io.File) ![]u8 {
     const file_len = try file.length();
     var mmap = try file.createMemoryMap(io, .{ .len = file_len });
-    defer mmap.destory(io);
-    mmap.read(io);
+    defer mmap.destroy(io);
+    try mmap.read(io);
+    return mmap.memory[0..file_len];
 }
 
 pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
