@@ -10,22 +10,37 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
     const file_len = try file.length(io);
+    std.debug.print("{}\n", .{file_len});
 
-    var mm = try file.createMemoryMap(
-        io,
-        .{ .len = file_len, .protection = .{ .read = true } },
-    );
-    defer mm.destroy(io);
-    try mm.read(io);
-    const raw_data = mm.memory[0..file_len];
+    var read_buffer: [4096]u8 = undefined;
+    var reader = file.reader(io, &read_buffer);
+    const io_reader: *std.Io.Reader = &reader.interface;
+    _ = io_reader;
 
-    const image_tag = try tagFromExt(path);
-    return switch (image_tag) {
-        .bmp => BMP.decode(gpa, raw_data),
-        // .qoi => QOI.decode(gpa, raw_data),
-        // .png => PNG.decode(gpa, raw_data),
-        else => unreachable,
-    };
+    // test different ways to load the data
+    const data1 = try readData(io, gpa);
+    errdefer gpa.free(data1);
+
+    const data2 = try readData(io, gpa);
+    errdefer gpa.free(data2);
+}
+
+fn readData(io: std.Io, gpa: std.mem.Allocator, file: *std.fs.File) !void {
+    _ = io;
+    const n = 10;
+    const threads = try gpa.alloc(std.Thread, n - 1);
+    defer gpa.free(threads);
+
+    for (0..n) |i| {
+        threads[i] = try std.Thread.spawn(.{}, file.readPositionalAll);
+    }
+}
+
+fn readData2(io: std.Io, file: *std.fs.File) !void {
+    const file_len = try file.length();
+    var mmap = try file.createMemoryMap(io, .{ .len = file_len });
+    defer mmap.destory(io);
+    mmap.read(io);
 }
 
 pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
@@ -99,7 +114,6 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
 // }
 
 test "QOI" {
-    // write qoi img
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
@@ -119,36 +133,4 @@ test "QOI" {
     try std.testing.expectEqual(img.pixels[img.pixels.len - 1].r, expected_pixel.r);
     try std.testing.expectEqual(img.pixels[img.pixels.len - 1].g, expected_pixel.g);
     try std.testing.expectEqual(img.pixels[img.pixels.len - 1].b, expected_pixel.b);
-
-    // write bmp -> load file -> check each value
-    const file1 = "src/Data/Write/BasicArt.bmp";
-    try write(io, file1, &img);
-    const img2 = try read(io, gpa, file1);
-    defer img2.deinit(gpa);
-    std.debug.print("Img\n", .{});
-    std.debug.print("\t{}\n", .{img.width});
-    std.debug.print("\t{}\n", .{img.height});
-    std.debug.print("\t{}\n", .{img.pixels.len});
-    std.debug.print("\t{t}\n", .{img.format});
-    std.debug.print("\t{}\n", .{img.pixels[0]});
-    std.debug.print("\t{}\n", .{img.pixels[img.pixels.len - 1]});
-
-    // const w_file = "src/Data/Write/BasicArt.qoi";
-    // try write(io, w_file, &img);
-    //
-    // const file2 = "src/Data/Write/BasicArt.qoi";
-    // const img2 = try read(io, gpa, file2);
-    // defer img2.deinit(gpa);
-    //
-    // const px1 = img.pixels.rgb;
-    // const px2 = img2.pixels.rgb;
-    // const len = img.extent.width * img.extent.height * img.extent.depth;
-    // for (0..len) |i| {
-    //     std.testing.expect(px1[i].eql(px2[i])) catch |err| {
-    //         std.debug.print("Pixel: {}\n", .{i});
-    //         std.debug.print("{any}\n", .{px1[i]});
-    //         std.debug.print("{any}\n", .{px2[i]}); // just dead wrong
-    //         return err;
-    //     };
-    // }
 }

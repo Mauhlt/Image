@@ -19,24 +19,34 @@ pub fn depth(self: *const @This()) u32 {
 
 pub fn writeRGB(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeAll(&.{ pixel.r, pixel.g, pixel.b });
+        try w.writeByte(pixel.r);
+        try w.writeByte(pixel.g);
+        try w.writeByte(pixel.b);
     }
 }
 
 pub fn writeRGBA(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeAll(&.{ pixel.r, pixel.g, pixel.b, pixel.a });
+        try w.writeByte(pixel.r);
+        try w.writeByte(pixel.g);
+        try w.writeByte(pixel.b);
+        try w.writeByte(pixel.a);
     }
 }
 
 pub fn writeBGR(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeAll(&.{ pixel.b, pixel.g, pixel.r });
+        try w.writeByte(pixel.b);
+        try w.writeByte(pixel.g);
+        try w.writeByte(pixel.r);
     }
 }
 
 pub fn writeBGRA(self: *const @This(), w: *std.Io.Writer) !void {
     for (self.pixels) |pixel| {
-        try w.writeAll(&.{ pixel.b, pixel.g, pixel.r, pixel.a });
+        try w.writeByte(pixel.b);
+        try w.writeByte(pixel.g);
+        try w.writeByte(pixel.r);
+        try w.writeByte(pixel.a);
     }
 }

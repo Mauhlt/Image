@@ -13,6 +13,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const n_pixels = hdr.width * hdr.height * hdr.depth;
     const start = hdr.data_offset;
     const end = start + hdr.compressed_image_size;
+    std.debug.print("{} {}\n", .{ start, end });
+    std.debug.print("Data Len: {}\n", .{data.len}); // this is wrong?
+    std.debug.print("Img Len: {}\n", .{hdr.compressed_image_size});
     const pixels_slice = data[start..end];
     const pixels = try gpa.alloc(RGBA, n_pixels);
     switch (hdr.bits_per_pixel) {
@@ -53,6 +56,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     const hdr: Header = try .fromImage(img);
     try hdr.encode(w);
 
+    std.debug.print("Writing: {t}\n", .{img.format});
     switch (hdr.compression) {
         .none => switch (img.format) {
             .r8g8b8_srgb => try img.writeRGB(w),
@@ -67,7 +71,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 }
 
 const Header = struct {
-    pub const SIG = "BM";
+    pub const SIG: []const u8 = "BM";
     file_size: u32,
     data_offset: u32,
     dib_hdr_size: u32,
@@ -120,9 +124,9 @@ const Header = struct {
         try w.writeInt(u32, self.dib_hdr_size, .little); // 18
         try w.writeInt(u32, self.width, .little); // 22
         try w.writeInt(u32, self.height, .little); // 26
-        try w.writeInt(u16, @truncate(self.depth), .little); // 28
-        try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little); // 30
-        try w.writeInt(u32, @intFromEnum(self.compression), .little); // 34
+        try w.writeInt(u16, @as(u16, @truncate(self.depth)), .little); // 28
+        try w.writeInt(u16, @as(u16, @intFromEnum(self.bits_per_pixel)), .little); // 30
+        try w.writeInt(u32, @as(u32, @intFromEnum(self.compression)), .little); // 34
         try w.writeInt(u32, self.compressed_image_size, .little); // 38
         try w.writeInt(u32, 0, .little); // 42
         try w.writeInt(u32, 0, .little); // 46
