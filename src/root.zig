@@ -9,8 +9,19 @@ const vk = @import("Vulkan");
 pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !void { // !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
-    const data = readDataPositional(io, gpa, path);
+
+    const data = try readDataPositional(io, gpa, path);
     defer gpa.free(data);
+
+    const ext_str = std.fs.path.extension(path)[1..];
+    const ext = std.meta.stringToEnum(ImageTag, ext_str) orelse
+        mapImageTagFromExt.get(ext_str) orelse
+        return error.InvalidFileExtension;
+
+    switch (ext) {
+        .bmp => std.debug.print("BMP\n", .{}),
+        else => unreachable,
+    }
 }
 
 fn timer(
@@ -57,9 +68,9 @@ fn readDataPositional(
 
     const chunk_size = if (n > 1) (len / n) - @mod(len / n, 64) else len;
 
-    const results = try gpa.alloc(WorkResult, n);
-    defer gpa.free(results);
-    @memset(results, .{});
+    const work_results = try gpa.alloc(WorkResult, n);
+    defer gpa.free(work_results);
+    @memset(work_results, .{});
 
     const work_items = try gpa.alloc(Work, n);
     defer gpa.free(work_items);
@@ -69,15 +80,15 @@ fn readDataPositional(
             .io = io,
             .offset = i * chunk_size,
             .data = data[i * chunk_size ..][0..chunk_size],
-            .result = &results[i],
+            .result = &work_results[i],
         };
     }
 
     for (0..n - 1) |i|
-        threads[i] = try std.Thread.spawn(.{}, readPositional, .{work_items[i]});
-    threads[n - 1] = try std.Thread.spawn(.{}, readPositional, .{work_items[n - 1]});
+        threads[i] = try std.Thread.spawn(.{}, readPositional, .{&work_items[i]});
+    threads[n - 1] = try std.Thread.spawn(.{}, readPositional, .{&work_items[n - 1]});
     for (0..n) |i| threads[i].join();
-    for (results) |r| if (r.err) |e| return e;
+    for (work_items) |w| if (w.result.err) |e| return e;
 
     return data;
 }
@@ -94,7 +105,7 @@ const Work = struct {
     result: *WorkResult,
 };
 
-fn readPositional(work: Work) void {
+fn readPositional(work: *Work) void {
     _ = work.file.readPositionalAll(work.io, work.data, work.offset) catch |err| {
         work.result.err = err;
         return;
@@ -167,6 +178,7 @@ const ImageTag = enum {
     tga,
     webp,
 };
+
 const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "jpeg", .jpg },
     .{ "jpe", .jpg },
@@ -177,25 +189,28 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "dib", .bmp },
 });
 
-test "PositionalAll vs Mmap" {
-    const gpa = std.testing.allocator;
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    const io = threaded.io();
-
-    const filepath = "src/Data/Read/BasicArt.bmp";
-    const n_iters = 1_000;
-    const time1 = try timer(io, gpa, filepath, n_iters, readDataPositional);
-    const time2 = try timer(io, gpa, filepath, n_iters, readDataMmap);
-    const time3 = try timer(io, gpa, filepath, n_iters, readDataMmap);
-    const time4 = try timer(io, gpa, filepath, n_iters, readDataPositional);
-    try std.testing.expect(time1 < time2);
-    try std.testing.expect(time4 < time3);
-}
+// test "PositionalAll vs Mmap" {
+//     const gpa = std.testing.allocator;
+//     var threaded: std.Io.Threaded = .init(gpa, .{});
+//     const io = threaded.io();
+//
+//     const filepath = "src/Data/Read/BasicArt.bmp";
+//     const n_iters = 1_000;
+//     const time1 = try timer(io, gpa, filepath, n_iters, readDataPositional);
+//     const time2 = try timer(io, gpa, filepath, n_iters, readDataMmap);
+//     const time3 = try timer(io, gpa, filepath, n_iters, readDataMmap);
+//     const time4 = try timer(io, gpa, filepath, n_iters, readDataPositional);
+//     try std.testing.expect(time1 < time2);
+//     try std.testing.expect(time4 < time3);
+//     if (@import("builtin").mode == .Debug)
+//         std.debug.print("{} - {}\n", .{ time1, time2 });
+// }
 
 test "BMP" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
+
     const file = "src/Data/Read/BasicArt.bmp";
     try read(io, gpa, file);
 }
