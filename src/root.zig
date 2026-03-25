@@ -10,12 +10,11 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
 
-    // test different ways to load the data
-    const data1 = try readData(io, gpa);
+    // test 1 million times each
+    const data1 = try readDataPositional(io, gpa, file);
     errdefer gpa.free(data1);
 
-    const data2 = try readData(io, gpa);
-    errdefer gpa.free(data2);
+    const data2 = try readDataMmap(io, file);
 }
 
 fn readDataPositional(io: std.Io, gpa: std.mem.Allocator, file: std.Io.File) ![]u8 {
