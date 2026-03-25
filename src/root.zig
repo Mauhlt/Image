@@ -9,53 +9,44 @@ const vk = @import("Vulkan");
 pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !void { // !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
-
-    const data = try readDataPositional(io, gpa, file);
-    gpa.free(data);
-    // const n_iters = 1;
-    // const time1 = try timer(io, gpa, n_iters, readDataPositional, file);
-    // std.debug.print("{}\n", .{time1});
-    // const time2 = try timer(io, gpa, n_iters, readDataMmap, file);
-    // std.debug.print("{}\n{}\n", .{ time1, time2 });
+    const data = readDataPositional(io, gpa, path);
+    defer gpa.free(data);
 }
 
 fn timer(
     io: std.Io,
     gpa: std.mem.Allocator,
+    path: []const u8,
     n_iters: u64,
     my_fn: anytype,
-    file: std.Io.File,
 ) !u64 {
     const clock: std.Io.Clock = .awake;
     var time_taken: u64 = 0;
-    for (0..n_iters) |_| {
-        const timestamp = clock.now(io);
-        const start = timestamp.toMilliseconds();
-        const data = try my_fn(io, gpa, file);
+    for (0..n_iters / 2) |_| {
+        const start = clock.now(io).toMilliseconds();
+        const data = try my_fn(io, gpa, path);
         defer gpa.free(data);
-        const end = timestamp.toMilliseconds();
-        time_taken += (end - start);
+        const end = clock.now(io).toMilliseconds();
+        time_taken += @intCast(end - start);
     }
-    return time_taken / n_iters;
+    for (0..n_iters / 2) |_| {
+        const start = clock.now(io).toMilliseconds();
+        const data = try my_fn(io, gpa, path);
+        defer gpa.free(data);
+        const end = clock.now(io).toMilliseconds();
+        time_taken += @intCast(end - start);
+    }
+    return time_taken;
 }
-
-const WorkResult = struct {
-    err: ?anyerror = null,
-};
-
-const Work = struct {
-    io: std.Io,
-    file: std.Io.File,
-    offset: u64,
-    data: []u8,
-    result: *WorkResult,
-};
 
 fn readDataPositional(
     io: std.Io,
     gpa: std.mem.Allocator,
-    file: std.Io.File,
+    path: []const u8,
 ) ![]u8 {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
+    defer file.close(io);
+
     const len = try file.length(io);
     const data = try gpa.alloc(u8, len);
     errdefer gpa.free(data);
@@ -91,6 +82,18 @@ fn readDataPositional(
     return data;
 }
 
+const WorkResult = struct {
+    err: ?anyerror = null,
+};
+
+const Work = struct {
+    io: std.Io,
+    file: std.Io.File,
+    offset: u64,
+    data: []u8,
+    result: *WorkResult,
+};
+
 fn readPositional(work: Work) void {
     _ = work.file.readPositionalAll(work.io, work.data, work.offset) catch |err| {
         work.result.err = err;
@@ -98,11 +101,19 @@ fn readPositional(work: Work) void {
     };
 }
 
-fn readDataMmap(io: std.Io, gpa: std.mem.Allocator, file: std.Io.File) ![]u8 {
-    const file_len = try file.length();
-    var mmap = try file.createMemoryMap(io, .{ .len = file_len });
+fn readDataMmap(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
+    var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
+    defer file.close(io);
+
+    const file_len = try file.length(io);
+    var mmap = try file.createMemoryMap(io, .{
+        .len = file_len,
+        .offset = 0,
+        .protection = .{ .read = true },
+    });
     defer mmap.destroy(io);
     try mmap.read(io);
+
     return gpa.dupe(u8, mmap.memory[0..file_len]);
 }
 
@@ -165,6 +176,21 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "hif", .heic },
     .{ "dib", .bmp },
 });
+
+test "PositionalAll vs Mmap" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+
+    const filepath = "src/Data/Read/BasicArt.bmp";
+    const n_iters = 1_000;
+    const time1 = try timer(io, gpa, filepath, n_iters, readDataPositional);
+    const time2 = try timer(io, gpa, filepath, n_iters, readDataMmap);
+    const time3 = try timer(io, gpa, filepath, n_iters, readDataMmap);
+    const time4 = try timer(io, gpa, filepath, n_iters, readDataPositional);
+    try std.testing.expect(time1 < time2);
+    try std.testing.expect(time4 < time3);
+}
 
 test "BMP" {
     const gpa = std.testing.allocator;
