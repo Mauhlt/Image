@@ -46,8 +46,8 @@ const WorkResult = struct {
 const Work = struct {
     io: std.Io,
     file: std.Io.File,
-    start: u64,
-    len: u64,
+    offset: u64,
+    data: []u8,
     result: *WorkResult,
 };
 
@@ -76,30 +76,26 @@ fn readDataPositional(
         work_items[i] = .{
             .file = file,
             .io = io,
-            .byte_start = j,
-            .byte_len = data_per_thread,
-            .result = 0,
+            .offset = i * chunk_size,
+            .data = data[i * chunk_size ..][0..chunk_size],
+            .result = &results[i],
         };
     }
 
-    var j: usize = 0;
-    for (0..n - 1) |i| {
-        threads[i] = try std.Thread.spawn(
-            .{},
-            file.readPositionalAll,
-            .{ io, data[j..][0..data_per_thread], j },
-        );
-        j += data_per_thread;
-    }
-    threads[n - 1] = try std.Thread.spawn(
-        .{},
-        file.readPositionalAll,
-        .{ io, data[j..data.len], j },
-    );
-
+    for (0..n - 1) |i|
+        threads[i] = try std.Thread.spawn(.{}, readPositional, .{work_items[i]});
+    threads[n - 1] = try std.Thread.spawn(.{}, readPositional, .{work_items[n - 1]});
     for (0..n) |i| threads[i].join();
+    for (results) |r| if (r.err) |e| return e;
 
     return data;
+}
+
+fn readPositional(work: Work) void {
+    _ = work.file.readPositionalAll(work.io, work.data, work.offset) catch |err| {
+        work.result.err = err;
+        return;
+    };
 }
 
 fn readDataMmap(io: std.Io, gpa: std.mem.Allocator, file: std.Io.File) ![]u8 {
