@@ -1,12 +1,13 @@
 const std = @import("std");
 const RGBA = @import("Formats/RGBA.zig");
 const Image = @import("Formats/Image.zig");
+
 const BMP = @import("Formats/BMP.zig");
-const PNG = @import("Formats/PNG.zig");
+// const PNG = @import("Formats/PNG.zig");
 // const QOI = @import("Formats/QOI.zig");
 const vk = @import("Vulkan");
 
-pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !void { // !Image {
+pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
     var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
     defer file.close(io);
 
@@ -18,10 +19,12 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !void { // !Im
         mapImageTagFromExt.get(ext_str) orelse
         return error.InvalidFileExtension;
 
-    switch (ext) {
-        .bmp => std.debug.print("BMP\n", .{}),
+    const img = switch (ext) {
+        .bmp => try BMP.decode(gpa, data),
+        // .grayscale => std.debug.print("Grayscale.\n", .{}),
         else => unreachable,
-    }
+    };
+    return img;
 }
 
 fn timer(
@@ -212,18 +215,21 @@ test "BMP" {
     const io = threaded.io();
 
     const file = "src/Data/Read/BasicArt.bmp";
-    try read(io, gpa, file);
+    const img = try read(io, gpa, file);
+    defer img.deinit(gpa);
 }
 
 test "QOI" {
     // const gpa = std.testing.allocator;
     // var threaded: std.Io.Threaded = .init(gpa, .{});
     // const io = threaded.io();
-    //
-    // // ground truth
-    // const file = "src/Data/Read/BasicArt.bmp";
+
+    // ground truth
+    // const file = "src/Data/Read/BasicArt.qoi";
+    // try read(io, gpa, file);
     // const img = try read(io, gpa, file);
     // defer img.deinit(gpa);
+    // std.debug.print("Img: {}\n", .{img});
     // try std.testing.expectEqual(img.width, 1536);
     // try std.testing.expectEqual(img.height, 864);
     // try std.testing.expectEqual(img.pixels.len, 1_327_104);
