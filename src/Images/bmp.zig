@@ -49,6 +49,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (compression != .none) return error.UnsupportedCompression;
 
     const compressed_image_size = std.mem.readInt(u32, data[34..][0..4], .little);
+    _ = compressed_image_size;
     // const x_px_per_mm = std.mem.readInt(u32, data[38..][0..4], .little);
     // const y_px_per_mm = std.mem.readInt(u32, data[42..][0..4], .little);
     // const colors_used = std.mem.readInt(u32, data[46..][0..4], .little);
@@ -82,9 +83,17 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             pixels[d + 3] = if (bpp == .rgba) src[s + 3] else 0xFF;
         }
     }
+
+    return .{
+        .width = width,
+        .height = height,
+        .depth = 1,
+        .format = undefined,
+        .pixels = pixels,
+    };
 }
 
-pub fn encode() !void {}
+// pub fn encode() !void {}
 
 const BitsPerPixel = enum(u16) {
     monochrome = 1,
