@@ -15,5 +15,3 @@ pub const Decode = error{
     InvalidDimensions,
     ChunkIsNotHeader,
 };
-
-pub const Encode = error{};

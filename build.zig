@@ -8,8 +8,11 @@ pub fn build(b: *std.Build) void {
     });
 
     // Libraries
-    const Vulkan = b.dependency("Vulkan", .{});
-    mod.addImport("Vulkan", Vulkan.module("Vulkan"));
+    const libraries = [_][]const u8{"Vulkan"};
+    for (libraries) |library| {
+        const dep = b.dependency(library, .{});
+        mod.addImport(library, dep.module(library));
+    }
 
     const mod_tests = b.addTest(.{
         .root_module = mod,

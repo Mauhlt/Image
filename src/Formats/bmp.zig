@@ -4,18 +4,16 @@ const Image = @import("Image.zig");
 const RGBA = @import("RGBA.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
 
+
+pub const HDR_SIZE = 
+pub const SIG: []const u8 = "BM";
+
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
-// default: top-down scanline, pad 4-byte boundary, brg format, srgb, no compression
-// TODO: implement 4RLE + 8RLE
-// 4RLE + 8RLE
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     const n_pixels = hdr.width * hdr.height * hdr.depth;
     const start = hdr.data_offset;
     const end = start + hdr.compressed_image_size;
-    std.debug.print("{} {}\n", .{ start, end });
-    std.debug.print("Data Len: {}\n", .{data.len}); // this is wrong?
-    std.debug.print("Img Len: {}\n", .{hdr.compressed_image_size});
     const pixels_slice = data[start..end];
     const pixels = try gpa.alloc(RGBA, n_pixels);
     switch (hdr.bits_per_pixel) {
@@ -71,7 +69,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 }
 
 const Header = struct {
-    pub const SIG: []const u8 = "BM";
     file_size: u32,
     data_offset: u32,
     dib_hdr_size: u32,
