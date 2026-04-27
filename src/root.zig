@@ -4,7 +4,7 @@ const Image = @import("Formats/Image.zig");
 
 const BMP = @import("Formats/BMP.zig");
 // const PNG = @import("Formats/PNG.zig");
-// const QOI = @import("Formats/QOI.zig");
+const QOI = @import("Formats/QOI.zig");
 const vk = @import("Vulkan");
 
 pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
@@ -21,6 +21,7 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
 
     const img = switch (ext) {
         .bmp => try BMP.decode(gpa, data),
+        .qoi => try QOI.decode(gpa, data),
         // .grayscale => std.debug.print("Grayscale.\n", .{}),
         else => unreachable,
     };
