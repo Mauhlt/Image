@@ -4,8 +4,7 @@ const Image = @import("Image.zig");
 const RGBA = @import("RGBA.zig");
 const isSigSame = @import("Misc.zig").isSigSame;
 
-
-pub const HDR_SIZE = 
+// pub const HDR_SIZE = 54;
 pub const SIG: []const u8 = "BM";
 
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
