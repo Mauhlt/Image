@@ -1,5 +1,5 @@
 const std = @import("std");
-const vk = @import("Vulkan");
+const Format = @import("Vulkan").Format;
 
 // Colors
 const GRAY = @import("Color.zig").GRAY;

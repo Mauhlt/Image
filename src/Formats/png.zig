@@ -1,7 +1,7 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const Image = @import("Image.zig");
-const RGBA = @import("RGBA.zig");
+const Image = @import("img.zig");
+// const RGBA = @import("color.zig").RGBA;
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
     _ = gpa;

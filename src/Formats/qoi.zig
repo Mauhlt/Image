@@ -1,7 +1,7 @@
 const std = @import("std");
-const Image = @import("Image.zig");
-const RGBA = @import("RGBA.zig");
 const Format = @import("Vulkan").Format;
+const Image = @import("img.zig");
+const RGBA = @import("color.zig").RGBA;
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // TODO:
