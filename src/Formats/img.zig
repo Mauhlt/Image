@@ -35,7 +35,7 @@ const OutColorType = union(ColorTypes) {
 width: u32,
 height: u32,
 pixels: OutColorType,
-format: vk.Format,
+format: Format,
 
 /// may creates new memory
 /// may copy data over
@@ -45,7 +45,7 @@ pub fn init(
     width: u32,
     height: u32,
     old_pixels: InColorType,
-    format: vk.Format,
+    format: Format,
 ) !@This() {
     var new_img: @This() = undefined;
     new_img.width = width;
@@ -83,7 +83,7 @@ pub fn copy(
     width: u32,
     height: u32,
     old_pixels: InColorType,
-    format: vk.Format,
+    format: Format,
 ) !@This() {
     var new_img: @This() = undefined;
     new_img.width = width;
