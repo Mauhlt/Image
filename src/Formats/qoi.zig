@@ -27,7 +27,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const pixels = try gpa.alloc(RGBA, n_pixels);
     errdefer gpa.free(pixels);
 
-    var img: Image = .{
+    const img: Image = .{
         .width = hdr.width,
         .height = hdr.height,
         .pixels = pixels,
