@@ -1,7 +1,7 @@
 const std = @import("std");
 const Error = @import("Error.zig");
-const Image = @import("Image.zig");
-const RGBA = @import("RGBA.zig");
+const Image = @import("img.zig");
+const RGBA = @import("color.zig").RGBA;
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // pub const HDR_SIZE = 54;

@@ -1,7 +1,7 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const RGB = @import("RGB.zig");
-const RGBA = @import("RGBA.zig");
+// const RGB = @import("RGB.zig");
+// const RGBA = @import("RGBA.zig");
 
 // http://www.paulbourke.net/dataformats/tga/
 
@@ -27,7 +27,7 @@ const Header = struct {
 };
 
 const Body = struct {
-    data: []const RGBA, // wastes space
+    // data: []const RGBA, // wastes space
 
     pub fn read(r: *std.Io.Reader, allo: std.mem.Allocator) !@This() {
         _ = r;
