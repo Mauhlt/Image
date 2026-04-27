@@ -1,6 +1,6 @@
 const std = @import("std");
 const RGBA = @import("Formats/RGBA.zig");
-const Image = @import("Formats/Image.zig");
+const Image = @import("Formats/img.zig");
 
 const BMP = @import("Formats/BMP.zig");
 // const PNG = @import("Formats/PNG.zig");
