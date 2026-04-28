@@ -1,7 +1,8 @@
 const std = @import("std");
-// const RGBA = @import("Formats/color.zig");
+// Color
 const Image = @import("Formats/img.zig");
 
+// Formats
 const BMP = @import("Formats/BMP.zig");
 // const PNG = @import("Formats/PNG.zig");
 const QOI = @import("Formats/QOI.zig");
@@ -21,7 +22,7 @@ pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
 
     const img = switch (ext) {
         .bmp => try BMP.decode(gpa, data),
-        .qoi => try QOI.decode(gpa, data),
+        // .qoi => try QOI.decode(gpa, data),
         // .grayscale => std.debug.print("Grayscale.\n", .{}),
         else => unreachable,
     };
@@ -218,6 +219,7 @@ test "BMP" {
     const file = "src/Data/Read/BasicArt.bmp";
     const img = try read(io, gpa, file);
     defer img.deinit(gpa);
+    std.debug.print("Img: {any}\n", .{img});
 }
 
 test "QOI" {

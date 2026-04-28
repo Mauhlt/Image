@@ -1,7 +1,9 @@
 const std = @import("std");
+const Format = @import("Vulkan").Format;
 const Error = @import("Error.zig");
 const Image = @import("img.zig");
 const RGBA = @import("color.zig").RGBA;
+const Pixels = @import("color.zig").Pixels;
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // pub const HDR_SIZE = 54;
@@ -10,42 +12,72 @@ pub const SIG: []const u8 = "BM";
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
-    const n_pixels = hdr.width * hdr.height * hdr.depth;
+    // defer hdr.deinit(gpa);
+    std.debug.print("{f}", .{hdr});
+
+    std.debug.assert(hdr.depth == 1);
+    const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
+        .monochrome => 1,
+        .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => 3,
+        .rgba => 4,
+    };
+    const exp_n_pixels = hdr.width * hdr.height;
     const start = hdr.data_offset;
     const end = start + hdr.compressed_image_size;
+    std.debug.assert(end <= data.len and start <= data.len);
     const pixels_slice = data[start..end];
-    const pixels = try gpa.alloc(RGBA, n_pixels);
+    const n_pixels = pixels_slice.len / bpp;
+    std.debug.assert(n_pixels == exp_n_pixels);
+
+    var out_pixels: Pixels = undefined;
+    var format: Format = undefined;
     switch (hdr.bits_per_pixel) {
+        .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
+        .monochrome => {
+            var pixels: @TypeOf(out_pixels.gray.*) = try .initCapacity(gpa, n_pixels);
+            errdefer pixels.deinit(gpa);
+            pixels.appendSliceAssumeCapacity(pixels_slice);
+            out_pixels = .{ .gray = &pixels };
+            format = .r8_srgb;
+        },
         .rgb_24 => {
-            var j: u32 = 0;
-            for (0..n_pixels) |i| {
-                pixels[i] = .{
+            var pixels: @TypeOf(out_pixels.rgb.*) = try .initCapacity(gpa, n_pixels);
+            errdefer pixels.deinit(gpa);
+            var j: usize = 0;
+            for (0..n_pixels) |_| {
+                pixels.appendAssumeCapacity(.{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
-                };
+                });
                 j += 3;
             }
+            out_pixels = .{ .rgb = &pixels };
+            format = .r8g8b8_srgb;
         },
         .rgba => {
-            var j: u32 = 0;
-            for (0..n_pixels) |i| {
-                pixels[i] = .{
+            var pixels: @TypeOf(out_pixels.rgba.*) = try .initCapacity(gpa, n_pixels);
+            errdefer pixels.deinit(gpa);
+            var j: usize = 0;
+            for (0..n_pixels) |_| {
+                pixels.appendAssumeCapacity(.{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
                     .a = pixels_slice[j + 3],
-                };
+                });
                 j += 4;
             }
+            out_pixels = .{ .rgba = &pixels };
+            format = .r8g8b8a8_srgb;
         },
-        else => unreachable,
     }
+    errdefer out_pixels.deinit(gpa);
     return .{
         .width = hdr.width,
         .height = hdr.height,
-        .format = .b8g8r8_srgb,
-        .pixels = pixels,
+        .format = .r8g8b8_srgb,
+        .pixels = out_pixels,
     };
 }
 
@@ -81,7 +113,7 @@ const Header = struct {
     compressed_image_size: u32,
     n_colors_used: u32,
     important_colors: u32,
-    color_table: []const RGBA = &.{},
+    color_table: Pixels = undefined,
 
     pub fn fromImage(img: *const Image) !@This() {
         const len, const overflow = @mulWithOverflow(img.width, img.height);
@@ -104,7 +136,7 @@ const Header = struct {
             .bits_per_pixel = .rgb_24,
             .compression = .none,
             .compressed_image_size = len * 3,
-            .n_possible_colors = 0, // FIXME
+            .n_possible_colors = 0,
             .n_colors_used = 0,
             .important_colors = 0,
         };
@@ -115,13 +147,17 @@ const Header = struct {
         try w.writeAll(SIG); // 2
         try w.writeInt(u32, self.file_size, .little); // 6
         try w.writeInt(u32, 0, .little); // 10
+        std.debug.assert(self.data_offset == 54);
         try w.writeInt(u32, self.data_offset, .little); // 14
         // dib
+        std.debug.assert(self.dib_hdr_size == 40);
         try w.writeInt(u32, self.dib_hdr_size, .little); // 18
+        std.debug.assert(self.width * self.height == self.compressed_image_size);
         try w.writeInt(u32, self.width, .little); // 22
         try w.writeInt(u32, self.height, .little); // 26
         try w.writeInt(u16, @as(u16, @truncate(self.depth)), .little); // 28
         try w.writeInt(u16, @as(u16, @intFromEnum(self.bits_per_pixel)), .little); // 30
+        std.debug.assert(self.compression == .none);
         try w.writeInt(u32, @as(u32, @intFromEnum(self.compression)), .little); // 34
         try w.writeInt(u32, self.compressed_image_size, .little); // 38
         try w.writeInt(u32, 0, .little); // 42
@@ -171,13 +207,12 @@ const Header = struct {
         if (important_colors > n_colors_used) {
             return Error.Decode.InvalidImportantColors;
         }
-
-        // const color_table: = switch (bits_per_pixel) {
-        //     .rgb_24, .rgba => &.{},
-        //     else => &.{},
-        // };
-        // errdefer if (color_table.len > 0) gpa.free(color_table);
-
+        switch (bits_per_pixel) {
+            .monochrome => {}, // gray
+            .bit_4_pallet, .bit_8_pallet, .rgb_16 => {}, // rgb
+            .rgb_24 => {}, // rgb
+            .rgba => {}, // rgba
+        }
         return .{
             .file_size = file_size,
             .data_offset = data_offset,
@@ -200,6 +235,22 @@ const Header = struct {
         if (self.color_table.len > 0) {
             gpa.free(self.color_table);
         }
+    }
+
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+        try w.print("File Size: {}\n", .{self.file_size});
+        try w.print("Data Offset: {}\n", .{self.data_offset});
+        try w.print("Dib Hdr Size: {}\n", .{self.dib_hdr_size});
+        try w.print("Width: {}\n", .{self.width});
+        try w.print("Height: {}\n", .{self.height});
+        try w.print("Depth: {}\n", .{self.depth});
+        try w.print("Top Down: {}\n", .{self.is_top_down});
+        try w.print("Bits Per Pixel: {}\n", .{self.bits_per_pixel});
+        try w.print("# of Possible Colors: {}\n", .{self.n_possible_colors});
+        try w.print("Compression: {t}\n", .{self.compression});
+        try w.print("Compressed Image Size: {}\n", .{self.compressed_image_size});
+        try w.print("# of Colors Used: {}\n", .{self.n_colors_used});
+        // .important_colors = important_colors,
     }
 };
 
