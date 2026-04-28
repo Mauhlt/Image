@@ -219,7 +219,7 @@ test "BMP" {
     const file = "src/Data/Read/BasicArt.bmp";
     const img = try read(io, gpa, file);
     defer img.deinit(gpa);
-    std.debug.print("Img: {any}\n", .{img});
+    std.debug.print("Img: {}\n", .{img.pixels.rgb[0]});
 }
 
 test "QOI" {

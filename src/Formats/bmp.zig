@@ -29,55 +29,49 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const n_pixels = pixels_slice.len / bpp;
     std.debug.assert(n_pixels == exp_n_pixels);
 
-    var out_pixels: Pixels = undefined;
+    var pixels: Pixels = undefined;
     var format: Format = undefined;
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
-            var pixels: @TypeOf(out_pixels.gray.*) = try .initCapacity(gpa, n_pixels);
-            errdefer pixels.deinit(gpa);
-            pixels.appendSliceAssumeCapacity(pixels_slice);
-            out_pixels = .{ .gray = &pixels };
+            pixels = .{ .gray = try gpa.alloc(@typeInfo(@TypeOf(pixels.gray)).pointer.child, n_pixels) };
+            errdefer pixels.gray.deinit(gpa);
+            @memcpy(pixels.gray, pixels_slice);
             format = .r8_srgb;
         },
         .rgb_24 => {
-            var pixels: @TypeOf(out_pixels.rgb.*) = try .initCapacity(gpa, n_pixels);
-            errdefer pixels.deinit(gpa);
+            pixels = .{ .rgb = try gpa.alloc(@typeInfo(@TypeOf(pixels.rgb)).pointer.child, n_pixels) };
             var j: usize = 0;
-            for (0..n_pixels) |_| {
-                pixels.appendAssumeCapacity(.{
+            for (0..n_pixels) |i| {
+                pixels.rgb[i] = .{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
-                });
+                };
                 j += 3;
             }
-            out_pixels = .{ .rgb = &pixels };
             format = .r8g8b8_srgb;
         },
         .rgba => {
-            var pixels: @TypeOf(out_pixels.rgba.*) = try .initCapacity(gpa, n_pixels);
-            errdefer pixels.deinit(gpa);
+            pixels = .{ .rgba = try gpa.alloc(@typeInfo(@TypeOf(pixels.rgba)).pointer.child, n_pixels) };
             var j: usize = 0;
-            for (0..n_pixels) |_| {
-                pixels.appendAssumeCapacity(.{
+            for (0..n_pixels) |i| {
+                pixels.rgba[i] = .{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
                     .a = pixels_slice[j + 3],
-                });
+                };
                 j += 4;
             }
-            out_pixels = .{ .rgba = &pixels };
             format = .r8g8b8a8_srgb;
         },
     }
-    errdefer out_pixels.deinit(gpa);
     return .{
         .width = hdr.width,
         .height = hdr.height,
         .format = .r8g8b8_srgb,
-        .pixels = out_pixels,
+        .pixels = pixels,
     };
 }
 
