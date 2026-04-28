@@ -13,15 +13,12 @@ pub const RGBA = struct {
     a: u8 = 0xFF,
 };
 pub const Pixels = union(enum) {
-    gray: *std.ArrayList(GRAY),
-    rgb: *std.ArrayList(RGB),
-    rgba: *std.ArrayList(RGBA),
-
+    gray: []GRAY,
+    rgb: []RGB,
+    rgba: []RGBA,
     pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
         switch (self) {
-            .gray => |tag| tag.*.deinit(gpa),
-            .rgb => |tag| tag.*.deinit(gpa),
-            .rgba => |tag| tag.*.deinit(gpa),
+            inline else => |tag| gpa.free(tag),
         }
     }
 };
