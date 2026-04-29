@@ -3,6 +3,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 const RGB = @import("RGB.zig");
 const RGBA = @import("RGBA.zig");
 
+const SIG = "PM";
 // https://netpbm.sourceforge.net/doc/ppm.html
 
 pub fn read(self: *@This(), r: *std.Io.Reader, gpa: std.mem.Allocator) !void {

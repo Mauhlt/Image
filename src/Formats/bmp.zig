@@ -2,6 +2,8 @@ const std = @import("std");
 const Format = @import("Vulkan").Format;
 const Error = @import("Error.zig");
 const Image = @import("img.zig");
+const GRAY = @import("color.zig").GRAY;
+const RGB = @import("color.zig").RGB;
 const RGBA = @import("color.zig").RGBA;
 const Pixels = @import("color.zig").Pixels;
 const isSigSame = @import("Misc.zig").isSigSame;
@@ -34,34 +36,35 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
-            pixels = .{ .gray = try gpa.alloc(@typeInfo(@TypeOf(pixels.gray)).pointer.child, n_pixels) };
+            // try gpa.alloc(@typeInfo(@TypeOf(pixels.gray)).pointer.child, n_pixels)
+            pixels = .{ .gray = try .initCapacity(gpa, n_pixels) };
             errdefer pixels.gray.deinit(gpa);
-            @memcpy(pixels.gray, pixels_slice);
+            @memcpy(pixels.gray.items, pixels_slice);
             format = .r8_srgb;
         },
         .rgb_24 => {
-            pixels = .{ .rgb = try gpa.alloc(@typeInfo(@TypeOf(pixels.rgb)).pointer.child, n_pixels) };
+            pixels = .{ .rgb = try .initCapacity(gpa, n_pixels) };
             var j: usize = 0;
-            for (0..n_pixels) |i| {
-                pixels.rgb[i] = .{
+            for (0..n_pixels) |_| {
+                pixels.rgb.appendAssumeCapacity(.{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
-                };
+                });
                 j += 3;
             }
             format = .r8g8b8_srgb;
         },
         .rgba => {
-            pixels = .{ .rgba = try gpa.alloc(@typeInfo(@TypeOf(pixels.rgba)).pointer.child, n_pixels) };
+            pixels = .{ .rgba = try .initCapacity(gpa, n_pixels) };
             var j: usize = 0;
-            for (0..n_pixels) |i| {
-                pixels.rgba[i] = .{
+            for (0..n_pixels) |_| {
+                pixels.rgba.appendAssumeCapacity(.{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
                     .a = pixels_slice[j + 3],
-                };
+                });
                 j += 4;
             }
             format = .r8g8b8a8_srgb;
@@ -111,12 +114,13 @@ const Header = struct {
 
     pub fn fromImage(img: *const Image) !@This() {
         const len, const overflow = @mulWithOverflow(img.width, img.height);
-        if (overflow == 1) return error.ImageOverflowed;
+        if (overflow == 1)
+            return Error.Decode.InvalidDimensions;
         const depth = img.depth();
-        if (depth > std.math.maxInt(u16)) return Error.Decode.InvalidDimensions;
+        if (depth > std.math.maxInt(u16))
+            return Error.Decode.InvalidDimensions;
         const data_offset: u32 = 54;
         const dib_hdr_size: u32 = 40;
-
         return .{
             // hdr
             .file_size = data_offset + len * 3,
@@ -160,22 +164,24 @@ const Header = struct {
         try w.writeInt(u32, 0, .little); // 54
     }
 
-    // need file size to understand this
     pub fn decode(data: []const u8) !@This() {
         try isSigSame(data[0..2], SIG);
         const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
         const data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
 
         const dib_hdr_size = std.mem.readInt(u32, data[14..][0..4], .little);
-        if (dib_hdr_size != 40) return Error.Decode.InvalidHeaderLength;
+        if (dib_hdr_size != 40)
+            return Error.Decode.InvalidHeaderLength;
         const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
         const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
-        if (raw_width <= 0 or raw_height == 0) return Error.Decode.InvalidDimensions;
+        if (raw_width <= 0 or raw_height == 0)
+            return Error.Decode.InvalidDimensions;
         const width: u32 = @intCast(raw_width);
         const height: u32 = @intCast(@abs(raw_height));
         const is_top_down: bool = raw_height < 0;
         const n_planes = std.mem.readInt(u16, data[26..][0..2], .little);
-        if (n_planes > 1) return Error.Decode.InvalidDimensions;
+        if (n_planes > 1)
+            return Error.Decode.InvalidDimensions;
         const bits_per_pixel = std.enums.fromInt(BitsPerPixel, //
             std.mem.readInt(u16, data[28..][0..2], .little)) orelse
             return Error.Decode.InvalidBitsPerPixel;
