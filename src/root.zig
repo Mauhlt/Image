@@ -217,31 +217,39 @@ test "BMP" {
     const io = threaded.io();
 
     const file = "src/Data/Read/BasicArt.bmp";
-    const img = try read(io, gpa, file);
+    var img = try read(io, gpa, file);
     defer img.deinit(gpa);
-    std.debug.print("Img: {}\n", .{img.pixels.rgb[0]});
+    std.debug.print("Img: {}\n", .{img.pixels.rgb.get(0)});
 }
 
 test "QOI" {
-    // const gpa = std.testing.allocator;
-    // var threaded: std.Io.Threaded = .init(gpa, .{});
-    // const io = threaded.io();
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
 
-    // ground truth
-    // const file = "src/Data/Read/BasicArt.qoi";
-    // try read(io, gpa, file);
-    // const img = try read(io, gpa, file);
-    // defer img.deinit(gpa);
-    // std.debug.print("Img: {}\n", .{img});
-    // try std.testing.expectEqual(img.width, 1536);
-    // try std.testing.expectEqual(img.height, 864);
-    // try std.testing.expectEqual(img.pixels.len, 1_327_104);
-    // try std.testing.expectEqual(img.format, .b8g8r8_srgb);
-    // const expected_pixel: RGBA = .{ .r = 255, .g = 201, .b = 13, .a = 255 };
-    // try std.testing.expectEqual(img.pixels[0].r, expected_pixel.r);
-    // try std.testing.expectEqual(img.pixels[0].g, expected_pixel.g);
-    // try std.testing.expectEqual(img.pixels[0].b, expected_pixel.b);
-    // try std.testing.expectEqual(img.pixels[img.pixels.len - 1].r, expected_pixel.r);
-    // try std.testing.expectEqual(img.pixels[img.pixels.len - 1].g, expected_pixel.g);
-    // try std.testing.expectEqual(img.pixels[img.pixels.len - 1].b, expected_pixel.b);
+    const file = "src/Data/Read/BasicArt.qoi";
+    const img = try read(io, gpa, file);
+    defer img.deinit(gpa);
+    std.debug.print("Img: ", .{});
+    switch (img.pixels) {
+        .gray => |gray| std.debug.print("{}\n", .{gray.items[0]}),
+        .rgb => |rgb| std.debug.print("{}\n", .{rgb.get(0)}),
+        .rgba => |rgba| std.debug.print("{}\n", .{rgba.get(0)}),
+    }
+
+    const new_img = try img.copy(gpa);
+    _ = new_img;
+    // defer new_img.deinit(gpa);
 }
+
+test "PPM" {}
+
+test "PNG" {}
+
+test "TGA" {}
+
+test "WEBP" {}
+
+test "GIF" {}
+
+test "Convert Image Types" {}
