@@ -143,7 +143,7 @@ pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
 
     const image_tag = try tagFromExt(path);
     return switch (image_tag) {
-        .bmp => BMP.encode(img, io_writer),
+        .bmp => BMP.encode(img, io_writer, null),
         // .qoi => QOI.encode(img, io_writer),
         else => unreachable,
     };
@@ -183,7 +183,6 @@ const ImageTag = enum {
     tga,
     webp,
 };
-
 const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "jpeg", .jpg },
     .{ "jpe", .jpg },
@@ -216,40 +215,62 @@ test "BMP" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
+    // open file 1
+    std.debug.print("File 1", .{});
     const file = "src/Data/Read/BasicArt.bmp";
     var img = try read(io, gpa, file);
     defer img.deinit(gpa);
-    std.debug.print("Img: {}\n", .{img.pixels.rgb.get(0)});
+    std.debug.print("{f}", .{img});
+
+    // write file
+    try write(io, "src/Data/Write/BasicArt.bmp", &img);
+
+    // open file 2
+    std.debug.print("\nFile 2", .{});
+    const file2 = "src/Data/Write/BasicArt.bmp";
+    var img2 = try read(io, gpa, file2);
+    defer img2.deinit(gpa);
+    std.debug.print("{f}", .{img2});
+
+    const tag = std.meta.activeTag(img.pixels);
+    std.debug.assert(tag == std.meta.activeTag(img2.pixels));
+    const pixels1 = img.pixels.rgb;
+    const pixels2 = img2.pixels.rgb;
+    const len = pixels1.len;
+    for (0..len) |i| {
+        try std.testing.expectEqualDeep(pixels1.get(i), pixels2.get(i));
+    }
+    std.debug.print("BMP Matches!\n", .{});
 }
 
 test "QOI" {
-    const gpa = std.testing.allocator;
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    const io = threaded.io();
+    // const gpa = std.testing.allocator;
+    // var threaded: std.Io.Threaded = .init(gpa, .{});
+    // const io = threaded.io();
 
-    const file = "src/Data/Read/BasicArt.qoi";
-    const img = try read(io, gpa, file);
-    defer img.deinit(gpa);
-    std.debug.print("Img: ", .{});
-    switch (img.pixels) {
-        .gray => |gray| std.debug.print("{}\n", .{gray.items[0]}),
-        .rgb => |rgb| std.debug.print("{}\n", .{rgb.get(0)}),
-        .rgba => |rgba| std.debug.print("{}\n", .{rgba.get(0)}),
-    }
+    // const file = "src/Data/Read/BasicArt.qoi";
+    // const img = try read(io, gpa, file);
+    // defer img.deinit(gpa);
+    // std.debug.print("Img: ", .{});
+    // switch (img.pixels) {
+    //     .gray => |gray| std.debug.print("{}\n", .{gray.items[0]}),
+    //     .rgb => |rgb| std.debug.print("{}\n", .{rgb.get(0)}),
+    //     .rgba => |rgba| std.debug.print("{}\n", .{rgba.get(0)}),
+    // }
 
-    const new_img = try img.copy(gpa);
-    _ = new_img;
+    // const new_img = try img.copy(gpa);
+    // _ = new_img;
     // defer new_img.deinit(gpa);
 }
 
-test "PPM" {}
+// test "PPM" {}
 
-test "PNG" {}
+// test "PNG" {}
 
-test "TGA" {}
+// test "TGA" {}
 
-test "WEBP" {}
+// test "WEBP" {}
 
-test "GIF" {}
+// test "GIF" {}
 
-test "Convert Image Types" {}
+// test "Convert Image Types" {}

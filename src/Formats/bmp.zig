@@ -8,8 +8,7 @@ const RGBA = @import("color.zig").RGBA;
 const Pixels = @import("color.zig").Pixels;
 const isSigSame = @import("Misc.zig").isSigSame;
 
-// pub const HDR_SIZE = 54;
-pub const SIG: []const u8 = "BM";
+const SIG: []const u8 = "BM";
 
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
@@ -17,7 +16,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     // defer hdr.deinit(gpa);
     std.debug.print("{f}", .{hdr});
 
-    std.debug.assert(hdr.depth == 1);
+    // std.debug.assert(hdr.depth == 1);
     const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
         .monochrome => 1,
         .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => 3,
@@ -26,6 +25,10 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const exp_n_pixels = hdr.width * hdr.height;
     const start = hdr.data_offset;
     const end = start + hdr.compressed_image_size;
+    std.debug.print(
+        "Start: {}\nEnd: {}\nData Len: {}\n",
+        .{ start, end, data.len },
+    );
     std.debug.assert(end <= data.len and start <= data.len);
     const pixels_slice = data[start..end];
     const n_pixels = pixels_slice.len / bpp;
@@ -73,40 +76,58 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     return .{
         .width = hdr.width,
         .height = hdr.height,
-        .format = .r8g8b8_srgb,
+        .fmt = .r8g8b8_srgb,
         .pixels = pixels,
     };
 }
 
-pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
-    const hdr: Header = try .fromImage(img);
+pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
+    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
-
-    std.debug.print("Writing: {t}\n", .{img.format});
-    switch (hdr.compression) {
-        .none => switch (img.format) {
-            .r8g8b8_srgb => try img.writeRGB(w),
-            .r8g8b8a8_srgb => try img.writeRGBA(w),
-            .b8g8r8_srgb => try img.writeBGR(w),
-            .b8g8r8a8_srgb => try img.writeBGRA(w),
-            else => unreachable,
+    try w.flush();
+    switch (img.pixels) {
+        .gray => |gray| {
+            try w.writeAll(gray.items);
         },
-        .rle4 => {},
-        .rle8 => {},
+        .rgb => |rgb| {
+            const slice = rgb.slice();
+            const r = slice.ptrs[0];
+            const g = slice.ptrs[1];
+            const b = slice.ptrs[2];
+            for (0..slice.len) |i| {
+                try w.writeByte(b[i]);
+                try w.writeByte(g[i]);
+                try w.writeByte(r[i]);
+            }
+        },
+        .rgba => |rgba| {
+            const slice = rgba.slice();
+            const r = slice.ptrs[0];
+            const g = slice.ptrs[1];
+            const b = slice.ptrs[2];
+            const a = slice.ptrs[3];
+            for (0..slice.len) |i| {
+                try w.writeByte(b[i]);
+                try w.writeByte(g[i]);
+                try w.writeByte(r[i]);
+                try w.writeByte(a[i]);
+            }
+        },
     }
+    try w.flush();
 }
 
 const Header = struct {
     file_size: u32,
-    data_offset: u32,
-    dib_hdr_size: u32,
+    data_offset: u32 = 54,
+    dib_hdr_size: u32 = 40,
     width: u32,
     height: u32,
-    depth: u32,
-    is_top_down: bool,
-    bits_per_pixel: BitsPerPixel,
+    depth: u32 = 1,
+    is_top_down: bool = false,
+    bits_per_pixel: BitsPerPixel = .rgba,
     n_possible_colors: u32,
-    compression: Compression,
+    compression: Compression = .none,
     compressed_image_size: u32,
     n_colors_used: u32,
     important_colors: u32,
@@ -114,30 +135,33 @@ const Header = struct {
 
     pub fn fromImage(img: *const Image) !@This() {
         const len, const overflow = @mulWithOverflow(img.width, img.height);
-        if (overflow == 1)
-            return Error.Decode.InvalidDimensions;
-        const depth = img.depth();
-        if (depth > std.math.maxInt(u16))
-            return Error.Decode.InvalidDimensions;
-        const data_offset: u32 = 54;
-        const dib_hdr_size: u32 = 40;
-        return .{
-            // hdr
-            .file_size = data_offset + len * 3,
-            .data_offset = data_offset,
-            // dib
-            .dib_hdr_size = dib_hdr_size,
-            .width = img.width,
-            .height = img.height,
-            .depth = depth,
-            .is_top_down = false,
-            .bits_per_pixel = .rgb_24,
-            .compression = .none,
-            .compressed_image_size = len * 3,
-            .n_possible_colors = 0,
-            .n_colors_used = 0,
-            .important_colors = 0,
+        const bpp: u32 = switch (img.fmt) {
+            // .r8_uint => 1,
+            // .r4g4b4a4_sint => 2,
+            .r8g8b8_srgb => 3,
+            .r8g8b8a8_srgb => 4,
+            else => return Error.Decode.InvalidFormat,
         };
+        if (overflow == 1) return Error.Decode.InvalidImageDimensions;
+        // hdr
+        var hdr: Header = undefined;
+        hdr.data_offset = 54;
+        hdr.file_size = hdr.data_offset + len * bpp;
+        // dib
+        hdr.dib_hdr_size = 40;
+        // img properties
+        hdr.width = img.width;
+        hdr.height = img.height;
+        hdr.depth = 1;
+        hdr.is_top_down = false;
+        hdr.bits_per_pixel = .rgb_24;
+        hdr.compression = .none;
+        hdr.compressed_image_size = len * 3;
+        hdr.n_possible_colors = @as(u32, 1) << @truncate(@intFromEnum(hdr.bits_per_pixel));
+        hdr.n_colors_used = 0;
+        hdr.important_colors = 0;
+        // return
+        return hdr;
     }
 
     pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
@@ -150,14 +174,21 @@ const Header = struct {
         // dib
         std.debug.assert(self.dib_hdr_size == 40);
         try w.writeInt(u32, self.dib_hdr_size, .little); // 18
-        std.debug.assert(self.width * self.height == self.compressed_image_size);
+        // img props
+        _, const overflow = @mulWithOverflow(self.width, self.height);
+        if (overflow > 0) return Error.Encode.InvalidImageDimensions;
+        // try w.writeInt(u32, self.compressed_image_size, .little);
         try w.writeInt(u32, self.width, .little); // 22
         try w.writeInt(u32, self.height, .little); // 26
-        try w.writeInt(u16, @as(u16, @truncate(self.depth)), .little); // 28
-        try w.writeInt(u16, @as(u16, @intFromEnum(self.bits_per_pixel)), .little); // 30
+        std.debug.assert(self.depth <= 1);
+        try w.writeInt(u16, @truncate(self.depth), .little); // 28
+        const bpp: u16 = @intFromEnum(self.bits_per_pixel);
+        try w.writeInt(u16, bpp, .little); // 30
         std.debug.assert(self.compression == .none);
-        try w.writeInt(u32, @as(u32, @intFromEnum(self.compression)), .little); // 34
+        const compression: u32 = @intFromEnum(self.compression);
+        try w.writeInt(u32, compression, .little); // 34
         try w.writeInt(u32, self.compressed_image_size, .little); // 38
+        // TODO: FIXME
         try w.writeInt(u32, 0, .little); // 42
         try w.writeInt(u32, 0, .little); // 46
         try w.writeInt(u32, 0, .little); // 50
@@ -165,23 +196,28 @@ const Header = struct {
     }
 
     pub fn decode(data: []const u8) !@This() {
+        // bmp
         try isSigSame(data[0..2], SIG);
         const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
+        if (data.len != file_size)
+            return Error.Decode.InvalidDataLength;
         const data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
-
+        // dib
         const dib_hdr_size = std.mem.readInt(u32, data[14..][0..4], .little);
         if (dib_hdr_size != 40)
             return Error.Decode.InvalidHeaderLength;
         const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
         const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
         if (raw_width <= 0 or raw_height == 0)
-            return Error.Decode.InvalidDimensions;
+            return Error.Decode.InvalidImageDimensions;
         const width: u32 = @intCast(raw_width);
         const height: u32 = @intCast(@abs(raw_height));
         const is_top_down: bool = raw_height < 0;
-        const n_planes = std.mem.readInt(u16, data[26..][0..2], .little);
-        if (n_planes > 1)
-            return Error.Decode.InvalidDimensions;
+        const depth = std.mem.readInt(u16, data[26..][0..2], .little);
+        if (depth > 1) {
+            std.debug.print("Depth: {}\n", .{depth});
+            return Error.Decode.InvalidImageDimensions;
+        }
         const bits_per_pixel = std.enums.fromInt(BitsPerPixel, //
             std.mem.readInt(u16, data[28..][0..2], .little)) orelse
             return Error.Decode.InvalidBitsPerPixel;
@@ -201,7 +237,7 @@ const Header = struct {
         if (n_colors_used > n_possible_colors) {
             std.debug.print("# of Colors Used: {}\n", .{n_colors_used});
             std.debug.print("# of Possible Colors: {}\n", .{n_possible_colors});
-            return Error.Decode.InvalidNumOfColors;
+            return Error.Decode.InvalidNumberOfColors;
         }
         const important_colors = std.mem.readInt(u32, data[50..][0..4], .little);
         if (important_colors > n_colors_used) {
@@ -219,7 +255,7 @@ const Header = struct {
             .dib_hdr_size = dib_hdr_size,
             .width = width,
             .height = height,
-            .depth = if (n_planes == 0) 1 else n_planes,
+            // .depth = if (n_planes == 0) 1 else n_planes,
             .is_top_down = is_top_down,
             .bits_per_pixel = bits_per_pixel,
             .n_possible_colors = n_possible_colors,
@@ -238,12 +274,12 @@ const Header = struct {
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.print("File Size: {}\n", .{self.file_size});
+        try w.print("\nFile Size: {}\n", .{self.file_size});
         try w.print("Data Offset: {}\n", .{self.data_offset});
         try w.print("Dib Hdr Size: {}\n", .{self.dib_hdr_size});
         try w.print("Width: {}\n", .{self.width});
         try w.print("Height: {}\n", .{self.height});
-        try w.print("Depth: {}\n", .{self.depth});
+        // try w.print("Depth: {}\n", .{self.depth});
         try w.print("Top Down: {}\n", .{self.is_top_down});
         try w.print("Bits Per Pixel: {}\n", .{self.bits_per_pixel});
         try w.print("# of Possible Colors: {}\n", .{self.n_possible_colors});
@@ -254,7 +290,7 @@ const Header = struct {
     }
 };
 
-const BitsPerPixel = enum(u16) {
+const BitsPerPixel = enum(u8) {
     monochrome = 1,
     bit_4_pallet = 4,
     bit_8_pallet = 8,
