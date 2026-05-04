@@ -9,7 +9,7 @@ const Pixels = @import("color.zig").Pixels;
 width: u32,
 height: u32,
 pixels: Pixels,
-format: Format,
+fmt: Format, // may need to change in the future
 
 /// always creates new memory
 pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !void { // !@This() {
@@ -44,4 +44,19 @@ pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !void { // !@This() {
 
 pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
     self.*.pixels.deinit(gpa);
+}
+
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    try w.print("\nImage:\n", .{});
+    try w.print("Width: {}\n", .{self.width});
+    try w.print("Height: {}\n", .{self.height});
+    switch (self.pixels) {
+        .gray => |gray| try w.print("Pixels ({}):\n", .{gray.items.len}),
+        inline else => |tag| try w.print("Pixels ({}):\n", .{tag.slice().len}),
+    }
+    switch (self.pixels) {
+        .gray => |gray| try w.print("{}\n", .{gray.items[0]}),
+        inline else => |tag| try w.print("{}\n", .{tag.get(0)}),
+    }
+    try w.print("Format: {t}\n", .{self.fmt});
 }
