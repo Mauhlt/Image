@@ -84,7 +84,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
-    try w.flush();
     switch (img.pixels) {
         .gray => |gray| {
             try w.writeAll(gray.items);
@@ -142,7 +141,7 @@ const Header = struct {
             .r8g8b8a8_srgb => 4,
             else => return Error.Decode.InvalidFormat,
         };
-        if (overflow == 1) return Error.Decode.InvalidImageDimensions;
+        if (overflow == 1) return Error.Decode.InvalidDimensions;
         // hdr
         var hdr: Header = undefined;
         hdr.data_offset = 54;
@@ -176,7 +175,7 @@ const Header = struct {
         try w.writeInt(u32, self.dib_hdr_size, .little); // 18
         // img props
         _, const overflow = @mulWithOverflow(self.width, self.height);
-        if (overflow > 0) return Error.Encode.InvalidImageDimensions;
+        if (overflow > 0) return Error.Encode.InvalidDimensions;
         // try w.writeInt(u32, self.compressed_image_size, .little);
         try w.writeInt(u32, self.width, .little); // 22
         try w.writeInt(u32, self.height, .little); // 26
@@ -193,6 +192,7 @@ const Header = struct {
         try w.writeInt(u32, 0, .little); // 46
         try w.writeInt(u32, 0, .little); // 50
         try w.writeInt(u32, 0, .little); // 54
+        try w.flush();
     }
 
     pub fn decode(data: []const u8) !@This() {
@@ -209,14 +209,14 @@ const Header = struct {
         const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
         const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
         if (raw_width <= 0 or raw_height == 0)
-            return Error.Decode.InvalidImageDimensions;
+            return Error.Decode.InvalidDimensions;
         const width: u32 = @intCast(raw_width);
         const height: u32 = @intCast(@abs(raw_height));
         const is_top_down: bool = raw_height < 0;
         const depth = std.mem.readInt(u16, data[26..][0..2], .little);
         if (depth > 1) {
             std.debug.print("Depth: {}\n", .{depth});
-            return Error.Decode.InvalidImageDimensions;
+            return Error.Decode.InvalidDimensions;
         }
         const bits_per_pixel = std.enums.fromInt(BitsPerPixel, //
             std.mem.readInt(u16, data[28..][0..2], .little)) orelse
