@@ -27,4 +27,6 @@ pub const Decode = error{
 
 pub const Encode = error{
     InvalidDimensions,
+    UnsupportedChannel,
+    UnsupportedColospace,
 };
