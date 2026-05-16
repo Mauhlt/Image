@@ -216,22 +216,23 @@ test "BMP" {
     const io = threaded.io();
 
     // open file 1
-    std.debug.print("File 1", .{});
+    // std.debug.print("File 1", .{});
     const file = "src/Data/Read/BasicArt.bmp";
     var img = try read(io, gpa, file);
     defer img.deinit(gpa);
-    std.debug.print("{f}", .{img});
+    // std.debug.print("{f}", .{img});
 
     // write file
     try write(io, "src/Data/Write/BasicArt.bmp", &img);
 
     // open file 2
-    std.debug.print("\nFile 2", .{});
+    // std.debug.print("\nFile 2", .{});
     const file2 = "src/Data/Write/BasicArt.bmp";
     var img2 = try read(io, gpa, file2);
     defer img2.deinit(gpa);
-    std.debug.print("{f}", .{img2});
+    // std.debug.print("{f}", .{img2});
 
+    // check that both files match
     const tag = std.meta.activeTag(img.pixels);
     std.debug.assert(tag == std.meta.activeTag(img2.pixels));
     const pixels1 = img.pixels.rgb;
@@ -244,23 +245,40 @@ test "BMP" {
 }
 
 test "QOI" {
-    // const gpa = std.testing.allocator;
-    // var threaded: std.Io.Threaded = .init(gpa, .{});
-    // const io = threaded.io();
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
 
-    // const file = "src/Data/Read/BasicArt.qoi";
-    // const img = try read(io, gpa, file);
-    // defer img.deinit(gpa);
-    // std.debug.print("Img: ", .{});
-    // switch (img.pixels) {
-    //     .gray => |gray| std.debug.print("{}\n", .{gray.items[0]}),
-    //     .rgb => |rgb| std.debug.print("{}\n", .{rgb.get(0)}),
-    //     .rgba => |rgba| std.debug.print("{}\n", .{rgba.get(0)}),
-    // }
+    // read bmp file
+    const file = "src/Data/Read/BasicArt.bmp";
+    var img = try read(io, gpa, file);
+    defer img.deinit(gpa);
 
-    // const new_img = try img.copy(gpa);
-    // _ = new_img;
-    // defer new_img.deinit(gpa);
+    // write qoi file
+    try write(io, "src/Data/Read/BasicArt.qoi", &img);
+
+    // read qoi file
+    const file2 = "src/Data/Read/BasicArt.qoi";
+    var img2 = try read(io, gpa, file2);
+    defer img2.deinit(gpa);
+
+    // write qoi file
+    try write(io, "src/Data/Write/BasicArt.qoi", &img);
+
+    // read qoi file again
+    const file3 = "src/Data/Write/BasicArt.qoi";
+    var img3 = try read(io, gpa, file3);
+    defer img3.deinit(gpa);
+
+    std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img2.pixels));
+    std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img3.pixels));
+    const pixels1 = img.pixels.rgb;
+    const pixels2 = img2.pixels.rgb;
+    const pixels3 = img3.pixels.rgb;
+    for (pixels1, pixels2, pixels3) |px1, px2, px3| {
+        try std.testing.expectEqualDeep(px1, px2);
+        try std.testing.expectEqualDeep(px1, px3);
+    }
 }
 
 // test "PPM" {}
