@@ -24,8 +24,8 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
     // check end bytes
     std.debug.assert(std.mem.eql(u8, data[data.len - 8 ..], [_]u8{ 0, 0, 0, 0, 0, 0, 0, 1 }));
 
-    const pixels_slice = data[14 .. pixels_slice.len - 8];
-    if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - 8 ..], &END_MARKER))
+    const pixels_slice = data[14 .. data.len - 8];
+    if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - END_MARKER.len ..], &END_MARKER))
         return Error.Decode.InvalidEndMarker;
     const n_pixels = hdr.width * hdr.height;
     const pixels: Pixels = switch (hdr.channels) {
@@ -82,7 +82,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
                         const idx: u6 = @truncate(byte2);
                         prev_pixel = indices[idx];
                     },
-                    .diff => {
+                    .diff => { // TODO FIXME
                         std.debug.print("Diff\n", .{});
                         const dr = (byte2 >> 4) & 0x03;
                         const dg = (byte2 >> 2) & 0x03;
@@ -101,7 +101,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
                         std.debug.print("Prev Pixel 1: {} {} {}\n", .{ prev_pixel.r, prev_pixel.g, prev_pixel.b });
                         std.debug.print("Prev Pixel 2: {} {} {}\n", .{ pr, pg, pb });
                     },
-                    .luma => {
+                    .luma => { // TODO FIXME
                         std.debug.print("Luma\n", .{});
                         i += 1;
                         if (i > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
@@ -186,23 +186,23 @@ const BitTags = enum(u8) {
 pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
-    var prev_pixel: RGBA = .{};
-    // we want run - luma - index - so on
-    switch (img.pixels) {
-        .gray => {},
-        .rgb => |rgb| {
-            const len = rgb.len;
-            for (0..len) |i| {
-                try w.writeInt(rgb.get(i));
-            }
-        },
-        .rgba => |rgba| {
-            const len = rgba.len;
-            for (0..len) |i| {
-                try w.writeInt(rgba.get(i)); // TODO: NOT CORRECT, FIX
-            }
-        },
-    }
+    // var prev_pixel: RGBA = .{};
+    // // we want run - luma - index - so on
+    // switch (img.pixels) {
+    //     .gray => {},
+    //     .rgb => |rgb| {
+    //         const len = rgb.len;
+    //         for (0..len) |i| {
+    //             try w.writeInt(rgb.get(i));
+    //         }
+    //     },
+    //     .rgba => |rgba| {
+    //         const len = rgba.len;
+    //         for (0..len) |i| {
+    //             try w.writeInt(rgba.get(i)); // TODO: NOT CORRECT, FIX
+    //         }
+    //     },
+    // }
 }
 
 const Header = struct {
@@ -211,7 +211,27 @@ const Header = struct {
     channel: Channel,
     colorspace: Colorspace,
 
-    pub fn fromImage() @This() {}
+    pub fn fromImage(img: *const Image) !@This() {
+        if (img.width == 0 or img.height == 0) return Error.Encode.InvalidDimensions;
+        _, const overflow = @mulWithOverflow(img.width, img.height);
+        if (overflow > 0) return Error.Encode.InvalidDimensions;
+        const channel: Channel = switch (img.pixels) {
+            .rgb => .rgb,
+            .rgba => .rgba,
+            else => return Error.Encode.UnsupporetdColorspace,
+        };
+        const colorspace: Colorspace = switch (img.fmt) {
+            .r8g8b8a8_srgb, .r8g8b8_srgb => .srgb,
+            .r8g8b8a8_linear, .r8g8b8_linear => .linear,
+            else => return Error.Encode.UnsupportedColorspace,
+        };
+        return .{
+            .width = img.width,
+            .height = img.height,
+            .channel = channel,
+            .colorspace = colorspace,
+        };
+    }
 
     pub fn decode(data: []const u8) !@This() {
         std.debug.assert(data.len > 14);
@@ -236,9 +256,15 @@ const Header = struct {
         };
     }
 
-    pub fn encode() void {}
+    pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
+        try w.writeAll(&SIG);
+        try w.writeInt(self.width);
+        try w.writeInt(self.height);
+        try w.writeInt(self.channel);
+        try w.writeInt(self.colorspace);
+    }
 
-    pub fn format(self: @This(), w: *std.Io.Writer) void {
+    pub fn format(self: *const @This(), w: *std.Io.Writer) void {
         try w.print("Width: {}\n", .{self.width});
         try w.print("Height: {}\n", .{self.height});
         try w.print("Colorspace: {t}\n", .{self.colorspace});
