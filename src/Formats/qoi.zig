@@ -183,11 +183,26 @@ const BitTags = enum(u8) {
     run = 3,
 };
 
-pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
+pub fn encode(
+    gpa: std.mem.Allocator,
+    img: *const Image,
+    w: *std.Io.Writer,
+    maybe_hdr: ?Header,
+) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
+
+    const n_pixels = switch (img.pixels) {
+        .gray => |gray| gray.items.len,
+        .rgb => |rgb| rgb.slice().len,
+        .rgba => |rgba| rgba.slice().len,
+    };
+    const max_size = n_pixels * 5;
+    const buf = try gpa.alloc(u8, max_size);
+    errdefer gpa.free(buf);
+
     // var prev_pixel: RGBA = .{};
-    // // we want run - luma - index - so on
+    // we want run - luma - index - so on
     // switch (img.pixels) {
     //     .gray => {},
     //     .rgb => |rgb| {
