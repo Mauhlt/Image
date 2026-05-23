@@ -2,6 +2,40 @@ const std = @import("std");
 const Image = @import("img.zig");
 const Format = @import("Vulkan").Format;
 
+const SIG = [12]u8{
+    0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
+    0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+};
+const HEADER_SIZE: usize = 36;
+const INDEX_SIZE: usize = 32;
+const LEVEL_ENTRY_SIZE: usize = 24;
+const HEADER_OFFSET: usize = SIG.len;
+const INDEX_OFFSET: usize = HEADER_OFFSET + HEADER_SIZE; // 48
+const LEVEL_INDEX_OFFSET: usize = INDEX_OFFSET + INDEX_SIZE; // 80
+// Necessary VKFormats
+// r8_unorm, r8g8b8_unorm, r8g8b8a8_unorm, b8g8r8a8_unorm
+// bc1_rgb_unorm_block, bc3_unorm_block, bc7_unorm_block, astc_4x4_unorm_block, etc2_r8g8b8_unorm_block
+
+// BDFD = Basic Data Format Descriptor constants
+// DFD layout
+// [4..8] vendor id | descriptor type, 0 for Khronos Basic
+// [8..12] version number | descriptor block size
+// [12] color model
+// [13] color primaries
+// [14] transfer function
+// [15] flags
+// [16..20] texel block dimension 0-3
+// [20..28] bytes plane 0-7
+// then N * 16 byte sample descriptors
+// [0..2] bitOffset, [2] bit length, [3] channel type
+// [4..8] sample position-3
+const DFD_TOTAL_FIELD: usize = 4;
+const BDFD_HEADER_BYTES: usize = 24;
+const BDFD_SAMPLE_BYTES: usize = 16;
+const KHR_DF_MODEL_RGB_SDA: u8 = 1;
+const KHR_DF_PRIMARIES_BT709: u8 = 1;
+const KHR_DF_TRANSFER_LINEAR: u8 = 1;
+
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     _ = gpa;
     const hdr: Header = try .decode(data);
@@ -38,28 +72,8 @@ pub const SuperCompScheme = enum(u32) {
 const Header = struct {
     width: u32,
     height: u32,
-    fmt: u32,
+    fmt: Format,
     mip_count: u32,
-
-    const SIG = [12]u8{
-        0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
-        0x30, 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
-    };
-    const HEADER_SIZE: usize = 36;
-    const INDEX_SIZE: usize = 32;
-    const LEVEL_ENTRY_SIZE: usize = 24;
-
-    const HEADER_OFFSET: usize = SIG.len;
-    const INDEX_OFFSET: usize = HEADER_OFFSET + HEADER_SIZE; // 48
-    const LEVEL_INDEX_OFFSET: usize = INDEX_OFFSET + INDEX_SIZE; // 80
-
-    const DFD_TOTAL_FIELD: usize = 4;
-    const BDFD_HEADER_BYTES: usize = 24;
-    const BDFD_SAMPLE_BYTES: usize = 16;
-
-    const KHR_DF_MODEL_RGB_SDA: u8 = 1;
-    const KHR_DF_PRIMARIES_BT709: u8 = 1;
-    const KHR_DF_TRANSFER_LINEAR: u8 = 1;
 
     pub fn decode() @This() {
         return .{};
