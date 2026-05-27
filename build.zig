@@ -11,7 +11,8 @@ pub fn build(b: *std.Build) void {
     const libraries = [_][]const u8{"Vulkan"};
     for (libraries) |library| {
         const dep = b.dependency(library, .{});
-        mod.addImport(library, dep.module(library));
+        const new_mod = dep.module(library);
+        mod.addImport(library, new_mod);
     }
 
     const mod_tests = b.addTest(.{
