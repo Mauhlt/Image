@@ -32,20 +32,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
         .rgb => .{ .rgb = try .initCapacity(gpa, n_pixels) },
         .rgba => .{ .rgba = try .initCapacity(gpa, n_pixels) },
     };
-    // const pixels = blk: {
-    //     var pixels: Pixels = undefined;
-    //     switch (hdr.channel) {
-    //         .rgb => {
-    //             pixels = .{ .rgb = try .initCapacity(gpa, n_pixels) };
-    //             break :blk pixels;
-    //         },
-    //         .rgba => {
-    //             pixels = .{ .rgba = try .initCapacity(gpa, n_pixels) };
-    //             break :blk pixels;
-    //         },
-    //     }
-    //     break :blk pixels;
-    // };
     defer pixels.deinit(gpa);
 
     var i: usize = 0; // input position
@@ -193,9 +179,9 @@ pub fn encode(
     try hdr.encode(w);
 
     const n_pixels = switch (img.pixels) {
-        .gray => |gray| gray.items.len,
-        .rgb => |rgb| rgb.slice().len,
-        .rgba => |rgba| rgba.slice().len,
+        .gray => |gray| gray.len,
+        .rgb => |rgb| rgb.len,
+        .rgba => |rgba| rgba.len,
     };
     const max_size = n_pixels * 5;
     const buf = try gpa.alloc(u8, max_size);
