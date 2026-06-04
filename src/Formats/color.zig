@@ -15,9 +15,9 @@ pub const RGBA = struct {
 };
 
 pub const Pixels = union(enum) {
-    gray: std.ArrayList(GRAY),
-    rgb: std.MultiArrayList(RGB), // more memory efficient
-    rgba: std.MultiArrayList(RGBA),
+    gray: []GRAY,
+    rgb: []RGB, // more memory efficient
+    rgba: []RGBA,
     pub fn deinit(self: *const Pixels, gpa: std.mem.Allocator) void {
         switch (self.*) {
             .gray => |*gray| @constCast(gray).deinit(gpa),

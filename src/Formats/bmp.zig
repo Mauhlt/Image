@@ -39,30 +39,33 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
-            // try gpa.alloc(@typeInfo(@TypeOf(pixels.gray)).pointer.child, n_pixels)
-            pixels = .{ .gray = try .initCapacity(gpa, n_pixels) };
-            errdefer pixels.gray.deinit(gpa);
-            @memcpy(pixels.gray.items, pixels_slice);
+            const gray = try gpa.alloc(GRAY, n_pixels);
+            errdefer gpa.free(gray);
+            @memcpy(gray, pixels_slice);
+            pixels = .{ .gray = gray };
             format = .r8_srgb;
         },
         .rgb_24 => {
-            pixels = .{ .rgb = try .initCapacity(gpa, n_pixels) };
+            const rgb = try gpa.alloc(RGB, n_pixels);
+            errdefer gpa.free(rgb);
             var j: usize = 0;
             for (0..n_pixels) |_| {
-                pixels.rgb.appendAssumeCapacity(.{
+                rgb.appendAssumeCapacity(.{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
                 });
                 j += 3;
             }
+            pixels = .{ .rgb = rgb };
             format = .r8g8b8_srgb;
         },
         .rgba => {
-            pixels = .{ .rgba = try .initCapacity(gpa, n_pixels) };
+            const rgba = try gpa.alloc(RGBA, n_pixels);
+            errdefer gpa.free(rgba);
             var j: usize = 0;
             for (0..n_pixels) |_| {
-                pixels.rgba.appendAssumeCapacity(.{
+                rgba.appendAssumeCapacity(.{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
@@ -70,6 +73,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                 });
                 j += 4;
             }
+            pixels = .{ .rgba = rgba };
             format = .r8g8b8a8_srgb;
         },
     }

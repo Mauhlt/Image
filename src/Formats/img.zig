@@ -15,24 +15,30 @@ fmt: Format, // may need to change in the future
 pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !void { // !@This() {
     var pixels: Pixels = undefined;
     switch (img.pixels) {
-        .gray => |old_gray| {
-            var new_gray: std.ArrayList(GRAY) = try .initCapacity(gpa, old_gray.items.len);
-            errdefer new_gray.deinit(gpa);
-            new_gray.appendSliceAssumeCapacity(old_gray.items);
-            pixels = .{ .gray = new_gray };
-        },
-        .rgb => |old_rgb| {
-            var new_rgb: std.MultiArrayList(RGBA) = try .initCapacity(gpa, old_rgb.items.len);
-            errdefer new_rgb.deinit(gpa);
-            const slice = new_rgb.slice();
-            std.debug.print("Slice: {}\n", .{slice});
-        },
-        .rgba => |old_rgba| {
-            var new_rgba: std.MultiArrayList(RGBA) = try .initCapacity(gpa, old_rgba.items.len);
-            errdefer new_rgba.deinit(gpa);
-            const slice = new_rgba.slice();
-            std.debug.print("Slice: {}\n", .{slice});
-        },
+        inline else => |old_data| {
+            var new_data: std.ArrayList(@TypeOf(old_data)) = try .initCapacity(gpa, old_data.items.len);
+            errdefer new_data.appendSliceAssumeCapacity(old_data.items.len);
+            pixels = @unionInit(comptime Union: type, comptime active_field_name: []const u8, init_expr)
+        }
+
+        // .gray => |old_gray| {
+        //     var new_gray: std.ArrayList(GRAY) = try .initCapacity(gpa, old_gray.items.len);
+        //     errdefer new_gray.deinit(gpa);
+        //     new_gray.appendSliceAssumeCapacity(old_gray.items);
+        //     pixels = .{ .gray = new_gray };
+        // },
+        // .rgb => |old_rgb| {
+        //     var new_rgb: std.MultiArrayList(RGBA) = try .initCapacity(gpa, old_rgb.items.len);
+        //     errdefer new_rgb.deinit(gpa);
+        //     const slice = new_rgb.slice();
+        //     std.debug.print("Slice: {}\n", .{slice});
+        // },
+        // .rgba => |old_rgba| {
+        //     var new_rgba: std.MultiArrayList(RGBA) = try .initCapacity(gpa, old_rgba.items.len);
+        //     errdefer new_rgba.deinit(gpa);
+        //     const slice = new_rgba.slice();
+        //     std.debug.print("Slice: {}\n", .{slice});
+        // },
     }
     // return .{
     //     .width = img.width,
