@@ -49,12 +49,12 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             const rgb = try gpa.alloc(RGB, n_pixels);
             errdefer gpa.free(rgb);
             var j: usize = 0;
-            for (0..n_pixels) |_| {
-                rgb.appendAssumeCapacity(.{
+            for (0..n_pixels) |i| {
+                rgb[i] = .{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
-                });
+                };
                 j += 3;
             }
             pixels = .{ .rgb = rgb };
@@ -64,13 +64,13 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             const rgba = try gpa.alloc(RGBA, n_pixels);
             errdefer gpa.free(rgba);
             var j: usize = 0;
-            for (0..n_pixels) |_| {
-                rgba.appendAssumeCapacity(.{
+            for (0..n_pixels) |i| {
+                rgba[i] = .{
                     .r = pixels_slice[j + 2],
                     .g = pixels_slice[j + 1],
                     .b = pixels_slice[j],
                     .a = pixels_slice[j + 3],
-                });
+                };
                 j += 4;
             }
             pixels = .{ .rgba = rgba };
@@ -90,30 +90,21 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     try hdr.encode(w);
     switch (img.pixels) {
         .gray => |gray| {
-            try w.writeAll(gray.items);
+            try w.writeAll(gray);
         },
-        .rgb => |rgb| {
-            const slice = rgb.slice();
-            const r = slice.ptrs[0];
-            const g = slice.ptrs[1];
-            const b = slice.ptrs[2];
-            for (0..slice.len) |i| {
-                try w.writeByte(b[i]);
-                try w.writeByte(g[i]);
-                try w.writeByte(r[i]);
+        .rgb => |rgbs| {
+            for (rgbs) |rgb| {
+                try w.writeByte(rgb.b);
+                try w.writeByte(rgb.g);
+                try w.writeByte(rgb.r);
             }
         },
-        .rgba => |rgba| {
-            const slice = rgba.slice();
-            const r = slice.ptrs[0];
-            const g = slice.ptrs[1];
-            const b = slice.ptrs[2];
-            const a = slice.ptrs[3];
-            for (0..slice.len) |i| {
-                try w.writeByte(b[i]);
-                try w.writeByte(g[i]);
-                try w.writeByte(r[i]);
-                try w.writeByte(a[i]);
+        .rgba => |rgbas| {
+            for (rgbas) |rgba| {
+                try w.writeByte(rgba.b);
+                try w.writeByte(rgba.g);
+                try w.writeByte(rgba.r);
+                try w.writeByte(rgba.a);
             }
         },
     }
