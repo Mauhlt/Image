@@ -28,8 +28,8 @@ pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !@This() {
     };
 }
 
-pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
-    self.*.pixels.deinit(gpa);
+pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
+    self.pixels.deinit(gpa);
 }
 
 pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
