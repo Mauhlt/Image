@@ -66,24 +66,36 @@ fn toGRAY(
     gpa: std.mem.Allocator,
     data: []const u8,
     data_order: DataOrder,
-) ![]RGBA {
+) ![]GRAY {
     var new_data: []RGB = undefined;
+    var i_step: usize = 0;
+    const j_step: usize = 1;
     switch (data_order) {
-        .gray => {
-            new_data = try gpa.dupe(u8, data);
-        },
-        .rgb => {
-            if (@mod(data.len, 3) != 0) return error.InvalidDimensions;
-            new_data = try gpa.alloc(GRAY, data.len / 3);
-        },
+        .gray => i_step = 1,
+        .rgb, .rbg, .grb, .gbr, .brg, .bgr => i_step = 3,
+        .rgba, .rbga, .grba, .gbra, .brga, .bgra => i_step = 4,
+    }
+    if (@mod(data.len, i_step) != 0) return error.InvalidDimensions;
+    new_data = try gpa.alloc(GRAY, data.len / i_step);
+    errdefer gpa.free(new_data);
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < data.len) : ({
+        i += i_step;
+        j += j_step;
+    }) {
+        switch (data_order) {
+            .gray => new_data[j] = data[i],
+            .rgb, .rbg, .grb, .gbr, .brg, .bgr => {},
+            .rgba, .rbga, .grba, .gbra, .brga, .bgra => {},
+        }
+    }
+
+    switch (data_order) {
         .rbg => {
-            if (@mod(data.len, 3) != 0) return error.InvalidDimensions;
-            new_data = try gpa.alloc(RGB, data.len / 3);
-            var i: usize = 0;
-            var j: usize = 0;
             while (i < data.len) : ({
-                i += 3;
-                j += 1;
+                i += i_step;
+                j += j_step;
             }) {
                 new_data[j] = .{
                     .r = data[i + 0],
@@ -93,10 +105,7 @@ fn toGRAY(
             }
         },
         .grb => {
-            if (@mod(data.len, 3) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 3);
-            var i: usize = 0;
-            var j: usize = 0;
             while (i < data.len) : ({
                 i += 3;
                 j += 1;
@@ -109,7 +118,6 @@ fn toGRAY(
             }
         },
         .gbr => {
-            if (@mod(data.len, 3) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 3);
             var i: usize = 0;
             var j: usize = 0;
@@ -125,7 +133,6 @@ fn toGRAY(
             }
         },
         .brg => {
-            if (@mod(data.len, 3) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 3);
             var i: usize = 0;
             var j: usize = 0;
@@ -141,7 +148,6 @@ fn toGRAY(
             }
         },
         .bgr => {
-            if (@mod(data.len, 3) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 3);
             var i: usize = 0;
             var j: usize = 0;
@@ -157,7 +163,6 @@ fn toGRAY(
             }
         },
         .rgba => {
-            if (@mod(data.len, 4) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 4);
             var i: usize = 0;
             var j: usize = 0;
@@ -173,7 +178,6 @@ fn toGRAY(
             }
         },
         .rbga => {
-            if (@mod(data.len, 4) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 4);
             var i: usize = 0;
             var j: usize = 0;
@@ -189,7 +193,6 @@ fn toGRAY(
             }
         },
         .grba => {
-            if (@mod(data.len, 4) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 4);
             var i: usize = 0;
             var j: usize = 0;
@@ -205,7 +208,6 @@ fn toGRAY(
             }
         },
         .gbra => {
-            if (@mod(data.len, 4) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 4);
             var i: usize = 0;
             var j: usize = 0;
@@ -221,7 +223,6 @@ fn toGRAY(
             }
         },
         .brga => {
-            if (@mod(data.len, 4) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 4);
             var i: usize = 0;
             var j: usize = 0;
@@ -237,7 +238,6 @@ fn toGRAY(
             }
         },
         .bgra => {
-            if (@mod(data.len, 4) != 0) return error.InvalidDimensions;
             new_data = try gpa.alloc(RGB, data.len / 4);
             var i: usize = 0;
             var j: usize = 0;
@@ -252,6 +252,7 @@ fn toGRAY(
                 };
             }
         },
+        else => return error.UnsupportedConversion,
     }
     return new_data;
 }
@@ -465,6 +466,7 @@ fn toRGB(
                 };
             }
         },
+        else => return error.UnsupportedConversion,
     }
     return new_data;
 }
@@ -679,6 +681,11 @@ fn toRGBA(
                 };
             }
         },
+        else => return error.UnsupportedConversion,
     }
     return new_data;
+}
+
+fn grayFromRGB(rgb: RGB) GRAY {
+    return @as(u8, @intFromFloat(0.299 * @as(f32, @floatFromInt(rgb.r)) + 0.587 * @as(f32, @floatFromInt(rgb.g)) + 0.114 * @as(f32, @floatFromInt(rgb.b))));
 }
