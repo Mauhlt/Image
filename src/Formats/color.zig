@@ -44,16 +44,72 @@ pub const Pixels = union(PixelOrder) {
 
     pub fn init(
         gpa: std.mem.Allocator,
-        data: []u8,
-        data_ordering: DataOrder,
-        pixel_ordering: PixelOrder,
-    ) @This() {
-        return switch (pixel_ordering) {
-            .gray => toGRAY(gpa, data, data_ordering),
-            .rgb => toRGB(gpa, data, data_ordering),
-            // .rgba => toRGBA(gpa, data, data_ordering),
-            else => error.Unsupported,
+        data: []const u8,
+        data_order: DataOrder,
+        pixel_order: PixelOrder,
+    ) !@This() {
+        const j_step: usize = 1;
+        var i_step: usize = undefined;
+        switch (data_order) {
+            .gray => i_step = 1,
+            .rgb, .rbg, .grb, .gbr, .brg, .bgr => i_step = 3,
+            .rgba, .rbga, .grba, .gbra, .brga, .bgra => i_step = 4,
+            _ => return error.Unsupported,
+        }
+        if (@mod(data.len, i_step) != 0) //
+            return error.InvalidDimensions;
+        const new_data = switch (data_order) {
+            .gray => unreachable,
+            .rgb, .rgba, .rbg, .rbga, .grb, .gbr, .brg, .bgr, .grba, .gbra, .brga, .bgra => //
+            try gpa.alloc(RGB, data.len / i_step),
+            _ => unreachable,
         };
+        errdefer gpa.free(new_data);
+        var r_step: usize = undefined;
+        var g_step: usize = undefined;
+        var b_step: usize = undefined;
+        var a_step: usize = undefined;
+        switch (data_order) {
+            .gray => unreachable,
+            .rgb, .rgba, .rbg, .rbga, .grb, .gbr, .brg, .bgr, .grba, .gbra, .brga, .bgra => |tag| {
+                r_step = std.mem.indexOfScalar(u8, @tagName(tag), 'r').?;
+                g_step = std.mem.indexOfScalar(u8, @tagName(tag), 'g').?;
+                b_step = std.mem.indexOfScalar(u8, @tagName(tag), 'b').?;
+                a_step = std.mem.indexOfScalar(u8, @tagName(tag), 'a') orelse 4;
+            },
+            _ => unreachable,
+        }
+        var i: usize = 0;
+        var j: usize = 0;
+        switch (pixel_order) {
+            .gray => {},
+            .rgb => {
+                while (i < data.len) : ({
+                    i += i_step;
+                    j += j_step;
+                }) {
+                    new_data[j] = .{
+                        .r = data[i + r_step],
+                        .g = data[i + g_step],
+                        .b = data[i + b_step],
+                    };
+                }
+            },
+            .rgba => {
+                while (i < data.len) : ({
+                    i += i_step;
+                    j += j_step;
+                }) {
+                    new_data[j] = .{
+                        .r = data[i + r_step],
+                        .g = data[i + g_step],
+                        .b = data[i + b_step],
+                        .a = data[i + a_step],
+                    };
+                }
+            },
+        }
+        return new_data;
     }
 
     pub fn deinit(self: Pixels, gpa: std.mem.Allocator) void {
@@ -65,121 +121,7 @@ pub const Pixels = union(PixelOrder) {
     }
 };
 
-fn toGRAY(
-    gpa: std.mem.Allocator,
-    data: []const u8,
-    data_order: DataOrder,
-) ![]GRAY {
-    const j_step: usize = 1;
-    var i_step: usize = 0;
-    switch (data_order) {
-        .gray => i_step = 1,
-        .rgb, .rbg, .grb, .gbr, .brg, .bgr => i_step = 3,
-        .rgba, .rbga, .grba, .gbra, .brga, .bgra => i_step = 4,
-        _ => return error.Unsupported,
-    }
-    if (@mod(data.len, i_step) != 0) //
-        return error.InvalidDimensions;
-    var new_data = try gpa.alloc(GRAY, data.len / i_step);
-    errdefer gpa.free(new_data);
-    var i: usize = 0;
-    var j: usize = 0;
-    while (i < data.len) : ({
-        i += i_step;
-        j += j_step;
-    }) {
-        switch (data_order) {
-            .gray => new_data[j] = data[i],
-            .rgb, .rgba => new_data[j] = grayFromRGB(.{
-                .r = data[i],
-                .g = data[i + 1],
-                .b = data[i + 2],
-            }),
-            .rbg, .rbga => new_data[j] = grayFromRGB(.{
-                .r = data[i],
-                .g = data[i + 2],
-                .b = data[i + 1],
-            }),
-            .grb, .grba => grayFromRGB(.{
-                .r = data[i + 1],
-                .g = data[i],
-                .b = data[i + 2],
-            }),
-            .gbr, .gbra => grayFromRGB(.{
-                .r = data[i + 2],
-                .g = data[i],
-                .b = data[i + 1],
-            }),
-            .brg, .brga => grayFromRGB(.{
-                .r = data[i + 1],
-                .g = data[i + 2],
-                .b = data[i],
-            }),
-            .bgr, .bgra => grayFromRGB(.{
-                .r = data[i + 2],
-                .g = data[i + 1],
-                .b = data[i],
-            }),
-            _ => return error.Unsupported,
-        }
-    }
-    return new_data;
-}
-
-fn toRGB(
-    gpa: std.mem.Allocator,
-    data: []const u8,
-    data_order: DataOrder,
-) ![]RGB {
-    const j_step: usize = 1;
-    var i_step: usize = undefined;
-    switch (data_order) {
-        .gray => return error.Unsupported,
-        .rgb, .rbg, .grb, .gbr, .brg, .bgr => i_step = 3,
-        .rgba, .rbga, .grba, .gbra, .brga, .bgra => i_step = 4,
-        _ => return error.Unsupported,
-    }
-    if (@mod(data.len, i_step) != 0) //
-        return error.InvalidDimensions;
-    const new_data = switch (data_order) {
-        .gray => unreachable,
-        .rgb, .rgba, .rbg, .rbga, .grb, .gbr, .brg, .bgr, .grba, .gbra, .brga, .bgra => //
-        try gpa.alloc(RGB, data.len / i_step),
-        _ => unreachable,
-    };
-    errdefer gpa.free(new_data);
-    var r_step: usize = undefined;
-    var g_step: usize = undefined;
-    var b_step: usize = undefined;
-    switch (data_order) {
-        .gray => unreachable,
-        .rgb, .rgba, .rbg, .rbga, .grb, .gbr, .brg, .bgr, .grba, .gbra, .brga, .bgra => |tag| {
-            r_step = std.mem.indexOfScalar(u8, @tagName(tag), 'r').?;
-            g_step = std.mem.indexOfScalar(u8, @tagName(tag), 'g').?;
-            b_step = std.mem.indexOfScalar(u8, @tagName(tag), 'b').?;
-        },
-        _ => unreachable,
-    }
-    var i: usize = 0;
-    var j: usize = 0;
-    while (i < data.len) : ({
-        i += i_step;
-        j += j_step;
-    }) {
-        new_data[j] = .{
-            .r = data[i + r_step],
-            .g = data[i + g_step],
-            .b = data[i + b_step],
-        };
-    }
-    return new_data;
-}
-
-fn grayFromRGB(rgb: RGB) GRAY {
-    return @as(u8, @intFromFloat(0.299 * @as(f32, @floatFromInt(rgb.r)) + 0.587 * @as(f32, @floatFromInt(rgb.g)) + 0.114 * @as(f32, @floatFromInt(rgb.b))));
-}
-
-test "toRGB" {
+test "toPixel" {
     const gpa = std.testing.allocator;
     const TestRGB = struct { data_order: DataOrder, rgb: RGB };
 
@@ -212,4 +154,8 @@ test "toRGB" {
         defer gpa.free(rgb);
         try std.testing.expectEqualDeep(expected_rgba.rgb, rgb[0]);
     }
+}
+
+fn grayFromRGB(rgb: RGB) GRAY {
+    return @as(u8, @intFromFloat(0.299 * @as(f32, @floatFromInt(rgb.r)) + 0.587 * @as(f32, @floatFromInt(rgb.g)) + 0.114 * @as(f32, @floatFromInt(rgb.b))));
 }
