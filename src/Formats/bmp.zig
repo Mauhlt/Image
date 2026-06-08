@@ -15,7 +15,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     // defer hdr.deinit(gpa);
     std.debug.print("{f}", .{hdr});
-
     // std.debug.assert(hdr.depth == 1);
     const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
         .monochrome => 1,
@@ -33,54 +32,27 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const pixels_slice = data[start..end];
     const n_pixels = pixels_slice.len / bpp;
     std.debug.assert(n_pixels == exp_n_pixels);
-
     var pixels: Pixels = undefined;
-    var format: Format = undefined;
+    var fmt: Format = undefined;
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
-            const gray = try gpa.alloc(GRAY, n_pixels);
-            errdefer gpa.free(gray);
-            @memcpy(gray, pixels_slice);
-            pixels = .{ .gray = gray };
-            format = .r8_srgb;
+            pixels = try .init(gpa, pixels_slice, .gray, .gray);
+            fmt = .r8_srgb;
         },
         .rgb_24 => {
-            const rgb = try gpa.alloc(RGB, n_pixels);
-            errdefer gpa.free(rgb);
-            var j: usize = 0;
-            for (0..n_pixels) |i| {
-                rgb[i] = .{
-                    .r = pixels_slice[j + 2],
-                    .g = pixels_slice[j + 1],
-                    .b = pixels_slice[j],
-                };
-                j += 3;
-            }
-            pixels = .{ .rgb = rgb };
-            format = .r8g8b8_srgb;
+            pixels = try .init(gpa, pixels_slice, .bgr, .rgb);
+            fmt = .r8g8b8_srgb;
         },
         .rgba => {
-            const rgba = try gpa.alloc(RGBA, n_pixels);
-            errdefer gpa.free(rgba);
-            var j: usize = 0;
-            for (0..n_pixels) |i| {
-                rgba[i] = .{
-                    .r = pixels_slice[j + 2],
-                    .g = pixels_slice[j + 1],
-                    .b = pixels_slice[j],
-                    .a = pixels_slice[j + 3],
-                };
-                j += 4;
-            }
-            pixels = .{ .rgba = rgba };
-            format = .r8g8b8a8_srgb;
+            pixels = try .init(gpa, pixels_slice, .bgra, .rgba);
+            fmt = .r8g8b8a8_srgb;
         },
     }
     return .{
         .width = hdr.width,
         .height = hdr.height,
-        .fmt = .r8g8b8_srgb,
+        .fmt = fmt,
         .pixels = pixels,
     };
 }
