@@ -41,8 +41,10 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         inline else => |tag| try w.print("Pixels ({}):\n", .{tag.slice().len}),
     }
     switch (self.pixels) {
-        .gray => |gray| try w.print("{}\n", .{gray.items[0]}),
-        inline else => |tag| try w.print("{}\n", .{tag.get(0)}),
+        inline else => |tag| try w.print("{}\n", .{tag[0]}),
+        // TODO: go back to previous method and make that work
+        // .gray => |gray| try w.print("{}\n", .{gray.items[0]}),
+        // inline else => |tag| try w.print("{}\n", .{tag.get(0)}), <- make this work in the future = memory savings for 8k images
     }
     try w.print("Format: {t}\n", .{self.fmt});
 }

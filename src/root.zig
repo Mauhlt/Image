@@ -193,23 +193,6 @@ const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "dib", .bmp },
 });
 
-// test "PositionalAll vs Mmap" {
-//     const gpa = std.testing.allocator;
-//     var threaded: std.Io.Threaded = .init(gpa, .{});
-//     const io = threaded.io();
-//
-//     const filepath = "src/Data/Read/BasicArt.bmp";
-//     const n_iters = 1_000;
-//     const time1 = try timer(io, gpa, filepath, n_iters, readDataPositional);
-//     const time2 = try timer(io, gpa, filepath, n_iters, readDataMmap);
-//     const time3 = try timer(io, gpa, filepath, n_iters, readDataMmap);
-//     const time4 = try timer(io, gpa, filepath, n_iters, readDataPositional);
-//     try std.testing.expect(time1 < time2);
-//     try std.testing.expect(time4 < time3);
-//     if (@import("builtin").mode == .Debug)
-//         std.debug.print("{} - {}\n", .{ time1, time2 });
-// }
-
 test "BMP" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});

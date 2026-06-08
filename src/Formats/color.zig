@@ -238,6 +238,7 @@ pub const Pixels = union(PixelOrder) {
 test "toPixel" {
     const gpa = std.testing.allocator;
     const TestRGB = struct { data_order: DataOrder, rgb: RGB };
+    const TestRGBA = struct { data_order: DataOrder, rgba: RGBA };
 
     const rgb_data: []const u8 = &.{ 255, 100, 1 };
     const expected_rgbs = [_]TestRGB{
@@ -255,13 +256,13 @@ test "toPixel" {
     }
 
     const rgba_data: []const u8 = &.{ 255, 100, 1, 255 };
-    const expected_rgbas = [_]TestRGB{
-        .{ .data_order = .rgba, .rgb = .{ .r = 255, .g = 100, .b = 1 } },
-        .{ .data_order = .rbga, .rgb = .{ .r = 255, .g = 1, .b = 100 } },
-        .{ .data_order = .grba, .rgb = .{ .r = 100, .g = 255, .b = 1 } },
-        .{ .data_order = .gbra, .rgb = .{ .r = 1, .g = 255, .b = 100 } },
-        .{ .data_order = .brga, .rgb = .{ .r = 100, .g = 1, .b = 255 } },
-        .{ .data_order = .bgra, .rgb = .{ .r = 1, .g = 100, .b = 255 } },
+    const expected_rgbas = [_]TestRGBA{
+        .{ .data_order = .rgba, .rgba = .{ .r = 255, .g = 100, .b = 1 } },
+        .{ .data_order = .rbga, .rgba = .{ .r = 255, .g = 1, .b = 100 } },
+        .{ .data_order = .grba, .rgba = .{ .r = 100, .g = 255, .b = 1 } },
+        .{ .data_order = .gbra, .rgba = .{ .r = 1, .g = 255, .b = 100 } },
+        .{ .data_order = .brga, .rgba = .{ .r = 100, .g = 1, .b = 255 } },
+        .{ .data_order = .bgra, .rgba = .{ .r = 1, .g = 100, .b = 255 } },
     };
     for (expected_rgbas) |expected_rgba| {
         const rgba: Pixels = try .init(gpa, rgba_data, expected_rgba.data_order, .rgba);
