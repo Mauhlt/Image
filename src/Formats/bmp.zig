@@ -14,7 +14,7 @@ const SIG: []const u8 = "BM";
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     // defer hdr.deinit(gpa);
-    std.debug.print("{f}", .{hdr});
+    // std.debug.print("{f}", .{hdr});
     // std.debug.assert(hdr.depth == 1);
     const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
         .monochrome => 1,
