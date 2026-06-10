@@ -1,8 +1,8 @@
 # Dirs
 .git/
-.gitignore
 .zig-cache/
 zig-out/
 zig-pkg/
-main.exe
-main.pdb
+
+# Files
+.gitignore
