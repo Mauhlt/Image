@@ -9,8 +9,8 @@
             .hash = "Vulkan-0.0.0-9v7hoaBxEQAt_qQHS8BHWqJ8w7Ijg_-Lf_X_N7whvRvX",
         },
         .Windows = .{
-            .url = "git+https://github.com/Mauhlt/Windows.git#28f98ae1295d9ef69d89deb2bb18718a0044bd64",
-            .hash = "Windows-0.0.0-F1HWOXc3AAChFi_k7Zry0uJZgkciV3jxBviMf2uxrdPk",
+            .url = "git+https://github.com/Mauhlt/Windows.git#efe88205cb10db4fca7027fe2fda672b1a00de4f",
+            .hash = "Windows-0.0.0-F1HWOfU3AACKrLzP0v6bLaxkZvvTh1aar32iKychsmGP",
         },
     },
     .paths = .{
