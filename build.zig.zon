@@ -5,8 +5,16 @@
     .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
     .dependencies = .{
         .Vulkan = .{
-            .url = "git+https://github.com/Mauhlt/Vulkan#10247b97bad687f30260d2a3b40382d5a478fe71",
+            .url = "git+https://github.com/Mauhlt/Vulkan.git#10247b97bad687f30260d2a3b40382d5a478fe71",
             .hash = "Vulkan-0.0.0-9v7hoaBxEQCS0nBq_P34XtLIzRqrj6LhY1hDXRPuw8J8",
+        },
+        .Windows = .{
+            .url = "git+https://github.com/Mauhlt/Windows.git#ed255584e693a83b09446d55636e13948fd8e24f",
+            .hash = "Windows-0.0.0-F1HWOYE4AAAeQ53NSEWcUfpd6omlaTi_rXOueE6SiFor",
+        },
+        .Image = .{
+            .url = "git+https://github.com/Mauhlt/Image.git#2c7f83d35b510aebb5ad746966df6567812c7437",
+            .hash = "Image-0.0.0-0z0ITFf9fwB2vGlrzvnmcmiGHUquB602lkNUwDKjfWq-",
         },
     },
     .paths = .{
