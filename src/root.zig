@@ -30,7 +30,7 @@ pub fn read(args: ReadArgs) !Image {
     };
     defer file.close(args.io);
 
-    const data = try readDataPositional(args.io, args.gpa, args.path);
+    const data = try readDataPositional(args.io, args.gpa, file);
     defer args.gpa.free(data);
 
     const ext_str = std.fs.path.extension(args.path)[1..];
@@ -76,11 +76,8 @@ fn timer(
 fn readDataPositional(
     io: std.Io,
     gpa: std.mem.Allocator,
-    path: []const u8,
+    file: std.Io.File,
 ) ![]u8 {
-    var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
-    defer file.close(io);
-
     const len = try file.length(io);
     const data = try gpa.alloc(u8, len);
     errdefer gpa.free(data);
@@ -135,10 +132,11 @@ fn readPositional(work: *Work) void {
     };
 }
 
-fn readDataMmap(io: std.Io, gpa: std.mem.Allocator, path: []const u8) ![]u8 {
-    var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
-    defer file.close(io);
-
+fn readDataMmap(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    file: std.Io.File,
+) ![]u8 {
     const file_len = try file.length(io);
     var mmap = try file.createMemoryMap(io, .{
         .len = file_len,
