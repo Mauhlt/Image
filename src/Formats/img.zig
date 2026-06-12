@@ -37,9 +37,12 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
     try w.print("Width: {}\n", .{self.width});
     try w.print("Height: {}\n", .{self.height});
     switch (self.pixels) {
-        .gray => |gray| try w.print("Pixels ({}):\n", .{gray.items.len}),
-        inline else => |tag| try w.print("Pixels ({}):\n", .{tag.slice().len}),
+        inline else => |tag| try w.print("{}\n", .{tag.len}),
     }
+    // switch (self.pixels) {
+    //     .gray => |gray| try w.print("Pixels ({}):\n", .{gray.items.len}),
+    //     inline else => |tag| try w.print("Pixels ({}):\n", .{tag.slice().len}),
+    // }
     switch (self.pixels) {
         inline else => |tag| try w.print("{}\n", .{tag[0]}),
         // TODO: go back to previous method and make that work
