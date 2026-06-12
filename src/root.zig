@@ -8,20 +8,35 @@ const BMP = @import("Formats/BMP.zig");
 const QOI = @import("Formats/QOI.zig");
 const vk = @import("Vulkan");
 
-pub fn read(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
-    var file = try std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only });
-    defer file.close(io);
+const ReadArgs = struct {
+    io: std.Io = undefined,
+    dir: std.Io.Dir = std.Io.Dir.cwd(),
+    path: []const u8 = undefined,
+    mode: enum(u8) {
+        cwd,
+        dir,
+        abs,
+    } = .cwd,
+};
 
-    const data = try readDataPositional(io, gpa, path);
-    defer gpa.free(data);
+pub fn read(args: ReadArgs) !Image {
+    var file = switch (args.mode) {
+        .abs => try std.Io.Dir.openFileAbsolute(args.io, args.path, .{ .mode = .read_only }),
+        .cwd => try std.Io.Dir.cwd().openFile(args.io, args.path, .{ .mode = .read_only }),
+        .dir => try args.dir.openFile(args.io, args.path, .{ .mode = .read_only }),
+    };
+    defer file.close(args.io);
 
-    const ext_str = std.fs.path.extension(path)[1..];
+    const data = try readDataPositional(args.io, args.gpa, args.path);
+    defer args.gpa.free(data);
+
+    const ext_str = std.fs.path.extension(args.path)[1..];
     const ext = std.meta.stringToEnum(ImageTag, ext_str) orelse
         mapImageTagFromExt.get(ext_str) orelse
         return error.InvalidFileExtension;
 
     const img = switch (ext) {
-        .bmp => try BMP.decode(gpa, data),
+        .bmp => try BMP.decode(args.gpa, data),
         // .qoi => try QOI.decode(gpa, data),
         // .grayscale => std.debug.print("Grayscale.\n", .{}),
         else => unreachable,
