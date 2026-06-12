@@ -24,9 +24,15 @@ const ReadArgs = struct {
 
 pub fn read(args: ReadArgs) !Image {
     var file = switch (args.path_type) {
-        .abs => try std.Io.Dir.openFileAbsolute(args.io, args.path, .{ .mode = .read_only }),
-        .cwd => try std.Io.Dir.cwd().openFile(args.io, args.path, .{ .mode = .read_only }),
-        .dir => try args.dir.openFile(args.io, args.path, .{ .mode = .read_only }),
+        .abs => std.Io.Dir.openFileAbsolute(args.io, args.path, .{ .mode = .read_only }),
+        .cwd => std.Io.Dir.cwd().openFile(args.io, args.path, .{ .mode = .read_only }),
+        .dir => args.dir.openFile(args.io, args.path, .{ .mode = .read_only }),
+    } catch |err| switch (err) {
+        error.OBJECT_NAME_NOT_FOUND => {
+            std.debug.print("Path: {s}\n", .{args.path});
+            return err;
+        },
+        else => return err,
     };
     defer file.close(args.io);
 
