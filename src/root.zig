@@ -17,7 +17,7 @@ const PathType = enum(u8) {
 const ReadArgs = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
-    dir: std.Io.Dir = std.Io.Dir.cwd(),
+    dir: std.Io.Dir,
     path: []const u8,
     path_type: PathType = .cwd,
 };
