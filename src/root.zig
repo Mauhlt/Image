@@ -8,19 +8,21 @@ const BMP = @import("Formats/BMP.zig");
 const QOI = @import("Formats/QOI.zig");
 const vk = @import("Vulkan");
 
+const PathType = enum(u8) {
+    cwd, // path = path from cwd to file
+    dir, // path = path from dir to file
+    abs, // path = path from root to file
+};
+
 const ReadArgs = struct {
-    io: std.Io = undefined,
+    io: std.Io,
     dir: std.Io.Dir = std.Io.Dir.cwd(),
-    path: []const u8 = undefined,
-    mode: enum(u8) {
-        cwd,
-        dir,
-        abs,
-    } = .cwd,
+    path: []const u8,
+    path_type: PathType = .cwd,
 };
 
 pub fn read(args: ReadArgs) !Image {
-    var file = switch (args.mode) {
+    var file = switch (args.path_type) {
         .abs => try std.Io.Dir.openFileAbsolute(args.io, args.path, .{ .mode = .read_only }),
         .cwd => try std.Io.Dir.cwd().openFile(args.io, args.path, .{ .mode = .read_only }),
         .dir => try args.dir.openFile(args.io, args.path, .{ .mode = .read_only }),
