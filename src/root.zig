@@ -1,12 +1,55 @@
 const std = @import("std");
-// Color
-const Image = @import("Formats/img.zig");
+const vk = @import("Vulkan");
+const color = @import("color.zig");
 
-// Formats
 const BMP = @import("Formats/BMP.zig");
 // const PNG = @import("Formats/PNG.zig");
 const QOI = @import("Formats/QOI.zig");
-const vk = @import("Vulkan");
+
+width: u32,
+height: u32,
+pixels: color.Pixels,
+fmt: vk.Format,
+
+pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !@This() {
+    const pixels = blk: switch (img.pixels) {
+        inline else => |data, tag| {
+            const new_data = try gpa.dupe(@TypeOf(data[0]), data);
+            errdefer gpa.free(new_data);
+            break :blk @unionInit(color.Pixels, @tagName(tag), new_data);
+        }
+    };
+    return .{
+        .width = img.width,
+        .height = img.height,
+        .pixels = pixels,
+        .fmt = img.fmt,
+    };
+}
+
+pub fn deinit(self: *@This(), gpa: std.mem.Allocator) void {
+    self.pixels.deinit(gpa);
+}
+
+pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+    try w.print("\nImage:\n", .{});
+    try w.print("Width: {}\n", .{self.width});
+    try w.print("Height: {}\n", .{self.height});
+    switch (self.pixels) {
+        inline else => |tag| try w.print("{}\n", .{tag.len}),
+    }
+    // switch (self.pixels) {
+    //     .gray => |gray| try w.print("Pixels ({}):\n", .{gray.items.len}),
+    //     inline else => |tag| try w.print("Pixels ({}):\n", .{tag.slice().len}),
+    // }
+    switch (self.pixels) {
+        inline else => |tag| try w.print("{}\n", .{tag[0]}),
+        // TODO: go back to previous method and make that work
+        // .gray => |gray| try w.print("{}\n", .{gray.items[0]}),
+        // inline else => |tag| try w.print("{}\n", .{tag.get(0)}), <- make this work in the future = memory savings for 8k images
+    }
+    try w.print("Format: {t}\n", .{self.fmt});
+}
 
 const PathType = enum(u8) {
     cwd, // path = path from cwd to file
@@ -22,7 +65,7 @@ const ReadArgs = struct {
     path_type: PathType = .cwd,
 };
 
-pub fn read(args: ReadArgs) !Image {
+pub fn read(args: ReadArgs) !@This() {
     var file = try switch (args.path_type) {
         .abs => std.Io.Dir.openFileAbsolute(args.io, args.path, .{ .mode = .read_only }),
         .cwd => std.Io.Dir.cwd().openFile(args.io, args.path, .{ .mode = .read_only }),
@@ -47,6 +90,22 @@ pub fn read(args: ReadArgs) !Image {
     return img;
 }
 
+pub fn write(io: std.Io, path: []const u8, img: *const @This()) !void {
+    var file = try std.Io.Dir.cwd().createFile(io, path, .{});
+    defer file.close(io);
+
+    var wbuf: [4096]u8 = undefined;
+    var writer = file.writer(io, &wbuf);
+    const io_writer = &writer.interface;
+
+    const image_tag = try tagFromExt(path);
+    return switch (image_tag) {
+        .bmp => BMP.encode(img, io_writer, null),
+        // .qoi => QOI.encode(img, io_writer),
+        else => unreachable,
+    };
+}
+
 fn timer(
     io: std.Io,
     gpa: std.mem.Allocator,
@@ -55,20 +114,14 @@ fn timer(
     my_fn: anytype,
 ) !u64 {
     const clock: std.Io.Clock = .awake;
-    var time_taken: u64 = 0;
-    for (0..n_iters / 2) |_| {
+    var time_taken: f64 = 0;
+    const div: f64 = 1 / n_iters;
+    for (0..n_iters) |_| {
         const start = clock.now(io).toMilliseconds();
         const data = try my_fn(io, gpa, path);
         defer gpa.free(data);
         const end = clock.now(io).toMilliseconds();
-        time_taken += @intCast(end - start);
-    }
-    for (0..n_iters / 2) |_| {
-        const start = clock.now(io).toMilliseconds();
-        const data = try my_fn(io, gpa, path);
-        defer gpa.free(data);
-        const end = clock.now(io).toMilliseconds();
-        time_taken += @intCast(end - start);
+        time_taken += (@as(f64, @floatFromInt(@as(u64, @intCast((end - start))))) * div);
     }
     return time_taken;
 }
@@ -147,22 +200,6 @@ fn readDataMmap(
     try mmap.read(io);
 
     return gpa.dupe(u8, mmap.memory[0..file_len]);
-}
-
-pub fn write(io: std.Io, path: []const u8, img: *const Image) !void {
-    var file = try std.Io.Dir.cwd().createFile(io, path, .{});
-    defer file.close(io);
-
-    var wbuf: [4096]u8 = undefined;
-    var writer = file.writer(io, &wbuf);
-    const io_writer = &writer.interface;
-
-    const image_tag = try tagFromExt(path);
-    return switch (image_tag) {
-        .bmp => BMP.encode(img, io_writer, null),
-        // .qoi => QOI.encode(img, io_writer),
-        else => unreachable,
-    };
 }
 
 fn tagFromExt(path: []const u8) !ImageTag {

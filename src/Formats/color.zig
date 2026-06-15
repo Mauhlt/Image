@@ -1,41 +1,4 @@
 const std = @import("std");
-pub const GRAY = u8;
-
-pub const RGB = struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
-};
-
-pub const RGBA = struct {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
-    a: u8 = 0xFF,
-};
-
-const DataOrder = enum(u64) {
-    gray,
-    rgb,
-    rbg,
-    grb,
-    gbr,
-    brg,
-    bgr,
-    rgba,
-    rbga,
-    grba,
-    gbra,
-    brga,
-    bgra,
-    _,
-};
-
-const PixelOrder = enum(u64) {
-    gray,
-    rgb,
-    rgba,
-};
 
 inline fn isValidDataLen(data: []const u8, step: usize) bool {
     return @mod(data.len, step) == 0;
@@ -75,29 +38,6 @@ fn computeStride(data_order: DataOrder) !usize {
         .rgb, .rbg, .grb, .gbr, .brg, .bgr => 3,
         .rgba, .rbga, .grba, .gbra, .brga, .bgra => 4,
         _ => return error.UnsupportedDataOrder,
-    };
-}
-
-inline fn grayFromRGB(rgb: RGB) GRAY {
-    return @intFromFloat(0.299 * @as(f32, @floatFromInt(rgb.r)) + //
-        0.587 * @as(f32, @floatFromInt(rgb.g)) + //
-        0.114 * @as(f32, @floatFromInt(rgb.b)));
-}
-
-inline fn rgbFromGray(gray: GRAY) RGB {
-    return .{
-        .r = @intFromFloat(0.299 * @as(f32, @floatFromInt(gray))),
-        .g = @intFromFloat(0.587 * @as(f32, @floatFromInt(gray))),
-        .b = @intFromFloat(0.114 * @as(f32, @floatFromInt(gray))),
-    };
-}
-
-inline fn rgbaFromGray(gray: GRAY) RGBA {
-    return .{
-        .r = @intFromFloat(0.299 * @as(f32, @floatFromInt(gray))),
-        .g = @intFromFloat(0.587 * @as(f32, @floatFromInt(gray))),
-        .b = @intFromFloat(0.114 * @as(f32, @floatFromInt(gray))),
-        .a = 255,
     };
 }
 
