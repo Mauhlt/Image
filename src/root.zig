@@ -1,6 +1,6 @@
 const std = @import("std");
 const vk = @import("Vulkan");
-const color = @import("color.zig");
+const Pixels = @import("Pixels.zig");
 
 const BMP = @import("Formats/BMP.zig");
 // const PNG = @import("Formats/PNG.zig");
@@ -8,7 +8,7 @@ const QOI = @import("Formats/QOI.zig");
 
 width: u32,
 height: u32,
-pixels: color.Pixels,
+pixels: Pixels,
 fmt: vk.Format,
 
 pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !@This() {
@@ -16,7 +16,7 @@ pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !@This() {
         inline else => |data, tag| {
             const new_data = try gpa.dupe(@TypeOf(data[0]), data);
             errdefer gpa.free(new_data);
-            break :blk @unionInit(color.Pixels, @tagName(tag), new_data);
+            break :blk @unionInit(Pixels, @tagName(tag), new_data);
         }
     };
     return .{
@@ -209,20 +209,6 @@ fn tagFromExt(path: []const u8) !ImageTag {
         return error.UnsupportedImageExt;
 }
 
-// const ImageTagUnion = union(enum) {
-//     bmp: BMP,
-//     // gif: @import("gif.zig"),
-//     // heic: @import("heic.zig"),
-//     // jpg: @import("jpg.zig"),
-//     // paint: @import("paint.zig"),
-//     // png: @import("png.zig"),
-//     // ppm: @import("ppm.zig"),
-//     // qoi: @import("qoi.zig"),
-//     // tif: @import("tif.zig"),
-//     // tga: @import("tga.zig"),
-//     // webp: @import("webp.zig"),
-// };
-// const ImageTag = std.meta.Tag(ImageTagUnion);
 const ImageTag = enum {
     bmp,
     gif,
@@ -236,6 +222,22 @@ const ImageTag = enum {
     tga,
     webp,
 };
+
+// TODO: impl
+// const ImageTagUnion = union(ImageTagUnion) {
+//     bmp: BMP,
+//     // gif: @import("gif.zig"),
+//     // heic: @import("heic.zig"),
+//     // jpg: @import("jpg.zig"),
+//     // paint: @import("paint.zig"),
+//     // png: @import("png.zig"),
+//     // ppm: @import("ppm.zig"),
+//     // qoi: @import("qoi.zig"),
+//     // tif: @import("tif.zig"),
+//     // tga: @import("tga.zig"),
+//     // webp: @import("webp.zig"),
+// };
+
 const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "jpeg", .jpg },
     .{ "jpe", .jpg },
