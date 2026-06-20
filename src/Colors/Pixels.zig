@@ -2,8 +2,10 @@ const std = @import("std");
 
 const GRAY = @import("gray.zig");
 const GRAYS = @import("grays.zig");
+
 const RGB = @import("rgb.zig");
-const RGBS = @import("RGBS.zig");
+const RGBS = @import("rgbs.zig");
+
 const RGBA = @import("rgba.zig");
 const RGBAS = @import("rgbas.zig");
 
@@ -13,6 +15,7 @@ const PixelOrder = enum(u8) {
     rgba,
 };
 
+/// Returns Enum that is a superset
 fn MergeEnums(comptime types: []const type) !type {
     for (types) |t| {
         switch (@typeInfo(t)) {
@@ -58,23 +61,20 @@ fn MergeEnums(comptime types: []const type) !type {
             }
         }
 
-        const E = @Enum(
+        return @Enum(
             @typeInfo(types[0]).@"enum".tag_type,
             .exhaustive,
             &names,
             &values,
         );
-
-        return struct {
-            tag: E,
-            pub fn computeStride(self: @This()) usize {
-                return @tagName(self.tag).len;
-            }
-        };
     }
 }
 
 const DataOrder: type = MergeEnums(&.{ GRAY.Order, RGB.Order, RGBA.Order }) catch unreachable;
+
+fn computeStride(data_order: DataOrder) usize {
+    return @tagName(data_order).len;
+}
 
 pub const Pixels = union(PixelOrder) {
     gray: GRAYS,
@@ -88,61 +88,86 @@ pub const Pixels = union(PixelOrder) {
         pixel_order: PixelOrder,
     ) !@This() {
         const in_data: Pixels = switch (data_order) {
-            .g => .{ .gray = try .initMany(gpa, data) },
-            .rgb, .rbg, .grb, .gbr, .brg, .bgr => .{ .rgb = try .initMany(gpa, data, data_order) },
-            else => .{ .rgba = try .initMany(gpa, data, data_order) },
+            .g => .{ .gray = try .init(gpa, data) },
+            .rgb, .rbg, .grb, .gbr, .brg, .bgr => .{ .rgb = try .init(gpa, data, @enumFromInt(@intFromEnum(data_order))) },
+            else => .{ .rgba = try .init(gpa, data, @enumFromInt(@intFromEnum(data_order))) },
         };
         switch (pixel_order) {
-            .gray => switch (data_order.tag) {
-                .g => return in_data,
-                .rgb, .rbg, .grb, .gbr, .brg, .bgr => |rgbs| {
+            .gray => switch (in_data) {
+                .gray => return in_data,
+                .rgb => |rgbs| {
                     defer in_data.deinit(gpa);
                     return .{ .gray = try rgbs.toGRAYS(gpa) };
                 },
-                else => |rgbas| {
-                    defer gpa.free(in_data.rgba);
+                .rgba => |rgbas| {
+                    defer in_data.deinit(gpa);
                     return .{ .gray = try rgbas.toGRAYS(gpa) };
                 },
             },
-            .rgb => switch (data_order) {
-                .g => |grays| {
+            .rgb => switch (in_data) {
+                .gray => |grays| {
                     defer in_data.deinit(gpa);
-                    return .{ .rgb = grays.toRGBS(gpa) };
+                    return .{ .rgb = try grays.toRGBS(gpa) };
                 },
-                .rgb, .rbg, .grb, .gbr, .brg, .bgr => return in_data,
-                else => |rgbas| {
+                .rgb => return in_data,
+                .rgba => |rgbas| {
                     defer in_data.deinit(gpa);
-                    return .{ .rgb = rgbas.toRGBS(gpa) };
+                    return .{ .rgb = try rgbas.toRGBS(gpa) };
                 },
             },
-            .rgba => switch (data_order) {
-                .g => |grays| {
+            .rgba => switch (in_data) {
+                .gray => |grays| {
                     defer in_data.deinit(gpa);
-                    return .{ .gray = try grays.toRGBAS(gpa) };
+                    return .{ .rgba = try grays.toRGBAS(gpa) };
                 },
-                .rgb, .rbg, .grb, .gbr, .brg, .bgr => |rgbs| {
+                .rgb => |rgbs| {
                     defer in_data.deinit(gpa);
                     return .{ .rgba = try rgbs.toRGBAS(gpa) };
                 },
-                else => return in_data,
+                .rgba => return in_data,
             },
         }
     }
 
-    pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
+    pub fn deinit(
+        self: @This(),
+        gpa: std.mem.Allocator,
+    ) void {
         switch (self) {
             .gray => |grays| grays.deinit(gpa),
             .rgb => |rgbs| rgbs.deinit(gpa),
             .rgba => |rgbas| rgbas.deinit(gpa),
         }
     }
+
+    pub fn convert(
+        self: @This(),
+        gpa: std.mem.Allocator,
+        order: PixelOrder,
+    ) !@This() {
+        return switch (self) {
+            .gray => |grays| switch (order) {
+                .gray => .{ .gray = GRAYS{ .slice = try gpa.dupe(GRAY, grays.slice) } },
+                .rgb => .{ .rgb = try grays.toRGBS(gpa) },
+                .rgba => .{ .rgba = try grays.toRGBAS(gpa) },
+            },
+            .rgb => |rgbs| switch (order) {
+                .gray => .{ .gray = try rgbs.toGRAYS(gpa) },
+                .rgb => .{ .rgb = RGBS{ .slice = try gpa.dupe(RGB, rgbs.slice) } },
+                .rgba => .{ .rgba = try rgbs.toRGBAS(gpa) },
+            },
+            .rgba => |rgbas| switch (order) {
+                .gray => .{ .gray = try rgbas.toGRAYS(gpa) },
+                .rgb => .{ .rgb = try rgbas.toRGBS(gpa) },
+                .rgba => .{ .rgba = RGBAS{ .slice = try gpa.dupe(RGBA, rgbas.slice) } },
+            },
+        };
+    }
 };
 
 test "Pixels" {
     @setEvalBranchQuota(10_000);
-    // correct enum fields
-    const da: DataOrder = undefined;
-    const da_fields = std.meta.fields(@TypeOf(da.tag));
+    const da_fields = std.meta.fields(DataOrder);
     const g_fields = std.meta.fields(GRAY.Order);
     inline for (g_fields) |field1| {
         var found_match: bool = false;
@@ -178,10 +203,31 @@ test "Pixels" {
     }
     // compute strides
     inline for (da_fields) |field| {
-        const da2: DataOrder = .{ .tag = @field(@TypeOf(da.tag), field.name) };
-        const cs = da2.computeStride();
-        const cs2 = @tagName(da2.tag).len;
+        const da2 = @field(DataOrder, field.name);
+        const cs = computeStride(da2);
+        const cs2 = @tagName(da2).len;
         try std.testing.expectEqual(cs, cs2);
     }
-    // pixels - i dont think this works
+    // pixels
+    const gpa = std.testing.allocator;
+    const da: DataOrder = .g;
+    const data = [_]u8{ 100, 25, 75, 175, 225 };
+
+    // grays -> rgb/rgba
+    const grays1: Pixels = try .init(gpa, &data, da, .gray);
+    defer grays1.deinit(gpa);
+    const rgbs1 = try grays1.convert(gpa, .rgb);
+    defer rgbs1.deinit(gpa);
+    const rgbas1 = try grays1.convert(gpa, .rgba);
+    defer rgbas1.deinit(gpa);
+    // rgb -> gray/rgba
+    const grays2 = try rgbs1.convert(gpa, .gray);
+    defer grays2.deinit(gpa);
+    const rgbas2 = try rgbs1.convert(gpa, .rgba);
+    defer rgbas2.deinit(gpa);
+    // rgba -> gray/rgb
+    const rgb3 = try rgbas1.convert(gpa, .rgb);
+    defer rgb3.deinit(gpa);
+    const grays3 = try rgbas1.convert(gpa, .gray);
+    defer grays3.deinit(gpa);
 }
