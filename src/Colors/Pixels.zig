@@ -1,8 +1,11 @@
 const std = @import("std");
 
 const GRAY = @import("gray.zig");
+const GRAYS = @import("grays.zig");
 const RGB = @import("rgb.zig");
+const RGBS = @import("RGBS.zig");
 const RGBA = @import("rgba.zig");
+const RGBAS = @import("rgbas.zig");
 
 const PixelOrder = enum(u8) {
     gray,
@@ -64,7 +67,6 @@ fn MergeEnums(comptime types: []const type) !type {
 
         return struct {
             tag: E,
-
             pub fn computeStride(self: @This()) usize {
                 return @tagName(self.tag).len;
             }
@@ -75,9 +77,9 @@ fn MergeEnums(comptime types: []const type) !type {
 const DataOrder: type = MergeEnums(&.{ GRAY.Order, RGB.Order, RGBA.Order }) catch unreachable;
 
 pub const Pixels = union(PixelOrder) {
-    gray: []GRAY,
-    rgb: []RGB,
-    rgba: []RGBA,
+    gray: GRAYS,
+    rgb: RGBS,
+    rgba: RGBAS,
 
     pub fn init(
         gpa: std.mem.Allocator,
@@ -85,7 +87,7 @@ pub const Pixels = union(PixelOrder) {
         data_order: DataOrder,
         pixel_order: PixelOrder,
     ) !@This() {
-        const in_data = switch (data_order) {
+        const in_data: Pixels = switch (data_order) {
             .g => .{ .gray = try .initMany(gpa, data) },
             .rgb, .rbg, .grb, .gbr, .brg, .bgr => .{ .rgb = try .initMany(gpa, data, data_order) },
             else => .{ .rgba = try .initMany(gpa, data, data_order) },
@@ -93,39 +95,45 @@ pub const Pixels = union(PixelOrder) {
         switch (pixel_order) {
             .gray => switch (data_order.tag) {
                 .g => return in_data,
-                .rgb, .rbg, .grb, .gbr, .brg, .bgr => {
-                    defer gpa.free(in_data.rgb);
+                .rgb, .rbg, .grb, .gbr, .brg, .bgr => |rgbs| {
+                    defer in_data.deinit(gpa);
+                    return .{ .gray = try rgbs.toGRAYS(gpa) };
                 },
-                else => {
+                else => |rgbas| {
                     defer gpa.free(in_data.rgba);
+                    return .{ .gray = try rgbas.toGRAYS(gpa) };
                 },
             },
             .rgb => switch (data_order) {
-                .g => {
-                    defer gpa.free(in_data.g);
+                .g => |grays| {
+                    defer in_data.deinit(gpa);
+                    return .{ .rgb = grays.toRGBS(gpa) };
                 },
                 .rgb, .rbg, .grb, .gbr, .brg, .bgr => return in_data,
-                else => {
-                    defer gpa.free(in_data.rgba);
+                else => |rgbas| {
+                    defer in_data.deinit(gpa);
+                    return .{ .rgb = rgbas.toRGBS(gpa) };
                 },
             },
             .rgba => switch (data_order) {
-                .g => {
-                    defer gpa.free(in_data.g);
+                .g => |grays| {
+                    defer in_data.deinit(gpa);
+                    return .{ .gray = try grays.toRGBAS(gpa) };
                 },
-                .rgb, .rbg, .grb, .gbr, .brg, .bgr => {
-                    defer gpa.free(in_data.rgb);
+                .rgb, .rbg, .grb, .gbr, .brg, .bgr => |rgbs| {
+                    defer in_data.deinit(gpa);
+                    return .{ .rgba = try rgbs.toRGBAS(gpa) };
                 },
                 else => return in_data,
             },
         }
     }
 
-    pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
+    pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
         switch (self) {
-            .gray => |grays| gpa.free(grays),
-            .rgb => |rgbs| gpa.free(rgbs),
-            .rgba => |rgbas| gpa.free(rgbas),
+            .gray => |grays| grays.deinit(gpa),
+            .rgb => |rgbs| rgbs.deinit(gpa),
+            .rgba => |rgbas| rgbas.deinit(gpa),
         }
     }
 };
@@ -175,4 +183,5 @@ test "Pixels" {
         const cs2 = @tagName(da2.tag).len;
         try std.testing.expectEqual(cs, cs2);
     }
+    // pixels - i dont think this works
 }
