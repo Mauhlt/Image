@@ -15,7 +15,7 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
     return .{ .slice = grays };
 }
 
-pub fn deinit(self: *const GRAYS, gpa: std.mem.Allocator) void {
+pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
     gpa.free(self.slice);
 }
 
