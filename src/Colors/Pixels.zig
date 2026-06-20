@@ -216,18 +216,42 @@ test "Pixels" {
     // grays -> rgb/rgba
     const grays1: Pixels = try .init(gpa, &data, da, .gray);
     defer grays1.deinit(gpa);
+
     const rgbs1 = try grays1.convert(gpa, .rgb);
     defer rgbs1.deinit(gpa);
+    for (0..data.len) |i| {
+        try std.testing.expectEqualDeep(rgbs1.rgb.slice[i], RGB{ .r = data[i], .g = data[i], .b = data[i] });
+    }
+
     const rgbas1 = try grays1.convert(gpa, .rgba);
     defer rgbas1.deinit(gpa);
+    for (0..data.len) |i| {
+        try std.testing.expectEqualDeep(rgbas1.rgba.slice[i], RGBA{ .r = data[i], .g = data[i], .b = data[i], .a = 255 });
+    }
+
     // rgb -> gray/rgba
     const grays2 = try rgbs1.convert(gpa, .gray);
     defer grays2.deinit(gpa);
+    for (0..data.len) |i| {
+        try std.testing.expectEqualDeep(grays2.gray.slice[i], GRAY{ .g = data[i] });
+    }
+
     const rgbas2 = try rgbs1.convert(gpa, .rgba);
     defer rgbas2.deinit(gpa);
+    for (0..data.len) |i| {
+        try std.testing.expectEqualDeep(rgbas2.rgba.slice[i], RGBA{ .r = data[i], .g = data[i], .b = data[i], .a = 255 });
+    }
+
     // rgba -> gray/rgb
-    const rgb3 = try rgbas1.convert(gpa, .rgb);
-    defer rgb3.deinit(gpa);
+    const rgbs3 = try rgbas1.convert(gpa, .rgb);
+    defer rgbs3.deinit(gpa);
+    for (0..data.len) |i| {
+        try std.testing.expectEqualDeep(rgbs3.rgb.slice[i], RGB{ .r = data[i], .g = data[i], .b = data[i] });
+    }
+
     const grays3 = try rgbas1.convert(gpa, .gray);
     defer grays3.deinit(gpa);
+    for (0..data.len) |i| {
+        try std.testing.expectEqualDeep(grays3.gray.slice[i], GRAY{ .g = data[i] });
+    }
 }
