@@ -63,9 +63,8 @@ fn MergeEnums(comptime types: []const type) !type {
         );
 
         return struct {
-            const Self = @This();
             tag: E,
-            pub fn computeStride(self: Self) usize {
+            pub fn computeStride(self: @This()) usize {
                 return @tagName(self.tag).len;
             }
         };
@@ -137,9 +136,40 @@ const DataOrder: type = MergeEnums(&.{ GRAY.Order, RGB.Order, RGBA.Order }) catc
 // };
 
 test "Pixels" {
-    const fields = std.meta.fields(DataOrder);
-    // std.enums.EnumFieldStruct(comptime E: type, comptime Data: type, comptime field_default: ?Data)
-    inline for (fields) |field| {
-        std.debug.print("{s}: {}\n", .{ field, @intFromEnum(field) });
+    @setEvalBranchQuota(2_000);
+    const da: DataOrder = undefined;
+    const da_fields = std.meta.fields(@TypeOf(da.tag));
+    const g_fields = std.meta.fields(GRAY.Order);
+    inline for (g_fields) |field1| {
+        var found_match: bool = false;
+        inline for (da_fields) |field2| {
+            if (std.mem.eql(u8, field1.name, field2.name)) {
+                try std.testing.expectEqual(field1.value, field2.value);
+                found_match = true;
+            }
+        }
+        try std.testing.expectEqual(found_match, true);
+    }
+    const rgb_fields = std.meta.fields(RGB.Order);
+    inline for (rgb_fields) |field1| {
+        var found_match: bool = false;
+        inline for (da_fields) |field2| {
+            if (std.mem.eql(u8, field1.name, field2.name)) {
+                try std.testing.expectEqual(field1.value, field2.value);
+                found_match = true;
+            }
+        }
+        try std.testing.expectEqual(found_match, true);
+    }
+    const rgba_fields = std.meta.fields(RGBA.Order);
+    inline for (rgba_fields) |field1| {
+        var found_match: bool = false;
+        inline for (da_fields) |field2| {
+            if (std.mem.eql(u8, field1.name, field2.name)) {
+                try std.testing.expectEqual(field1.value, field2.value);
+                found_match = true;
+            }
+        }
+        try std.testing.expectEqual(found_match, true);
     }
 }
