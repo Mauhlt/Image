@@ -191,13 +191,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
     if (i != pixels_slice.len - 8) return Error.Decode.InvalidEndMarker;
 }
 
-const BitTags = enum(u8) {
-    index = 0,
-    diff = 1,
-    luma = 2,
-    run = 3,
-};
-
 pub fn encode(
     gpa: std.mem.Allocator,
     img: *const Image,
@@ -234,7 +227,14 @@ pub fn encode(
     }
 }
 
-fn encodeRGBA(buf: []u8, rgbas: []const RGBA) !void {
+fn encodeData(
+    comptime T: Channel,
+    buf: []u8,
+    data: switch (T) {
+        .rgb => []const RGB,
+        .rgba => []const RGBA,
+    },
+) !void {
     var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0 };
     var run: usize = 0;
@@ -331,7 +331,14 @@ fn encodeRGBA(buf: []u8, rgbas: []const RGBA) !void {
     return result;
 }
 
-fn encodeSIMD(buf: []u8, rgbas: []const rgba) !void {
+fn encodeDataSIMD(
+    comptime T: Channel,
+    buf: []u8,
+    data: switch (T) {
+        .rgb => RGB,
+        .rgba => []const RGBA,
+    },
+) !void {
     var table = [_]RGBA{.{}} ** 64;
     var prev: RGBA = .{};
     var run: usize = 0;
@@ -341,11 +348,9 @@ fn encodeSIMD(buf: []u8, rgbas: []const rgba) !void {
     var i: usize = 0; // index into rgbas
     while (true) {
         const n_matches = if (i + 64 <= len) //
-            firstNMatchesSIMD(RGBA, rgbas[i], @ptrCast(rgbas[i..][0..64]))
+            firstNMatchesSIMD(T, data[i], @ptrCast(data[i..][0..64]))
         else //
-            firstNMatches(RGBA, rgbas[i], rgbas[i..]);
-
-        const matches = @as(@Vector(64, u8), @as([64]u8, rgbas[i..][0..8].*)) == @as(@Vector(64, u8));
+            firstNMatches(T, data[i], data[i..]);
     }
 }
 
