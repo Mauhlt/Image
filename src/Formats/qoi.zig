@@ -240,12 +240,8 @@ fn encodeRGBA(buf: []u8, rgbas: []const RGBA) !void {
     var run: usize = 0;
 
     var i: usize = 0;
-    var j: usize = 0;
     var b: usize = 0; // buffer index
-    while (i < rgbas.len) : ({
-        i += 1;
-        j += 4;
-    }) {
+    while (i < rgbas.len) : (i += 1) {
         const px: RGBA = .{
             .r = rgbas[i],
             .g = rgbas[i + 1],
@@ -335,6 +331,57 @@ fn encodeRGBA(buf: []u8, rgbas: []const RGBA) !void {
     return result;
 }
 
+fn encodeSIMD(buf: []u8, rgbas: []const rgba) !void {
+    var table = [_]RGBA{.{}} ** 64;
+    var prev: RGBA = .{};
+    var run: usize = 0;
+
+    const len = rgbas.len;
+    var matches: @Vector(64, RGBA) = @splat();
+    var i: usize = 0; // index into rgbas
+    while (true) {
+        const n_matches = if (i + 64 <= len) //
+            firstNMatchesSIMD(RGBA, rgbas[i], @ptrCast(rgbas[i..][0..64]))
+        else //
+            firstNMatches(RGBA, rgbas[i], rgbas[i..]);
+
+        const matches = @as(@Vector(64, u8), @as([64]u8, rgbas[i..][0..8].*)) == @as(@Vector(64, u8));
+    }
+}
+
+fn firstNMatches(
+    comptime T: Channel,
+    current: switch (T) {
+        .rgb => RGB,
+        .rgba => RGBA,
+    },
+    slice: switch (T) {
+        .rgb => []RGB,
+        .rgba => []RGBA,
+    },
+) usize {
+    for (slice, 0..) |s, i| {
+        if (!current.eql(s)) return i;
+    } else return slice.len;
+}
+
+fn firstNMatchesSIMD(
+    comptime T: Channel,
+    current: switch (T) {
+        .rgb => RGB,
+        .rgba => RGBA,
+    },
+    array: switch (T) {
+        .rgb => *[64]RGB,
+        .rgba => *[64]RGBA,
+    },
+) usize {
+    const V = @Vector(N, u32);
+    const self: V = @splat(@as(u32, @bitCast(current)));
+    const other: V = @bitCast(array);
+    return @ctz(@as(usize, @bitCast(self != other))); // 00001
+}
+
 const Header = struct {
     width: u32,
     height: u32,
@@ -408,3 +455,151 @@ const Header = struct {
         try w.print("Channels: {t}\n", .{self.channel});
     }
 };
+
+test "First N Matches" {
+    const rgb: RGB = .{ .r = 0, .g = 0, .b = 0 };
+    const rgbs = [_]RGB{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+        .{ .r = 1, .g = 1, .b = 1 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 1, .g = 1, .b = 1 },
+    };
+    const n_matches1 = firstNMatches(.rgb, rgb, &rgbs);
+    try std.testing.expectEqual(n_matches1, 6);
+
+    const self: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0 };
+    const others = [_]RGBA{
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+        .{ .r = 0, .g = 0, .b = 0 },
+    };
+    const n_matches2 = firstNMatches(.rgba, rgba, &rgbas);
+    try std.testing.expectEqual(n_matches2, 64);
+}
