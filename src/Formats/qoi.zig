@@ -197,34 +197,28 @@ pub fn encode(
     w: *std.Io.Writer,
     maybe_hdr: ?Header,
 ) !void {
-    const n_pixels = switch (img.pixels) {
-        inline else => |colors| colors.slice.len,
-    };
-    const max_size = @sizeOf(Header) + n_pixels * 5 + END_MARKER.len;
-    var buf = try gpa.alloc(u8, max_size);
-    defer gpa.free(buf);
-
-    var write_buf: [1024]u8 = undefined;
-    var w_idx: usize = 0;
-
-    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
-    try hdr.encode(w);
-
-    switch (img.pixels) {
-        .rgb => |rgbs| {
-            _ = rgbs;
-            // var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
-            // var prev: RGB = .{ .r = 0, .g = 0, .b = 0 };
-            // var run: usize = 0;
-            //
-            // for (rgbs.slice) |rgb| {
-            //     std.debug.print("{} ", .{rgb});
-            //     try w.writeInt(RGB, rgb, .little);
-            // }
-        },
-        .rgba => |rgbas| {},
-        else => unreachable,
-    }
+    _ = gpa;
+    _ = img;
+    _ = w;
+    _ = maybe_hdr;
+    // const n_pixels = switch (img.pixels) {
+    //     inline else => |colors| colors.slice.len,
+    // };
+    // const max_size = @sizeOf(Header) + n_pixels * 5 + END_MARKER.len;
+    // var buf = try gpa.alloc(u8, max_size);
+    // defer gpa.free(buf);
+    //
+    // var write_buf: [1024]u8 = undefined;
+    // var w_idx: usize = 0;
+    //
+    // const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
+    // try hdr.encode(w);
+    //
+    // switch (img.pixels) {
+    //     .rgb => |rgbs| _ = rgbs,
+    //     .rgba => |rgbas| _ = rgbas,
+    //     else => unreachable,
+    // }
 }
 
 fn encodeData(
@@ -241,12 +235,12 @@ fn encodeData(
 
     var i: usize = 0;
     var b: usize = 0; // buffer index
-    while (i < rgbas.len) : (i += 1) {
+    while (i < data.len) : (i += 1) {
         const px: RGBA = .{
-            .r = rgbas[i],
-            .g = rgbas[i + 1],
-            .b = rgbas[i + 2],
-            .a = rgbas[i + 3],
+            .r = data[i],
+            .g = data[i + 1],
+            .b = data[i + 2],
+            .a = data[i + 3],
         };
 
         // check run
@@ -343,14 +337,37 @@ fn encodeDataSIMD(
     var prev: RGBA = .{};
     var run: usize = 0;
 
-    const len = rgbas.len;
-    var matches: @Vector(64, RGBA) = @splat();
-    var i: usize = 0; // index into rgbas
+    const len = data.len;
+    var i: usize = 0; // index into data
+    var j: usize = 0; // index into buffer
     while (true) {
         const n_matches = if (i + 64 <= len) //
             firstNMatchesSIMD(T, data[i], @ptrCast(data[i..][0..64]))
         else //
             firstNMatches(T, data[i], data[i..]);
+        if (n_matches > 0) {
+            buf[b] = @as(u8, @intFromEnum(BitTags.run) << 6) | @as(u8, @max(run, 62) - 1);
+        }
+        // check run
+        if (px.eql(prev)) {
+            run += 1;
+            if (run == 62 or i == n_pixels - 1) {
+                buf[b] = @intFromEnum(BitTags.run) << 6 | @as(u8, @intCast(run - 1));
+                p += 1;
+                run = 0;
+            }
+            prev = px;
+            continue;
+        }
+
+        // flush run
+        if (run > 0) {
+            buf[b] = @as(u8, @intFromEnum(BitTags.run) << 6) | @as(u8, @intCast(run - 1));
+            p += 1;
+            run = 0;
+        }
+
+        i += 1;
     }
 }
 
