@@ -54,7 +54,7 @@ const ReadArgs = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     dir: std.Io.Dir = undefined,
-    path: []const u8,
+    filepath: []const u8,
     path_type: PathType = .cwd,
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
@@ -66,16 +66,16 @@ const ReadArgs = struct {
 
 pub fn read(args: ReadArgs) !@This() {
     var file = try switch (args.path_type) {
-        .abs => std.Io.Dir.openFileAbsolute(args.io, args.path, .{ .mode = .read_only }),
-        .cwd => std.Io.Dir.cwd().openFile(args.io, args.path, .{ .mode = .read_only }),
-        .dir => args.dir.openFile(args.io, args.path, .{ .mode = .read_only }),
+        .abs => std.Io.Dir.openFileAbsolute(args.io, args.filepath, .{ .mode = .read_only }),
+        .cwd => std.Io.Dir.cwd().openFile(args.io, args.filepath, .{ .mode = .read_only }),
+        .dir => args.dir.openFile(args.io, args.filepath, .{ .mode = .read_only }),
     };
     defer file.close(args.io);
 
     const data = try readDataPositional(args.io, args.gpa, file);
     defer args.gpa.free(data);
 
-    const ext_str = std.fs.path.extension(args.path)[1..];
+    const ext_str = std.fs.path.extension(args.filepath)[1..];
     const ext = std.meta.stringToEnum(ImageTag, ext_str) orelse
         mapImageTagFromExt.get(ext_str) orelse
         return error.InvalidFileExtension;
@@ -88,18 +88,23 @@ pub fn read(args: ReadArgs) !@This() {
     };
 }
 
-pub fn write(io: std.Io, path: []const u8, img: *const @This()) !void {
-    var file = try std.Io.Dir.cwd().createFile(io, path, .{});
+pub fn write(
+    img: *const @This(),
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    filepath: []const u8,
+) !void {
+    var file = try std.Io.Dir.cwd().createFile(io, filepath, .{});
     defer file.close(io);
 
     var wbuf: [4096]u8 = undefined;
     var writer = file.writer(io, &wbuf);
     const io_writer = &writer.interface;
 
-    const image_tag = try tagFromExt(path);
+    const image_tag = try tagFromExt(filepath);
     return switch (image_tag) {
-        .bmp => BMP.encode(img, io_writer, null),
-        // .qoi => QOI.encode(img, io_writer),
+        .bmp => BMP.encode(img, io_writer, null), // why doesnt this take io then?
+        .qoi => QOI.encode(gpa, img, io_writer, null),
         else => unreachable,
     };
 }
@@ -250,24 +255,29 @@ test "BMP" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
-    const file1 = "src/Data/Read/BasicArt.bmp";
+    const filepath1 = "src/Data/Read/BasicArt.bmp";
 
     // now this works with both cwd + dir
     var img = try read(.{
         .gpa = gpa,
         .io = io,
-        .path = file1,
+        .filepath = filepath1,
         .path_type = .cwd,
     });
     defer img.deinit(gpa);
     // std.debug.print("{f}", .{img});
 
     // write file
-    const file2 = "src/Data/Write/BasicArt.bmp";
-    try write(io, file2, &img);
+    const filepath2 = "src/Data/Write/BasicArt.bmp";
+    try img.write(io, gpa, filepath2);
 
     // open file 2
-    var img2 = try read(.{ .io = io, .gpa = gpa, .path = file2 });
+    var img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath2,
+        .path_type = .cwd,
+    });
     defer img2.deinit(gpa);
     // std.debug.print("{f}", .{img2});
 
@@ -283,40 +293,49 @@ test "BMP" {
 }
 
 test "QOI" {
-    // const gpa = std.testing.allocator;
-    // var threaded: std.Io.Threaded = .init(gpa, .{});
-    // const io = threaded.io();
-    //
-    // // read bmp file
-    // const file = "src/Data/Read/BasicArt.bmp";
-    // var img = try read(io, gpa, file);
-    // defer img.deinit(gpa);
-    //
-    // // write qoi file
-    // try write(io, "src/Data/Read/BasicArt.qoi", &img);
-    //
-    // // read qoi file
-    // const file2 = "src/Data/Read/BasicArt.qoi";
-    // var img2 = try read(io, gpa, file2);
-    // defer img2.deinit(gpa);
-    //
-    // // write qoi file
-    // try write(io, "src/Data/Write/BasicArt.qoi", &img);
-    //
-    // // read qoi file again
-    // const file3 = "src/Data/Write/BasicArt.qoi";
-    // var img3 = try read(io, gpa, file3);
-    // defer img3.deinit(gpa);
-    //
-    // std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img2.pixels));
-    // std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img3.pixels));
-    // const pixels1 = img.pixels.rgb;
-    // const pixels2 = img2.pixels.rgb;
-    // const pixels3 = img3.pixels.rgb;
-    // for (pixels1, pixels2, pixels3) |px1, px2, px3| {
-    //     try std.testing.expectEqualDeep(px1, px2);
-    //     try std.testing.expectEqualDeep(px1, px3);
-    // }
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+
+    // read bmp file
+    const filepath1 = "src/Data/Read/BasicArt.bmp";
+    var img = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath1,
+    });
+    defer img.deinit(gpa);
+
+    // write qoi file
+    const filepath2 = "src/Data/Read/BasicArt.qoi";
+    try img.write(io, gpa, filepath2);
+
+    // read qoi file
+    var img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath2,
+    });
+    defer img2.deinit(gpa);
+
+    // write qoi file
+    const filepath3 = "src/Data/Write/BasicArt.qoi";
+    try img.write(io, gpa, filepath3);
+
+    // read qoi file again
+    const filepath4 = "src/Data/Write/BasicArt.qoi";
+    var img3 = try read(.{ .io = io, .gpa = gpa, .filepath = filepath4 });
+    defer img3.deinit(gpa);
+
+    std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img2.pixels));
+    std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img3.pixels));
+    const pixels1 = img.pixels.rgb.slice;
+    const pixels2 = img2.pixels.rgb.slice;
+    const pixels3 = img3.pixels.rgb.slice;
+    for (pixels1, pixels2, pixels3) |px1, px2, px3| {
+        try std.testing.expectEqualDeep(px1, px2);
+        try std.testing.expectEqualDeep(px1, px3);
+    }
 }
 
 test "PPM" {}
