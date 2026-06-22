@@ -97,13 +97,13 @@ pub fn write(
     var file = try std.Io.Dir.cwd().createFile(io, filepath, .{});
     defer file.close(io);
 
-    var wbuf: [4096]u8 = undefined;
-    var writer = file.writer(io, &wbuf);
+    var buf: [4096]u8 = undefined;
+    var writer = file.writer(io, &buf);
     const io_writer = &writer.interface;
 
     const image_tag = try tagFromExt(filepath);
     return switch (image_tag) {
-        .bmp => BMP.encode(img, io_writer, null), // why doesnt this take io then?
+        .bmp => BMP.encode(img, io_writer, null),
         .qoi => QOI.encode(gpa, img, io_writer, null),
         else => unreachable,
     };

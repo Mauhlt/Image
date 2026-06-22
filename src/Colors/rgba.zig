@@ -104,6 +104,13 @@ pub fn toRGB(rgba: RGBA) RGB {
     };
 }
 
+pub fn eql(self: RGBA, other: RGBA) bool {
+    return self.r == other.r and //
+        self.g == other.g and //
+        self.b == other.b and //
+        self.a == other.a;
+}
+
 test "RGBA" {
     // check that field orders are correct
     const order_fields = comptime std.meta.fields(Order);
