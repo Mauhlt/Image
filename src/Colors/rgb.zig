@@ -79,6 +79,12 @@ pub fn toRGBA(rgb: RGB) RGBA {
     };
 }
 
+pub fn eql(self: RGB, other: RGB) bool {
+    return self.r == other.r and //
+        self.g == other.g and //
+        self.b == other.b;
+}
+
 test "RGB" {
     // check that field orders are correct
     const order_fields = comptime std.meta.fields(Order);

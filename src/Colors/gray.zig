@@ -32,6 +32,10 @@ pub fn toRGBA(gray: GRAY) RGBA {
     };
 }
 
+pub fn eql(self: GRAY, other: GRAY) bool {
+    return self.g == other.g;
+}
+
 test "GRAY" {
     const data: u8 = 255;
 

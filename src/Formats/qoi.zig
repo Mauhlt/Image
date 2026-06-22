@@ -21,6 +21,16 @@ const SIG: []const u8 = "QOIF";
 const HASH_TABLE_SIZE = 64;
 const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
 
+const Colorspace = enum(u8) {
+    srgb = 0,
+    linear = 1,
+};
+
+const Channel = enum(u8) {
+    rgb = 3,
+    rgba = 4,
+};
+
 fn hash(c: RGBA) u6 {
     return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
 }
@@ -182,35 +192,57 @@ pub fn encode(
     w: *std.Io.Writer,
     maybe_hdr: ?Header,
 ) !void {
-    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
-    try hdr.encode(w);
-
     const n_pixels = switch (img.pixels) {
         inline else => |colors| colors.slice.len,
     };
-    const max_size = n_pixels * 5;
-    const buf = try gpa.alloc(u8, max_size);
+    const max_size = @sizeOf(Header) + n_pixels * 5 + END_MARKER.len;
+    var buf = try gpa.alloc(u8, max_size);
     defer gpa.free(buf);
 
+    var write_buf: [1024]u8 = undefined;
+    var w_idx: usize = 0;
+
+    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
+    try hdr.encode(w);
+
     switch (img.pixels) {
-        .gray => |grays| {
-            for (grays.slice) |gray| {
-                std.debug.print("{} ", .{gray});
-                try w.writeByte(gray.g);
-            }
-        },
         .rgb => |rgbs| {
-            for (rgbs.slice) |rgb| {
-                std.debug.print("{} ", .{rgb});
-                try w.writeInt(RGB, rgb, .little);
-            }
+            _ = rgbs;
+            // var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
+            // var prev: RGB = .{ .r = 0, .g = 0, .b = 0 };
+            // var run: usize = 0;
+            //
+            // for (rgbs.slice) |rgb| {
+            //     std.debug.print("{} ", .{rgb});
+            //     try w.writeInt(RGB, rgb, .little);
+            // }
         },
         .rgba => |rgbas| {
-            for (rgbas.slice) |rgba| {
-                std.debug.print("{} ", .{rgba});
-                try w.writeInt(RGBA, rgba, .little);
+            var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
+            var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
+            var run: usize = 0;
+
+            var i: usize = 0;
+            while (i < rgbas.slice.len) : (i += 1) {
+                const base = i * 4;
+                const px = RGBA{
+                    .r = rgbas.slice[i],
+                    .g = rgbas.slice[i + 1],
+                    .b = rgbas.slice[i + 2],
+                    .a = rgbas.slice[i + 3],
+                };
+
+                if (px.eql(prev)) {
+                    run += 1;
+                    if (run == 62 or i == n_pixels - 1) {
+                        buf[p] = @as(u8, .run << 6) | @as(u8, @intCast(run - 1));
+                        p += 1;
+                        run = 0;
+                    }
+                }
             }
         },
+        else => unreachable,
     }
 }
 
@@ -227,7 +259,7 @@ const Header = struct {
         const channel: Channel = switch (img.pixels) {
             .rgb => .rgb,
             .rgba => .rgba,
-            else => return Error.Encode.UnsupportedColorspace,
+            else => return Error.Encode.InvalidColorspace,
         };
         const colorspace = blk: {
             const tagname = @tagName(img.fmt);
@@ -260,10 +292,10 @@ const Header = struct {
         _, const overflow: u1 = @mulWithOverflow(width, height);
         if (overflow > 0) return error.InvalidDimensions;
         const channel = std.enums.fromInt(Channel, data[i]) orelse
-            return error.InvalidChannelValue;
+            return error.InvalidChannels;
         i += 1;
         const colorspace = std.enums.fromInt(Colorspace, data[i]) orelse
-            return error.InvalidColorspaceValue;
+            return error.InvalidColorspace;
         return .{
             .width = width,
             .height = height,
@@ -280,20 +312,10 @@ const Header = struct {
         try w.writeByte(@intFromEnum(self.colorspace));
     }
 
-    pub fn format(self: *const @This(), w: *std.Io.Writer) void {
+    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
         try w.print("Width: {}\n", .{self.width});
         try w.print("Height: {}\n", .{self.height});
         try w.print("Colorspace: {t}\n", .{self.colorspace});
         try w.print("Channels: {t}\n", .{self.channel});
     }
-};
-
-const Colorspace = enum(u8) {
-    srgb = 0,
-    linear = 1,
-};
-
-const Channel = enum(u8) {
-    rgb = 3,
-    rgba = 4,
 };
