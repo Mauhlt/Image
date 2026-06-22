@@ -1,9 +1,16 @@
 const std = @import("std");
 const Format = @import("Vulkan").Format;
 const Error = @import("error.zig");
-const Image = @import("img.zig");
-const RGBA = @import("color.zig").RGBA;
-const Pixels = @import("color.zig").Pixels;
+
+const Image = @import("../root.zig");
+const GRAY = @import("../Colors/gray.zig");
+const GRAYS = @import("../Colors/grays.zig");
+const RGB = @import("../Colors/rgb.zig");
+const RGBS = @import("../Colors/rgbs.zig");
+const RGBA = @import("../Colors/rgba.zig");
+const RGBAS = @import("../Colors/rgbas.zig");
+const Pixels = @import("../Colors/Pixels.zig");
+
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // TODO:

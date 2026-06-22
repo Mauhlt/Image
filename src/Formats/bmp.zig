@@ -1,11 +1,17 @@
 const std = @import("std");
 const Format = @import("Vulkan").Format;
 const Error = @import("Error.zig");
-const Image = @import("img.zig");
-const GRAY = @import("color.zig").GRAY;
-const RGB = @import("color.zig").RGB;
-const RGBA = @import("color.zig").RGBA;
-const Pixels = @import("color.zig").Pixels;
+
+const Image = @import("../root.zig");
+
+const GRAY = @import("../Colors/gray.zig");
+const GRAYS = @import("../Colors/grays.zig");
+const RGB = @import("../Colors/rgb.zig");
+const RGBS = @import("../Colors/rgbs.zig");
+const RGBA = @import("../Colors/rgba.zig");
+const RGBAS = @import("../Colors/rgbas.zig");
+const Pixels = @import("../Colors/Pixels.zig");
+
 const isSigSame = @import("Misc.zig").isSigSame;
 
 const SIG: []const u8 = "BM";
@@ -61,18 +67,18 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
     switch (img.pixels) {
-        .gray => |gray| {
-            try w.writeAll(gray);
+        .gray => |grays| {
+            try w.writeAll(@as([]const u8, grays.slice));
         },
         .rgb => |rgbs| {
-            for (rgbs) |rgb| {
+            for (rgbs.slice) |rgb| {
                 try w.writeByte(rgb.b);
                 try w.writeByte(rgb.g);
                 try w.writeByte(rgb.r);
             }
         },
         .rgba => |rgbas| {
-            for (rgbas) |rgba| {
+            for (rgbas.slice) |rgba| {
                 try w.writeByte(rgba.b);
                 try w.writeByte(rgba.g);
                 try w.writeByte(rgba.r);

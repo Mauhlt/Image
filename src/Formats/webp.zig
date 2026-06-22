@@ -1,7 +1,13 @@
 const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
-const RGB = @import("RGB.zig");
-const RGBA = @import("RGBA.zig");
+
+const GRAY = @import("../Colors/gray.zig");
+const GRAYS = @import("../Colors/grays.zig");
+const RGB = @import("../Colors/rgb.zig");
+const RGBS = @import("../Colors/rgbs.zig");
+const RGBA = @import("../Colors/rgba.zig");
+const RGBAS = @import("../Colors/rgbas.zig");
+const Pixels = @import("../Colors/Pixels.zig");
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !void {
     self.hdr = try .init(r);
