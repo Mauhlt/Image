@@ -17,7 +17,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // - track number of pixels - make sure it matches n_pixels
 // - track amount of data left - do not go over
 
-const SIG = "QOIF";
+const SIG: []const u8 = "QOIF";
 const HASH_TABLE_SIZE = 64;
 const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
 
@@ -186,9 +186,7 @@ pub fn encode(
     try hdr.encode(w);
 
     const n_pixels = switch (img.pixels) {
-        .gray => |gray| gray.len,
-        .rgb => |rgb| rgb.len,
-        .rgba => |rgba| rgba.len,
+        inline else => |colors| colors.slice.len,
     };
     const max_size = n_pixels * 5;
     const buf = try gpa.alloc(u8, max_size);
@@ -226,11 +224,11 @@ const Header = struct {
         const channel: Channel = switch (img.pixels) {
             .rgb => .rgb,
             .rgba => .rgba,
-            else => return Error.Encode.UnsupporetdColorspace,
+            else => return Error.Encode.UnsupportedColorspace,
         };
         const colorspace: Colorspace = switch (img.fmt) {
             .r8g8b8a8_srgb, .r8g8b8_srgb => .srgb,
-            .r8g8b8a8_linear, .r8g8b8_linear => .linear,
+            .r8g8b8a8_unorm, .r8g8b8_unorm => .linear,
             else => return Error.Encode.UnsupportedColorspace,
         };
         return .{
@@ -265,11 +263,11 @@ const Header = struct {
     }
 
     pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.writeAll(&SIG);
-        try w.writeInt(self.width);
-        try w.writeInt(self.height);
-        try w.writeInt(self.channel);
-        try w.writeInt(self.colorspace);
+        try w.writeAll(SIG);
+        try w.writeInt(u32, self.width, .big);
+        try w.writeInt(u32, self.height, .big);
+        try w.writeByte(@intFromEnum(self.channel));
+        try w.writeByte(@intFromEnum(self.colorspace));
     }
 
     pub fn format(self: *const @This(), w: *std.Io.Writer) void {
