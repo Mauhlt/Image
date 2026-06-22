@@ -31,6 +31,18 @@ const Channel = enum(u8) {
     rgba = 4,
 };
 
+const ByteTags = enum(u8) {
+    rgb = 254,
+    rgba = 255,
+};
+
+const BitTags = enum(u2) {
+    index = 0,
+    diff = 1,
+    luma = 2,
+    run = 3,
+};
+
 fn hash(c: RGBA) u6 {
     return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
 }
@@ -217,33 +229,110 @@ pub fn encode(
             //     try w.writeInt(RGB, rgb, .little);
             // }
         },
-        .rgba => |rgbas| {
-            var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
-            var prev: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 255 };
-            var run: usize = 0;
-
-            var i: usize = 0;
-            while (i < rgbas.slice.len) : (i += 1) {
-                const base = i * 4;
-                const px = RGBA{
-                    .r = rgbas.slice[i],
-                    .g = rgbas.slice[i + 1],
-                    .b = rgbas.slice[i + 2],
-                    .a = rgbas.slice[i + 3],
-                };
-
-                if (px.eql(prev)) {
-                    run += 1;
-                    if (run == 62 or i == n_pixels - 1) {
-                        buf[p] = @as(u8, .run << 6) | @as(u8, @intCast(run - 1));
-                        p += 1;
-                        run = 0;
-                    }
-                }
-            }
-        },
+        .rgba => |rgbas| {},
         else => unreachable,
     }
+}
+
+fn encodeRGBA(buf: []u8, rgbas: []const RGBA) !void {
+    var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
+    var prev: RGBA = .{ .r = 0, .g = 0, .b = 0 };
+    var run: usize = 0;
+
+    var i: usize = 0;
+    var j: usize = 0;
+    var b: usize = 0; // buffer index
+    while (i < rgbas.len) : ({
+        i += 1;
+        j += 4;
+    }) {
+        const px: RGBA = .{
+            .r = rgbas[i],
+            .g = rgbas[i + 1],
+            .b = rgbas[i + 2],
+            .a = rgbas[i + 3],
+        };
+
+        // check run
+        if (px.eql(prev)) {
+            run += 1;
+            if (run == 62 or i == n_pixels - 1) {
+                buf[b] = @intFromEnum(BitTags.run) << 6 | @as(u8, @intCast(run - 1));
+                p += 1;
+                run = 0;
+            }
+            prev = px;
+            continue;
+        }
+
+        // flush run
+        if (run > 0) {
+            buf[b] = @as(u8, @intFromEnum(BitTags.run) << 6) | @as(u8, @intCast(run - 1));
+            p += 1;
+            run = 0;
+        }
+
+        // index
+        const idx = hash(px);
+        if (table[idx].eql(px)) {
+            buf[b] = @as(u8, @intFromEnum(BitTags.index) << 6) | @as(u8, idx);
+            p += 1;
+            table[idx] = px;
+            prev = px;
+            continue;
+        }
+        table[idx] = px;
+
+        if (px.a == prev.a) {
+            const dr = @as(i16, px.r) - prev.r;
+            const dg = @as(i16, px.g) - prev.g;
+            const db = @as(i16, px.b) - prev.b;
+
+            const dr_dg = dr - dg;
+            const db_dg = db - dg;
+
+            if (dr >= -2 and dr <= 1 and //
+                dg >= -2 and dg <= 1 and //
+                db >= -2 and db <= 1)
+            {
+                // diff
+                buf[b] = @as(u8, @intFromEnum(BitTags.diff) << 6) |
+                    @as(u8, @intCast(dr + 2) << 4) |
+                    @as(u8, @intCast(dg + 2) << 2) |
+                    @as(u8, @intCast(db + 2));
+                b += 1;
+            } else if (dg >= -32 and dg <= 31 and
+                dr_dg >= -8 and dr_dg <= 7 and
+                db_dg >= -8 and db_dg <= 7)
+            {
+                // luma
+                buf[b] = @as(u8, @intFromEnum(BitTags.luma) << 6) | @as(u8, @intCast(dg + 32));
+                buf[b + 1] = @as(u8, @intCast(dr_dg + 8) << 4) | @as(u8, @intCast(db_dg + 8));
+            } else {
+                // rgb
+                buf[b] = @intFromEnum(ByteTags.rgb);
+                buf[b + 1] = px.r;
+                buf[b + 2] = px.g;
+                buf[b + 3] = px.b;
+                p += 4;
+            }
+        } else {
+            // RGBA
+            buf[b] = @intFromEnum(ByteTags.rgba);
+            buf[b + 1] = px.r;
+            buf[b + 2] = px.g;
+            buf[b + 3] = px.b;
+            buf[b + 4] = px.a;
+        }
+        prev = px;
+    }
+    // end marker
+    @memcpy(buf[b .. b + END_MARKER.len], &END_MARKER);
+    p += END_MARKER.len;
+
+    // shrink memory to used values
+    const result = try gpa.realloc(buf, b);
+    return result;
 }
 
 const Header = struct {
