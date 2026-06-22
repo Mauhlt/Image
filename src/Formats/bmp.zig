@@ -10,7 +10,7 @@ const RGB = @import("../Colors/rgb.zig");
 const RGBS = @import("../Colors/rgbs.zig");
 const RGBA = @import("../Colors/rgba.zig");
 const RGBAS = @import("../Colors/rgbas.zig");
-const Pixels = @import("../Colors/Pixels.zig");
+const Pixels = @import("../Colors/Pixels.zig").Pixels;
 
 const isSigSame = @import("Misc.zig").isSigSame;
 
@@ -43,7 +43,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
-            pixels = try .init(gpa, pixels_slice, .gray, .gray);
+            pixels = try .init(gpa, pixels_slice, .g, .gray);
             fmt = .r8_srgb;
         },
         .rgb_24 => {
@@ -68,7 +68,9 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     try hdr.encode(w);
     switch (img.pixels) {
         .gray => |grays| {
-            try w.writeAll(@as([]const u8, grays.slice));
+            for (grays.slice) |gray| {
+                try w.writeByte(gray.g);
+            }
         },
         .rgb => |rgbs| {
             for (rgbs.slice) |rgb| {
