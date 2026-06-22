@@ -26,7 +26,11 @@ pub const Decode = error{
 };
 
 pub const Encode = error{
+    InvalidMagic,
     InvalidDimensions,
+    InvalidColorspace,
+    InvalidChannels,
+    InvalidEndMarker,
     UnsupportedChannel,
-    UnsupportedColorspace,
+    UnexpectedEof,
 };

@@ -190,25 +190,28 @@ pub fn encode(
     };
     const max_size = n_pixels * 5;
     const buf = try gpa.alloc(u8, max_size);
-    errdefer gpa.free(buf);
+    defer gpa.free(buf);
 
-    // var prev_pixel: RGBA = .{};
-    // we want run - luma - index - so on
-    // switch (img.pixels) {
-    //     .gray => {},
-    //     .rgb => |rgb| {
-    //         const len = rgb.len;
-    //         for (0..len) |i| {
-    //             try w.writeInt(rgb.get(i));
-    //         }
-    //     },
-    //     .rgba => |rgba| {
-    //         const len = rgba.len;
-    //         for (0..len) |i| {
-    //             try w.writeInt(rgba.get(i)); // TODO: NOT CORRECT, FIX
-    //         }
-    //     },
-    // }
+    switch (img.pixels) {
+        .gray => |grays| {
+            for (grays.slice) |gray| {
+                std.debug.print("{} ", .{gray});
+                try w.writeByte(gray.g);
+            }
+        },
+        .rgb => |rgbs| {
+            for (rgbs.slice) |rgb| {
+                std.debug.print("{} ", .{rgb});
+                try w.writeInt(RGB, rgb, .little);
+            }
+        },
+        .rgba => |rgbas| {
+            for (rgbas.slice) |rgba| {
+                std.debug.print("{} ", .{rgba});
+                try w.writeInt(RGBA, rgba, .little);
+            }
+        },
+    }
 }
 
 const Header = struct {
@@ -226,10 +229,17 @@ const Header = struct {
             .rgba => .rgba,
             else => return Error.Encode.UnsupportedColorspace,
         };
-        const colorspace: Colorspace = switch (img.fmt) {
-            .r8g8b8a8_srgb, .r8g8b8_srgb => .srgb,
-            .r8g8b8a8_unorm, .r8g8b8_unorm => .linear,
-            else => return Error.Encode.UnsupportedColorspace,
+        const colorspace = blk: {
+            const tagname = @tagName(img.fmt);
+            var colorspace: Colorspace = undefined;
+            if (std.mem.endsWith(u8, tagname, "srgb")) {
+                colorspace = .srgb;
+            } else if (std.mem.endsWith(u8, tagname, "unorm")) {
+                colorspace = .linear;
+            } else {
+                return Error.Encode.InvalidColorspace;
+            }
+            break :blk colorspace;
         };
         return .{
             .width = img.width,

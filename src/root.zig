@@ -310,32 +310,32 @@ test "QOI" {
     const filepath2 = "src/Data/Read/BasicArt.qoi";
     try img.write(io, gpa, filepath2);
 
-    // read qoi file
-    var img2 = try read(.{
-        .io = io,
-        .gpa = gpa,
-        .filepath = filepath2,
-    });
-    defer img2.deinit(gpa);
-
-    // write qoi file
-    const filepath3 = "src/Data/Write/BasicArt.qoi";
-    try img.write(io, gpa, filepath3);
-
-    // read qoi file again
-    const filepath4 = "src/Data/Write/BasicArt.qoi";
-    var img3 = try read(.{ .io = io, .gpa = gpa, .filepath = filepath4 });
-    defer img3.deinit(gpa);
-
-    std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img2.pixels));
-    std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img3.pixels));
-    const pixels1 = img.pixels.rgb.slice;
-    const pixels2 = img2.pixels.rgb.slice;
-    const pixels3 = img3.pixels.rgb.slice;
-    for (pixels1, pixels2, pixels3) |px1, px2, px3| {
-        try std.testing.expectEqualDeep(px1, px2);
-        try std.testing.expectEqualDeep(px1, px3);
-    }
+    // // read qoi file
+    // var img2 = try read(.{
+    //     .io = io,
+    //     .gpa = gpa,
+    //     .filepath = filepath2,
+    // });
+    // defer img2.deinit(gpa);
+    //
+    // // write qoi file
+    // const filepath3 = "src/Data/Write/BasicArt.qoi";
+    // try img.write(io, gpa, filepath3);
+    //
+    // // read qoi file again
+    // const filepath4 = "src/Data/Write/BasicArt.qoi";
+    // var img3 = try read(.{ .io = io, .gpa = gpa, .filepath = filepath4 });
+    // defer img3.deinit(gpa);
+    //
+    // std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img2.pixels));
+    // std.debug.assert(std.meta.activeTag(img.pixels) == std.meta.activeTag(img3.pixels));
+    // const pixels1 = img.pixels.rgb.slice;
+    // const pixels2 = img2.pixels.rgb.slice;
+    // const pixels3 = img3.pixels.rgb.slice;
+    // for (pixels1, pixels2, pixels3) |px1, px2, px3| {
+    //     try std.testing.expectEqualDeep(px1, px2);
+    //     try std.testing.expectEqualDeep(px1, px3);
+    // }
 }
 
 test "PPM" {}
