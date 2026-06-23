@@ -2,9 +2,9 @@ const std = @import("std");
 const vk = @import("Vulkan");
 const Pixels = @import("Colors/Pixels.zig").Pixels;
 
-const BMP = @import("Formats/BMP.zig");
+const BMP = @import("Formats/bmp/bmp.zig");
 // const PNG = @import("Formats/PNG.zig");
-const QOI = @import("Formats/QOI.zig");
+const QOI = @import("Formats/qoi/qoi.zig");
 
 // misc
 const ImageTag = @import("misc.zig").ImageTag;
