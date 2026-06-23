@@ -6,6 +6,12 @@ const BMP = @import("Formats/BMP.zig");
 // const PNG = @import("Formats/PNG.zig");
 const QOI = @import("Formats/QOI.zig");
 
+// misc
+const ImageTag = @import("misc.zig").ImageTag;
+const tagFromExt = @import("misc.zig").tagFromExt;
+const mapImageTagFromExt = @import("misc.zig").mapImageTagFromExt;
+const readDataPositional = @import("misc.zig").readDataPositional;
+
 width: u32,
 height: u32,
 pixels: Pixels,
@@ -53,7 +59,7 @@ const PathType = enum(u8) {
 const ReadArgs = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
-    dir: std.Io.Dir = undefined,
+    dir: std.Io.Dir,
     filepath: []const u8,
     path_type: PathType = .cwd,
 
@@ -108,147 +114,6 @@ pub fn write(
         else => unreachable,
     };
 }
-
-fn timer(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    path: []const u8,
-    n_iters: u64,
-    my_fn: anytype,
-) !u64 {
-    const clock: std.Io.Clock = .awake;
-    var time_taken: f64 = 0;
-    const div: f64 = 1 / n_iters;
-    for (0..n_iters) |_| {
-        const start = clock.now(io).toMilliseconds();
-        const data = try my_fn(io, gpa, path);
-        defer gpa.free(data);
-        const end = clock.now(io).toMilliseconds();
-        time_taken += (@as(f64, @floatFromInt(@as(u64, @intCast((end - start))))) * div);
-    }
-    return time_taken;
-}
-
-fn readDataPositional(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    file: std.Io.File,
-) ![]u8 {
-    const len = try file.length(io);
-    const data = try gpa.alloc(u8, len);
-    errdefer gpa.free(data);
-
-    const n = (std.Thread.getCpuCount() catch 2) - 1;
-    const threads = try gpa.alloc(std.Thread, n);
-    defer gpa.free(threads);
-
-    const chunk_size = if (n > 1) (len / n) - @mod(len / n, 64) else len;
-
-    const work_results = try gpa.alloc(WorkResult, n);
-    defer gpa.free(work_results);
-    @memset(work_results, .{});
-
-    const work_items = try gpa.alloc(Work, n);
-    defer gpa.free(work_items);
-    for (0..n) |i| {
-        work_items[i] = .{
-            .file = file,
-            .io = io,
-            .offset = i * chunk_size,
-            .data = data[i * chunk_size ..][0..chunk_size],
-            .result = &work_results[i],
-        };
-    }
-
-    for (0..n - 1) |i|
-        threads[i] = try std.Thread.spawn(.{}, readPositional, .{&work_items[i]});
-    threads[n - 1] = try std.Thread.spawn(.{}, readPositional, .{&work_items[n - 1]});
-    for (0..n) |i| threads[i].join();
-    for (work_items) |w| if (w.result.err) |e| return e;
-
-    return data;
-}
-
-const WorkResult = struct {
-    err: ?anyerror = null,
-};
-
-const Work = struct {
-    io: std.Io,
-    file: std.Io.File,
-    offset: u64,
-    data: []u8,
-    result: *WorkResult,
-};
-
-fn readPositional(work: *Work) void {
-    _ = work.file.readPositionalAll(work.io, work.data, work.offset) catch |err| {
-        work.result.err = err;
-        return;
-    };
-}
-
-fn readDataMmap(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    file: std.Io.File,
-) ![]u8 {
-    const file_len = try file.length(io);
-    var mmap = try file.createMemoryMap(io, .{
-        .len = file_len,
-        .offset = 0,
-        .protection = .{ .read = true },
-    });
-    defer mmap.destroy(io);
-    try mmap.read(io);
-
-    return gpa.dupe(u8, mmap.memory[0..file_len]);
-}
-
-fn tagFromExt(path: []const u8) !ImageTag {
-    const ext = std.Io.Dir.path.extension(path);
-    return std.meta.stringToEnum(ImageTag, ext[1..ext.len]) orelse //
-        mapImageTagFromExt.get(ext) orelse //
-        return error.UnsupportedImageExt;
-}
-
-const ImageTag = enum {
-    bmp,
-    gif,
-    heic,
-    jpg,
-    paint,
-    png,
-    ppm,
-    qoi,
-    tif,
-    tga,
-    webp,
-};
-
-// const ImageTagUnion = union(ImageTagUnion) {
-//     bmp: BMP,
-//     // gif: @import("gif.zig"),
-//     // heic: @import("heic.zig"),
-//     // jpg: @import("jpg.zig"),
-//     // paint: @import("paint.zig"),
-//     // png: @import("png.zig"),
-//     // ppm: @import("ppm.zig"),
-//     // qoi: @import("qoi.zig"),
-//     // tif: @import("tif.zig"),
-//     // tga: @import("tga.zig"),
-//     // webp: @import("webp.zig"),
-// };
-
-const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
-    .{ "jpeg", .jpg },
-    .{ "jpe", .jpg },
-    .{ "jfif", .jpg },
-    .{ "jif", .gif },
-    .{ "tiff", .tif },
-    .{ "hif", .heic },
-    .{ "dib", .bmp },
-});
 
 test "BMP" {
     const gpa = std.testing.allocator;
