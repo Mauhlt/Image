@@ -4,7 +4,7 @@ const Image = @import("../../root.zig");
 // Colors
 const Pixels = @import("../../Colors/Pixels.zig");
 // Main misc
-const isSigSame = @import("../../misc.zig").isSigSame;
+const isSigSame = @import("../misc.zig").isSigSame;
 // Errors
 const Error = @import("../error.zig");
 // dir misc

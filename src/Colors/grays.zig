@@ -1,9 +1,9 @@
 const std = @import("std");
 
 const GRAY = @import("gray.zig");
-const RGB = @import("rgb.zig");
+const RGB = @import("rgb.zig").RGB;
 const RGBS = @import("rgbs.zig");
-const RGBA = @import("rgba.zig");
+const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
 
 const GRAYS = @This();

@@ -26,10 +26,10 @@ pub const BitTags = enum(u2) {
     run = 3,
 };
 
-pub inline fn hashRGBA(c: RGBA) u6 {
+pub fn hashRGBA(c: RGBA) u6 {
     return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
 }
 
-pub inline fn hashRGB(c: RGB) u6 {
+pub fn hashRGB(c: RGB) u6 {
     return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7);
 }
