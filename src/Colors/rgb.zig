@@ -1,90 +1,93 @@
 const std = @import("std");
 
 const GRAY = @import("gray.zig");
-const RGBA = @import("rgba.zig").RGBA;
+const RGBA = @import("rgba.zig");
+const RGB = @This();
 
-pub const RGB = packed struct(u24) {
-    r: u8 = 0,
-    g: u8 = 0,
-    b: u8 = 0,
+r: u8 = 0,
+g: u8 = 0,
+b: u8 = 0,
 
-    // stores position as u6 (every 2 bytes = position)
-    pub const Order = enum(u8) {
-        rgb = 0b0000_0110,
-        rbg = 0b0000_1001,
-        grb = 0b0001_0010,
-        brg = 0b0001_1000,
-        gbr = 0b0010_0001,
-        bgr = 0b0010_0100,
+// stores position as u6 (every 2 bytes = position)
+pub const Order = enum(u8) {
+    rgb = 0b0000_0110,
+    rbg = 0b0000_1001,
+    grb = 0b0001_0010,
+    brg = 0b0001_1000,
+    gbr = 0b0010_0001,
+    bgr = 0b0010_0100,
 
-        pub fn toIndices(order: Order) RGB {
-            const value: u8 = @intFromEnum(order);
-            return .{
-                .r = (value & 0b0011_0000) >> 4,
-                .g = (value & 0b0000_1100) >> 2,
-                .b = (value & 0b0000_0011),
-            };
-        }
-    };
-
-    pub fn init(data: *const [3]u8) RGB {
+    pub fn toIndices(order: Order) RGB {
+        const value: u8 = @intFromEnum(order);
         return .{
-            .r = data[0],
-            .g = data[1],
-            .b = data[2],
+            .r = (value & 0b0011_0000) >> 4,
+            .g = (value & 0b0000_1100) >> 2,
+            .b = (value & 0b0000_0011),
         };
-    }
-
-    pub fn initOrder(data: *const [3]u8, order: Order) RGB {
-        const idx = order.toIndices();
-        return .{
-            .r = data[idx.r],
-            .g = data[idx.g],
-            .b = data[idx.b],
-        };
-    }
-
-    pub fn toGRAY(rgb: RGB) GRAY {
-        // slow
-        return .{
-            .g = @intFromFloat( //
-            0.2989 * @as(f32, @floatFromInt(rgb.r)) +
-                0.587 * @as(f32, @floatFromInt(rgb.g)) +
-                0.1140 * @as(f32, @floatFromInt(rgb.b)) //
-            ),
-        };
-    }
-
-    pub fn toGrayFast8(rgb: RGB) GRAY {
-        // using 8-bit coeffs
-        const r: u32 = rgb.r;
-        const g: u32 = rgb.g;
-        const b: u32 = rgb.b;
-        return .{ .g = @truncate((77 *% r +% 150 *% g +% 29 *% b) >> 8) };
-    }
-
-    pub fn toGrayFast16(rgb: RGB) GRAY {
-        // using 16-bit coeffs for slightly more accuracy at no extra cost
-        const r: u32 = rgb.r;
-        const g: u32 = rgb.g;
-        const b: u32 = rgb.b;
-        return .{ .g = @truncate((19595 *% r +% 38470 *% g +% 7471 *% b) >> 16) };
-    }
-
-    pub fn toRGBA(rgb: RGB) RGBA {
-        return .{
-            .r = rgb.r,
-            .g = rgb.g,
-            .b = rgb.b,
-        };
-    }
-
-    pub fn eql(self: RGB, other: RGB) bool {
-        return self.r == other.r and //
-            self.g == other.g and //
-            self.b == other.b;
     }
 };
+
+pub fn init(data: *const [3]u8) RGB {
+    return .{
+        .r = data[0],
+        .g = data[1],
+        .b = data[2],
+    };
+}
+
+pub fn initOrder(data: *const [3]u8, order: Order) RGB {
+    const idx = order.toIndices();
+    return .{
+        .r = data[idx.r],
+        .g = data[idx.g],
+        .b = data[idx.b],
+    };
+}
+
+pub fn toInt(self: RGB) u24 {
+    return self.r << 16 | self.g << 8 | self.b;
+}
+
+pub fn toGRAY(rgb: RGB) GRAY {
+    // slow
+    return .{
+        .g = @intFromFloat( //
+        0.2989 * @as(f32, @floatFromInt(rgb.r)) +
+            0.587 * @as(f32, @floatFromInt(rgb.g)) +
+            0.1140 * @as(f32, @floatFromInt(rgb.b)) //
+        ),
+    };
+}
+
+pub fn toGrayFast8(rgb: RGB) GRAY {
+    // using 8-bit coeffs
+    const r: u32 = rgb.r;
+    const g: u32 = rgb.g;
+    const b: u32 = rgb.b;
+    return .{ .g = @truncate((77 *% r +% 150 *% g +% 29 *% b) >> 8) };
+}
+
+pub fn toGrayFast16(rgb: RGB) GRAY {
+    // using 16-bit coeffs for slightly more accuracy at no extra cost
+    const r: u32 = rgb.r;
+    const g: u32 = rgb.g;
+    const b: u32 = rgb.b;
+    return .{ .g = @truncate((19595 *% r +% 38470 *% g +% 7471 *% b) >> 16) };
+}
+
+pub fn toRGBA(rgb: RGB) RGBA {
+    return .{
+        .r = rgb.r,
+        .g = rgb.g,
+        .b = rgb.b,
+    };
+}
+
+pub fn eql(self: RGB, other: RGB) bool {
+    return self.r == other.r and //
+        self.g == other.g and //
+        self.b == other.b;
+}
 
 test "RGB" {
     // check that field orders are correct
