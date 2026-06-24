@@ -5,30 +5,31 @@ const RGB = @import("rgb.zig").RGB;
 const RGBS = @import("rgbs.zig");
 const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
-
 const GRAYS = @This();
 
-slice: []GRAY,
+data: []GRAY,
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
     const grays: []GRAY = @ptrCast(try gpa.dupe(u8, data));
-    return .{ .slice = grays };
+    return .{ .data = grays };
 }
 
 pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
-    gpa.free(self.slice);
+    gpa.free(self.data);
 }
 
 pub fn toRGBS(grays: GRAYS, gpa: std.mem.Allocator) !RGBS {
-    var rgbs = try gpa.alloc(RGB, grays.slice.len);
-    for (0..rgbs.len) |i| rgbs[i] = grays.slice[i].toRGB();
-    return .{ .slice = rgbs };
+    const len = grays.data.len;
+    var rgbs = try std.MultiArrayList(RGB).initCapacity(gpa, len);
+    for (0..len) |i| rgbs.appendAssumeCapacity(grays.data[i].toRGB());
+    return .{ .data = rgbs };
 }
 
 pub fn toRGBAS(grays: GRAYS, gpa: std.mem.Allocator) !RGBAS {
-    var rgbas = try gpa.alloc(RGBA, grays.slice.len);
-    for (0..rgbas.len) |i| rgbas[i] = grays.slice[i].toRGBA();
-    return .{ .slice = rgbas };
+    const len = grays.data.len;
+    var rgbas = try std.MultiArrayList(RGBA).initCapacity(gpa, len);
+    for (0..len) |i| rgbas.appendAssumeCapacity(grays.data[i].toRGBA());
+    return .{ .data = rgbas };
 }
 
 test "GRAYS" {
@@ -55,7 +56,10 @@ test "GRAYS" {
 
     const rgbas = try grays.toRGBAS(allo);
     defer rgbas.deinit(allo);
-    for (rgbas.slice, expected_rgbs) |rgba, e_rgb| {
-        try std.testing.expectEqualDeep(rgba, RGBA{ .r = e_rgb.r, .g = e_rgb.g, .b = e_rgb.b });
+    for (rgbas.data, expected_rgbs) |rgba, e_rgb| {
+        try std.testing.expectEqualDeep(
+            rgba,
+            RGBA{ .r = e_rgb.r, .g = e_rgb.g, .b = e_rgb.b },
+        );
     }
 }

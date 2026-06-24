@@ -2,21 +2,22 @@ const std = @import("std");
 
 const GRAY = @import("gray.zig");
 const GRAYS = @import("grays.zig");
-const RGB = @import("rgb.zig").RGB;
+const RGB = @import("rgb.zig");
 const RGBS = @import("rgbs.zig");
-const RGBA = @import("rgba.zig").RGBA;
-const Order = RGBA.Order;
-
+const RGBA = @import("rgba.zig");
 const RGBAS = @This();
 
-slice: []RGBA,
+const Order = RGBA.Order;
+
+data: std.MultiArrayList(RGBA),
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     const n_fields = comptime std.meta.fieldNames(RGBA).len;
     if (@mod(data.len, n_fields) != 0) return error.InvalidDataLen;
     const len = data.len / n_fields;
 
-    var rgbas = try gpa.alloc(RGBA, len);
+    var rgbas: std.MultiArrayList(RGBA) = try .initCapacity(gpa, len);
+    errdefer rgbas.deinit(gpa);
 
     var i: usize = 0;
     var j: usize = 0;
@@ -24,26 +25,28 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
         i += 1;
         j += n_fields;
     }) {
-        rgbas[i] = .initOrder(data[j..][0..n_fields], order);
+        rgbas.appendAssumeCapacity(.initOrder(data[j..][0..n_fields]), order);
     }
 
-    return .{ .slice = rgbas };
+    return .{ .data = rgbas };
 }
 
 pub fn deinit(self: *const RGBAS, gpa: std.mem.Allocator) void {
-    gpa.free(self.slice);
+    self.data.deinit(gpa);
 }
 
 pub fn toGRAYS(rgbas: RGBAS, gpa: std.mem.Allocator) !GRAYS {
-    var grays = try gpa.alloc(GRAY, rgbas.slice.len);
-    for (0..rgbas.slice.len) |i| grays[i] = rgbas.slice[i].toGrayFast16();
-    return .{ .slice = grays };
+    const len = rgbas.data.len;
+    var grays = try gpa.alloc(GRAY, len);
+    for (0..len) |i| grays[i] = rgbas.data.get(i).toGrayFast16();
+    return .{ .data = grays };
 }
 
 pub fn toRGBS(rgbas: RGBAS, gpa: std.mem.Allocator) !RGBS {
-    var rgbs = try gpa.alloc(RGB, rgbas.slice.len);
-    for (0..rgbas.slice.len) |i| rgbs[i] = rgbas.slice[i].toRGB();
-    return .{ .slice = rgbs };
+    const len = rgbas.data.len;
+    var rgbs: std.MultiArrayList(RGB) = try .initCapacity(gpa, len);
+    for (0..len) |i| rgbs[i] = rgbas.data.get(i).toRGB();
+    return .{ .data = rgbs };
 }
 
 test "RGBAS" {

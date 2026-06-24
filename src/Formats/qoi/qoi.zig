@@ -30,150 +30,125 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // Constants
 pub const HASH_TABLE_SIZE = 64;
 
-// pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
-//     const hdr: Header = try .decode(data);
-//     std.debug.print("{f}", .{hdr});
-//     // check end bytes
-//     std.debug.assert(std.mem.eql(u8, data[data.len - 8 ..], [_]u8{ 0, 0, 0, 0, 0, 0, 0, 1 }));
-//
-//     const pixels_slice = data[14 .. data.len - 8];
-//     if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - END_MARKER.len ..], &END_MARKER))
-//         return Error.Decode.InvalidEndMarker;
-//     const n_pixels = hdr.width * hdr.height;
-//     const pixels: Pixels = switch (hdr.channels) {
-//         .rgb => .{ .rgb = try .initCapacity(gpa, n_pixels) },
-//         .rgba => .{ .rgba = try .initCapacity(gpa, n_pixels) },
-//     };
-//     defer pixels.deinit(gpa);
-//
-//     var i: usize = 0; // input position
-//     var j: usize = 0; // output position
-//     var prev_pixel: RGBA = .{ .r = 0, .b = 0, .g = 0, .a = 0xFF };
-//     var indices = [_]RGBA{.{ .r = 0, .g = 0, .b = 0, .a = 0xFF }} ** HASH_TABLE_SIZE;
-//     while (i < pixels_slice.len) : (i += 1) {
-//         const byte = pixels_slice[i];
-//         switch (byte) {
-//             0xFE => { // RGB
-//                 if (i + 3 > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
-//                 prev_pixel = .{
-//                     .r = pixels_slice[i + 1],
-//                     .g = pixels_slice[i + 2],
-//                     .b = pixels_slice[i + 3],
-//                 };
-//                 i += 3;
-//             },
-//             0xFF => { // RGBA
-//                 if (i + 4 > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
-//                 prev_pixel = .{
-//                     .r = pixels_slice[i + 1],
-//                     .g = pixels_slice[i + 2],
-//                     .b = pixels_slice[i + 3],
-//                     .a = pixels_slice[i + 4],
-//                 };
-//                 i += 4;
-//             },
-//             else => {
-//                 const byte2 = pixels_slice[i];
-//                 const bits: BitTags = @enumFromInt(byte2 >> 6);
-//                 switch (bits) {
-//                     .index => {
-//                         const idx: u6 = @truncate(byte2);
-//                         prev_pixel = indices[idx];
-//                     },
-//                     .diff => { // TODO FIXME
-//                         std.debug.print("Diff\n", .{});
-//                         const dr = (byte2 >> 4) & 0x03;
-//                         const dg = (byte2 >> 2) & 0x03;
-//                         const db = byte2 & 0x03;
-//                         const dr2 = @as(i8, @intCast((byte2 >> 4) & 0x03)) - 2;
-//                         const dg2 = @as(i8, @intCast((byte2 >> 2) & 0x03)) - 2;
-//                         const db2 = @as(i8, @intCast((byte2) & 0x03)) - 2;
-//                         std.debug.print("Dpixel 1: {} {} {}\n", .{ dr, dg, db });
-//                         std.debug.print("Dpixel 2: {} {} {}\n", .{ dr2, dg2, db2 });
-//                         const pr = prev_pixel.r +% @as(u8, @bitCast(dr2));
-//                         const pg = prev_pixel.g +% @as(u8, @bitCast(dg2));
-//                         const pb = prev_pixel.b +% @as(u8, @bitCast(db2));
-//                         prev_pixel.r = prev_pixel.r +% dr -% 2;
-//                         prev_pixel.g = prev_pixel.g +% dg -% 2;
-//                         prev_pixel.b = prev_pixel.b +% db -% 2;
-//                         std.debug.print("Prev Pixel 1: {} {} {}\n", .{ prev_pixel.r, prev_pixel.g, prev_pixel.b });
-//                         std.debug.print("Prev Pixel 2: {} {} {}\n", .{ pr, pg, pb });
-//                     },
-//                     .luma => { // TODO FIXME
-//                         std.debug.print("Luma\n", .{});
-//                         i += 1;
-//                         if (i > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
-//                         const byte3 = pixels_slice[i];
-//                         const dg = byte3 & 0x3F; // -32:31
-//                         const drdg = byte3 >> 4; // -8:7
-//                         const dbdg = byte3 & 0x3F; // -8:7
-//                         const dg2 = @as(i8, @intCast((byte3 & 0x3F))) - 32;
-//                         const drdg2 = @as(i8, @intCast((byte3 >> 4) & 0x0F)) - 8;
-//                         const dbdg2 = @as(i8, @intCast(byte3 & 0x0F)) - 8;
-//                         std.debug.print("Dpixel 1: {} {} {}\n", .{ dg, drdg, dbdg });
-//                         std.debug.print("Dpixel 1: {} {} {}\n", .{ dg2, drdg2, dbdg2 });
-//                         const pr = prev_pixel.g +% @as(u8, @bitCast(dg2));
-//                         const pg = prev_pixel.r +% @as(u8, @bitCast(dg2 +% drdg2));
-//                         const pb = prev_pixel.b +% @as(u8, @bitCast(dg2 +% dbdg2));
-//                         prev_pixel.g = prev_pixel.g +% dg -% 32;
-//                         prev_pixel.r = prev_pixel.r +% drdg +% dg -% 8;
-//                         prev_pixel.b = prev_pixel.b +% dbdg +% dg -% 8;
-//                         std.debug.print("Prev Pixel 1: {} {} {}\n", .{ prev_pixel.r, prev_pixel.g, prev_pixel.b });
-//                         std.debug.print("Prev Pixel 2: {} {} {}\n", .{ pr, pg, pb });
-//                     },
-//                     .run => {
-//                         const run: usize = (byte & 0x3F) + 1;
-//                         if (j + run > n_pixels) return Error.Decode.DataOutOfBounds;
-//                         switch (pixels) {
-//                             .rgb => |rgb| {
-//                                 const slice = rgb.slice();
-//                                 const r = slice.ptrs[0];
-//                                 const g = slice.ptrs[1];
-//                                 const b = slice.ptrs[2];
-//                                 @memset(r[j..][0..run], prev_pixel.r);
-//                                 @memset(g[j..][0..run], prev_pixel.g);
-//                                 @memset(b[j..][0..run], prev_pixel.b);
-//                             },
-//                             .rgba => |rgba| {
-//                                 const slice = rgba.slice();
-//                                 const r = slice.ptrs[0];
-//                                 const g = slice.ptrs[1];
-//                                 const b = slice.ptrs[2];
-//                                 const a = slice.ptrs[3];
-//                                 @memset(r[j..][0..run], prev_pixel.r);
-//                                 @memset(g[j..][0..run], prev_pixel.g);
-//                                 @memset(b[j..][0..run], prev_pixel.b);
-//                                 @memset(a[j..][0..run], prev_pixel.a);
-//                             },
-//                             else => unreachable,
-//                         }
-//                         j += run;
-//                         continue;
-//                     },
-//                 }
-//             },
-//         }
-//
-//         indices[hashRGBA(prev_pixel)] = prev_pixel;
-//
-//         if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
-//         j += 1;
-//
-//         switch (pixels) {
-//             .rgb => |rgb| rgb.appendAssumeCapacity(.{
-//                 .r = prev_pixel.r,
-//                 .g = prev_pixel.g,
-//                 .b = prev_pixel.b,
-//             }),
-//             .rgba => |rgba| rgba.appendAssumeCapacity(prev_pixel),
-//             else => unreachable,
-//         }
-//     }
-//
-//     // verify end marker
-//     if (i != pixels_slice.len - 8) return Error.Decode.InvalidEndMarker;
-// }
-//
+pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
+    const hdr: Header = try .decode(data);
+    const pixels_slice = data[14 .. data.len - 8];
+    if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - END_MARKER.len ..], &END_MARKER))
+        return Error.Decode.InvalidEndMarker;
+    const n_pixels = hdr.width * hdr.height;
+    const pixels: Pixels = switch (hdr.channels) {
+        .rgb => .{ .rgb = try .initCapacity(gpa, n_pixels) },
+        .rgba => .{ .rgba = try .initCapacity(gpa, n_pixels) },
+    };
+    defer pixels.deinit(gpa);
+
+    var i: usize = 0; // input position
+    var j: usize = 0; // output position
+    var prev_pixel: RGBA = .{ .r = 0, .b = 0, .g = 0, .a = 0xFF };
+    var table = [_]RGBA{.{ .r = 0, .g = 0, .b = 0, .a = 0xFF }} ** HASH_TABLE_SIZE;
+    while (i < pixels_slice.len) : (i += 1) {
+        const byte = pixels_slice[i];
+        switch (@as(ByteTags, @enumFromInt(byte))) {
+            .rgb => {
+                if (i + 3 > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
+                prev_pixel = .{
+                    .r = pixels_slice[i + 1],
+                    .g = pixels_slice[i + 2],
+                    .b = pixels_slice[i + 3],
+                };
+                i += 3;
+            },
+            .rgba => {
+                if (i + 4 > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
+                prev_pixel = .{
+                    .r = pixels_slice[i + 1],
+                    .g = pixels_slice[i + 2],
+                    .b = pixels_slice[i + 3],
+                    .a = pixels_slice[i + 4],
+                };
+                i += 4;
+            },
+            else => {
+                switch (@as(BitTags, @enumFromInt(byte >> 6))) {
+                    .index => {
+                        prev_pixel = table[@as(u6, @truncate(byte))];
+                    },
+                    .diff => {
+                        const dr = (byte >> 4) & 0x03;
+                        const dg = (byte >> 2) & 0x03;
+                        const db = byte & 0x03;
+                        prev_pixel.r = prev_pixel.r +% dr -% 2;
+                        prev_pixel.g = prev_pixel.g +% dg -% 2;
+                        prev_pixel.b = prev_pixel.b +% db -% 2;
+                    },
+                    .luma => {
+                        i += 1;
+                        if (i > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
+                        const byte2 = pixels_slice[i];
+
+                        const dg = byte & 0x3F;
+                        const drdg = byte2 >> 4;
+                        const dbdg = byte2 & 0x3F;
+
+                        prev_pixel.g = prev_pixel.g +% dg -% 32;
+                        prev_pixel.r = prev_pixel.r +% drdg +% dg -% 8;
+                        prev_pixel.b = prev_pixel.b +% dbdg +% dg -% 8;
+                    },
+                    .run => {
+                        const run: usize = (byte & 0x3F) +% 1;
+                        if (j + run > n_pixels) return Error.Decode.DataOutOfBounds;
+                        switch (pixels) {
+                            .rgb => |rgbs| {
+                                // based on multiarraylist
+                                // const slice = rgb.slice();
+                                // const r = slice.ptrs[0];
+                                // const g = slice.ptrs[1];
+                                // const b = slice.ptrs[2];
+                                // @memset(r[j..][0..run], prev_pixel.r);
+                                // @memset(g[j..][0..run], prev_pixel.g);
+                                // @memset(b[j..][0..run], prev_pixel.b);
+                            },
+                            .rgba => |rgbas| {
+                                // based on multiarraylist
+                                // const slice = rgba.slice();
+                                // const r = slice.ptrs[0];
+                                // const g = slice.ptrs[1];
+                                // const b = slice.ptrs[2];
+                                // const a = slice.ptrs[3];
+                                // @memset(r[j..][0..run], prev_pixel.r);
+                                // @memset(g[j..][0..run], prev_pixel.g);
+                                // @memset(b[j..][0..run], prev_pixel.b);
+                                // @memset(a[j..][0..run], prev_pixel.a);
+                            },
+                            else => unreachable,
+                        }
+                        j += run;
+                        continue;
+                    },
+                }
+            },
+        }
+
+        indices[hashRGBA(prev_pixel)] = prev_pixel;
+
+        if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
+        j += 1;
+
+        switch (pixels) {
+            .rgb => |rgb| rgb.appendAssumeCapacity(.{
+                .r = prev_pixel.r,
+                .g = prev_pixel.g,
+                .b = prev_pixel.b,
+            }),
+            .rgba => |rgba| rgba.appendAssumeCapacity(prev_pixel),
+            else => unreachable,
+        }
+    }
+
+    // verify end marker
+    if (i != pixels_slice.len - 8) return Error.Decode.InvalidEndMarker;
+}
+
 // pub fn encode(
 //     gpa: std.mem.Allocator,
 //     img: *const Image,
@@ -469,169 +444,25 @@ fn countStartingMatchesSIMD(
     },
 ) usize {
     const V = @Vector(64, u32);
-    const self: V = @splat(@as(u32, @bitCast(needle)));
-    const other: V = @bitCast(haystack);
-    return @min(@ctz(@as(usize, @bitCast(self != other))), 62) - 1;
+    const self: V = @splat(@as(u32, needle.toInt()));
+    const other: V = @bitCast(@as([]const u32, @ptrCast(haystack))[0..64].*);
+    const n_matches: u64 = @bitCast(self != other);
+    return @ctz(n_matches);
 }
 
 test "Count Starting Matches" {
     const rgb: RGB = .{};
-    const rgbs = [_]RGB{
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
+    const rgbs64 = [_]RGB{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    const n_matches64_1 = countStartingMatches(.rgb, rgb, &rgbs64);
+    const n_matches64_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs64);
+    try std.testing.expectEqual(n_matches64_1, 64);
+    try std.testing.expectEqual(n_matches64_2, 64);
 
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-        .{ .r = 1, .g = 1, .b = 1 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 1, .g = 1, .b = 1 },
-    };
-    const n_matches1 = countStartingMatches(.rgb, rgb, &rgbs);
-    const n_matches2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs);
-    try std.testing.expectEqual(n_matches1, 6);
-    try std.testing.expectEqual(n_matches2, 6);
-
-    const rgba: RGBA = .{ .r = 0, .g = 0, .b = 0, .a = 0 };
-    const rgbas = [_]RGBA{
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-        .{ .r = 0, .g = 0, .b = 0 },
-    };
-    const n_matches3 = countStartingMatches(.rgba, rgba, &rgbas);
-    const n_matches4 = countStartingMatchesSIMD(.rgba, rgba, &rgbas);
-    try std.testing.expectEqual(n_matches3, 64);
-    try std.testing.expectEqual(n_matches4, 64);
+    const rgbs7 = [_]RGB{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{ .r = 1, .g = 1, .b = 1 }, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
+    const n_matches7_1 = countStartingMatches(.rgb, rgb, &rgbs7);
+    const n_matches7_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs7);
+    try std.testing.expectEqual(n_matches7_1, 7);
+    try std.testing.expectEqual(n_matches7_2, 7);
 }
 
 // test "Basic Fns Work How I Expect" {

@@ -5,17 +5,18 @@ const GRAYS = @import("grays.zig");
 const RGB = @import("rgb.zig").RGB;
 const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
-
 const RGBS = @This();
 
-slice: []RGB,
+const Order = RGB.Order;
 
-pub fn init(gpa: std.mem.Allocator, data: []const u8, order: RGB.Order) !RGBS {
+data: std.MultiArrayList(RGB),
+
+pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     const n_fields = comptime std.meta.fieldNames(RGB).len;
     if (@mod(data.len, n_fields) != 0) return error.InvalidDataLen;
     const len = data.len / n_fields;
 
-    var rgbs = try gpa.alloc(RGB, len);
+    var rgbs: std.MultiArrayList(RGB) = try .initCapacity(gpa, len);
     errdefer gpa.free(rgbs);
 
     var i: usize = 0;
@@ -24,26 +25,28 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: RGB.Order) !RGBS {
         i += 1;
         j += n_fields;
     }) {
-        rgbs[i] = .initOrder(data[j..][0..n_fields], order);
+        rgbs.appendAssumeCapacity(.initOrder(data[j..][0..n_fields], order));
     }
 
-    return .{ .slice = rgbs };
+    return .{ .data = rgbs };
 }
 
 pub fn deinit(self: *const RGBS, gpa: std.mem.Allocator) void {
-    gpa.free(self.slice);
+    self.data.deinit(gpa);
 }
 
 pub fn toGRAYS(rgbs: RGBS, gpa: std.mem.Allocator) !GRAYS {
-    const grays = try gpa.alloc(GRAY, rgbs.slice.len);
-    for (0..rgbs.slice.len) |i| grays[i] = rgbs.slice[i].toGrayFast16();
-    return .{ .slice = grays };
+    const len = rgbs.data.len;
+    const grays = try gpa.alloc(GRAY, len);
+    for (0..len) |i| grays[i] = rgbs.data.get(i).toGrayFast16();
+    return .{ .data = grays };
 }
 
 pub fn toRGBAS(rgbs: RGBS, gpa: std.mem.Allocator) !RGBAS {
-    var rgbas = try gpa.alloc(RGBA, rgbs.slice.len);
-    for (0..rgbs.slice.len) |i| rgbas[i] = rgbs.slice[i].toRGBA();
-    return .{ .slice = rgbas };
+    const len = rgbs.data.len;
+    var rgbas: std.MultiArrayList(RGBA) = try .initCapacity(gpa, len);
+    for (0..len) |i| rgbas.appendAssumeCapacity(rgbs.data.get(i).toRGBA());
+    return .{ .data = rgbas };
 }
 
 test "RGBS" {

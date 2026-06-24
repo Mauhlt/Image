@@ -2,12 +2,12 @@ const std = @import("std");
 
 const GRAY = @import("gray.zig");
 const GRAYS = @import("grays.zig");
-const RGB = @import("rgb.zig");
+const RGB = @import("rgb.zig").RGB;
 const RGBS = @import("rgbs.zig");
 const RGBAS = @import("rgba.zig");
 
 const RGBA = @This();
-
+// pub const RGBA = packed struct(u32) {
 r: u8 = 0,
 g: u8 = 0,
 b: u8 = 0,
@@ -73,7 +73,7 @@ pub fn initOrder(data: *const [4]u8, order: Order) RGBA {
 }
 
 pub fn toInt(rgba: RGBA) u32 {
-    return rgba.r << 24 | rgba.g << 16 | rgba.b << 8 | rgba.a;
+    return @as(u32, rgba.r) << 24 | @as(u32, rgba.g) << 16 | @as(u32, rgba.b) << 8 | rgba.a;
 }
 
 pub fn toGRAY(rgba: RGBA) GRAY {
@@ -115,6 +115,7 @@ pub fn eql(self: RGBA, other: RGBA) bool {
         self.b == other.b and //
         self.a == other.a;
 }
+// };
 
 test "RGBA" {
     // check that field orders are correct
