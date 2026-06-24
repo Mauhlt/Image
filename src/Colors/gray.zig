@@ -1,6 +1,7 @@
 const std = @import("std");
-const RGB = @import("rgb.zig");
-const RGBA = @import("rgba.zig");
+
+const RGB = @import("rgb.zig").RGB;
+const RGBA = @import("rgba.zig").RGBA;
 const GRAYS = @import("grays.zig");
 
 const GRAY = @This();
