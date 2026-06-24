@@ -1,9 +1,10 @@
 const std = @import("std");
 
 const GRAY = @import("gray.zig");
-const RGBA = @import("rgba.zig");
-const RGB = @This();
+const RGBA = @import("rgba.zig").RGBA;
 
+const RGB = @This();
+// pub const RGB = packed struct(u24) {
 r: u8 = 0,
 g: u8 = 0,
 b: u8 = 0,
@@ -45,7 +46,7 @@ pub fn initOrder(data: *const [3]u8, order: Order) RGB {
 }
 
 pub fn toInt(self: RGB) u24 {
-    return self.r << 16 | self.g << 8 | self.b;
+    return @as(u24, self.r) << 16 | @as(u24, self.g) << 8 | self.b;
 }
 
 pub fn toGRAY(rgb: RGB) GRAY {
@@ -88,6 +89,7 @@ pub fn eql(self: RGB, other: RGB) bool {
         self.g == other.g and //
         self.b == other.b;
 }
+// };
 
 test "RGB" {
     // check that field orders are correct

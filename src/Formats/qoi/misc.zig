@@ -17,6 +17,7 @@ pub const Channel = enum(u8) {
 pub const ByteTags = enum(u8) {
     rgb = 254,
     rgba = 255,
+    _,
 };
 
 pub const BitTags = enum(u2) {
