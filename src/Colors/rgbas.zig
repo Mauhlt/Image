@@ -56,7 +56,7 @@ test "RGBAS" {
     const rgbas: RGBAS = try .init(allo, &data, .rgba);
     defer rgbas.deinit(allo);
     try std.testing.expectEqualDeep(
-        rgbas.slice[0],
+        rgbas.data.get(0),
         RGBA{ .r = data[0], .g = data[1], .b = data[2], .a = data[3] },
     );
 

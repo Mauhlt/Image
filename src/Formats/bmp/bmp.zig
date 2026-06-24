@@ -6,9 +6,9 @@ const Image = @import("../../root.zig");
 
 const GRAY = @import("../../Colors/gray.zig");
 const GRAYS = @import("../../Colors/grays.zig");
-const RGB = @import("../../Colors/rgb.zig").RGB;
+const RGB = @import("../../Colors/rgb.zig");
 const RGBS = @import("../../Colors/rgbs.zig");
-const RGBA = @import("../../Colors/rgba.zig").RGBA;
+const RGBA = @import("../../Colors/rgba.zig");
 const RGBAS = @import("../../Colors/rgbas.zig");
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 

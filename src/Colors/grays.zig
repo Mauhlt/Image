@@ -50,13 +50,19 @@ test "GRAYS" {
 
     const rgbs = try grays.toRGBS(allo);
     defer rgbs.deinit(allo);
-    for (rgbs.slice, expected_rgbs) |rgb, e_rgb| {
+    const len1 = rgbs.data.len;
+    for (0..len1) |i| {
+        const rgb = rgbs.data.get(i);
+        const e_rgb = expected_rgbs[i];
         try std.testing.expectEqualDeep(rgb, e_rgb);
     }
 
     const rgbas = try grays.toRGBAS(allo);
     defer rgbas.deinit(allo);
-    for (rgbas.data, expected_rgbs) |rgba, e_rgb| {
+    const len2 = rgbas.data.len;
+    for (0..len2) |i| {
+        const rgba = rgbas.data.get(i);
+        const e_rgb = expected_rgbs[i];
         try std.testing.expectEqualDeep(
             rgba,
             RGBA{ .r = e_rgb.r, .g = e_rgb.g, .b = e_rgb.b },

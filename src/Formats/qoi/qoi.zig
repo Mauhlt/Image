@@ -19,10 +19,12 @@ const END_MARKER = @import("misc.zig").END_MARKER;
 const Image = @import("../../root.zig");
 const GRAY = @import("../../Colors/gray.zig");
 const GRAYS = @import("../../Colors/grays.zig");
-const RGB = @import("../../Colors/rgb.zig").RGB;
+const RGB = @import("../../Colors/rgb.zig");
 const RGBS = @import("../../Colors/rgbs.zig");
-const RGBA = @import("../../Colors/rgba.zig").RGBA;
+const RGB_SOA = @import("../../Colors/rgb_soa.zig");
+const RGBA = @import("../../Colors/rgba.zig");
 const RGBAS = @import("../../Colors/rgbas.zig");
+const RGBA_SOA = @import("../../Colors/rgb_soa.zig");
 const Pixels = @import("../../Colors/Pixels.zig");
 
 const isSigSame = @import("Misc.zig").isSigSame;
@@ -99,6 +101,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
                         if (j + run > n_pixels) return Error.Decode.DataOutOfBounds;
                         switch (pixels) {
                             .rgb => |rgbs| {
+                                _ = rgbs;
                                 // based on multiarraylist
                                 // const slice = rgb.slice();
                                 // const r = slice.ptrs[0];
@@ -109,6 +112,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
                                 // @memset(b[j..][0..run], prev_pixel.b);
                             },
                             .rgba => |rgbas| {
+                                _ = rgbas;
                                 // based on multiarraylist
                                 // const slice = rgba.slice();
                                 // const r = slice.ptrs[0];
@@ -423,8 +427,8 @@ fn countStartingMatches(
         .rgba => RGBA,
     },
     haystack: switch (T) {
-        .rgb => []const RGB,
-        .rgba => []const RGBA,
+        .rgb => RGB_SOA,
+        .rgba => RGBA_SOA,
     },
 ) usize {
     for (haystack, 0..) |s, i| {
@@ -439,30 +443,62 @@ fn countStartingMatchesSIMD(
         .rgba => RGBA,
     },
     haystack: switch (T) {
-        .rgb => *const [64]RGB,
-        .rgba => *const [64]RGBA,
+        .rgb => RGB_SOA,
+        .rgba => RGBA_SOA,
     },
-) usize {
-    const V = @Vector(64, u32);
-    const self: V = @splat(@as(u32, needle.toInt()));
-    const other: V = @bitCast(@as([]const u32, @ptrCast(haystack))[0..64].*);
-    const n_matches: u64 = @bitCast(self != other);
-    return @ctz(n_matches);
+) u64 {
+    const V = @Vector(64, u8);
+    const field_names = comptime std.meta.fieldNames(@TypeOf(needle));
+    const len = field_names.len;
+    var n_vecs: [len]V = undefined;
+    var h_vecs: [len]V = undefined;
+    var matches: u64 = 0;
+    for (0..len) |i| {
+        n_vecs[i] = @splat(@field(needle, field_names[i]));
+        h_vecs[i] = @bitCast(@field(haystack, field_names[i]).*);
+        matches |= @bitCast(n_vecs[i] != h_vecs[i]);
+    }
+    return @ctz(matches);
 }
 
 test "Count Starting Matches" {
-    const rgb: RGB = .{};
-    const rgbs64 = [_]RGB{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
-    const n_matches64_1 = countStartingMatches(.rgb, rgb, &rgbs64);
-    const n_matches64_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs64);
-    try std.testing.expectEqual(n_matches64_1, 64);
-    try std.testing.expectEqual(n_matches64_2, 64);
+    const allo = std.testing.allocator;
 
-    const rgbs7 = [_]RGB{ .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{ .r = 1, .g = 1, .b = 1 }, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{}, .{} };
-    const n_matches7_1 = countStartingMatches(.rgb, rgb, &rgbs7);
-    const n_matches7_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs7);
-    try std.testing.expectEqual(n_matches7_1, 7);
-    try std.testing.expectEqual(n_matches7_2, 7);
+    {
+        const rgb: RGB = .{};
+        var rgbs64: std.MultiArrayList(RGB) = try .initCapacity(allo, 64);
+        defer rgbs64.deinit(allo);
+        for (0..64) |_| {
+            rgbs64.appendAssumeCapacity(.{});
+        }
+        const slice = rgbs64.slice();
+        const n_matches64_1 = countStartingMatches(
+            .rgb,
+            rgb,
+            .{ .r = slice.ptrs[0], .g = slice.ptrs[1], .b = slice.ptrs[2] },
+        );
+        const n_matches64_2 = countStartingMatchesSIMD(
+            .rgb,
+            rgb,
+            .{ .r = slice.ptrs[0], .g = slice.ptrs[1], .b = slice.ptrs[2] },
+        );
+        try std.testing.expectEqual(n_matches64_1, 64);
+        try std.testing.expectEqual(n_matches64_2, 64);
+    }
+
+    {
+        const rgb: RGB = .{};
+        var rgbs7: std.MultiArrayList(RGB) = try .initCapacity(allo, 64);
+        defer rgbs7.deinit(allo);
+        for (0..7) |_| rgbs7.appendAssumeCapacity(.{});
+        rgbs7.appendAssumeCapacity(.{ .r = 1, .g = 1, .b = 1 });
+        for (8..64) |_| rgbs7.appendAssumeCapacity(.{});
+
+        const n_matches7_1 = countStartingMatches(.rgb, rgb, &rgbs7);
+        const n_matches7_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs7);
+        try std.testing.expectEqual(n_matches7_1, 7);
+        try std.testing.expectEqual(n_matches7_2, 7);
+    }
 }
 
 // test "Basic Fns Work How I Expect" {

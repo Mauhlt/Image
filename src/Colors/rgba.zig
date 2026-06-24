@@ -2,7 +2,7 @@ const std = @import("std");
 
 const GRAY = @import("gray.zig");
 const GRAYS = @import("grays.zig");
-const RGB = @import("rgb.zig").RGB;
+const RGB = @import("rgb.zig");
 const RGBS = @import("rgbs.zig");
 const RGBAS = @import("rgba.zig");
 
