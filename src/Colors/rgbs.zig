@@ -9,15 +9,19 @@ const RGBS = @This();
 
 const Order = RGB.Order;
 
-data: std.MultiArrayList(RGB),
+r: [*]u8,
+g: [*]u8,
+b: [*]u8,
+len: usize,
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
-    const n_fields = comptime std.meta.fieldNames(RGB).len;
+    const field_names = comptime std.meta.fieldNames(RGB);
+    const n_fields = field_names.len;
     if (@mod(data.len, n_fields) != 0) return error.InvalidDataLen;
     const len = data.len / n_fields;
 
-    var rgbs: std.MultiArrayList(RGB) = try .initCapacity(gpa, len);
-    errdefer gpa.free(rgbs);
+    const rgbs = try gpa.alloc(u8, data.len);
+    errdefer gpa.deinit(rgbs);
 
     var i: usize = 0;
     var j: usize = 0;
@@ -25,14 +29,21 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
         i += 1;
         j += n_fields;
     }) {
-        rgbs.appendAssumeCapacity(.initOrder(data[j..][0..n_fields], order));
+        const rgb: RGB = .init(data[j..][0..n_fields], order);
+        inline for (0..n_fields) |k| {
+            rgbs[i + len * k] = @field(rgb, field_names[k]);
+        }
     }
 
-    return .{ .data = rgbs };
+    return .{
+        .r = rgbs.ptr,
+        .g = @ptrFromInt(@intFromPtr(rgbs.ptr) + len),
+        .b = @ptrFromInt(@intFromPtr(rgbs.ptr) + len),
+    };
 }
 
 pub fn deinit(self: *const RGBS, gpa: std.mem.Allocator) void {
-    self.data.deinit(gpa);
+    gpa.free(self.r[0 .. self.len * 3]);
 }
 
 pub fn toGRAYS(rgbs: RGBS, gpa: std.mem.Allocator) !GRAYS {
