@@ -14,6 +14,21 @@ g: [*]u8,
 b: [*]u8,
 len: usize,
 
+pub fn initEmpty(gpa: std.mem.Allocator, n: usize) !RGBS {
+    const field_names = comptime std.meta.fieldNames(RGB);
+    const n_fields = field_names.len;
+    if (@mod(n, n_fields) != 0) return error.InvalidDataLen;
+    const len = n / n_fields;
+
+    const data = try gpa.alloc(u8, n);
+    return .{
+        .r_ptr = data.ptr,
+        .g_ptr = @ptrFromInt(@intFromPtr(data.ptr) + n),
+        .b_ptr = @ptrFromInt(@intFromPtr(data.ptr) + (n << 1)),
+        .len = len,
+    };
+}
+
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     const field_names = comptime std.meta.fieldNames(RGB);
     const n_fields = field_names.len;
@@ -38,12 +53,20 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     return .{
         .r = rgbs.ptr,
         .g = @ptrFromInt(@intFromPtr(rgbs.ptr) + len),
-        .b = @ptrFromInt(@intFromPtr(rgbs.ptr) + len),
+        .b = @ptrFromInt(@intFromPtr(rgbs.ptr) + (len << 1)),
+        .len = len,
     };
 }
 
 pub fn deinit(self: *const RGBS, gpa: std.mem.Allocator) void {
     gpa.free(self.r[0 .. self.len * 3]);
+}
+
+pub fn replaceAt(self: *const RGB, i: usize, rgb: RGB) !void {
+    if (i > self.len) return error.OutOfBounds;
+    inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
+        @field(self, field_name) = @field(rgb);
+    }
 }
 
 pub fn toGRAYS(rgbs: RGBS, gpa: std.mem.Allocator) !GRAYS {

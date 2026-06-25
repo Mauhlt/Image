@@ -49,6 +49,13 @@ pub fn deinit(self: *const RGBAS, gpa: std.mem.Allocator) void {
     gpa.free(self.r[0 .. self.len * 4]);
 }
 
+pub fn replaceAt(self: *const RGBAS, i: usize, rgba: RGBA) !void {
+    if (i > (self.len >> 2)) return error.OutOfBounds;
+    inline for (std.meta.fieldNames(RGBA), 0..) |field_name, k| {
+        @field(self, field_name)[i + k * self.len] = @field(rgba, field_name);
+    }
+}
+
 pub fn toGRAYS(rgbas: RGBAS, gpa: std.mem.Allocator) !GRAYS {
     const len = rgbas.data.len;
     var grays = try gpa.alloc(GRAY, len);

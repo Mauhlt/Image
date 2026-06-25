@@ -7,28 +7,40 @@ const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
 const GRAYS = @This();
 
-data: []GRAY,
+g: [*]GRAY,
+len: usize,
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
     const grays: []GRAY = @ptrCast(try gpa.dupe(u8, data));
-    return .{ .data = grays };
+    return .{
+        .g_ptr = grays.ptr,
+        .len = grays.len,
+    };
 }
 
 pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
-    gpa.free(self.data);
+    gpa.free(self.data[0..self.len]);
 }
 
 pub fn toRGBS(grays: GRAYS, gpa: std.mem.Allocator) !RGBS {
     const len = grays.data.len;
-    var rgbs = try std.MultiArrayList(RGB).initCapacity(gpa, len);
-    for (0..len) |i| rgbs.appendAssumeCapacity(grays.data[i].toRGB());
+    var rgbs: RGBS = try .initEmpty(gpa, len << 2);
+    for (0..len) |i| {
+        const rgb = grays.g_ptr[i].toRGB();
+        rgbs.replaceAt();
+    }
     return .{ .data = rgbs };
 }
 
 pub fn toRGBAS(grays: GRAYS, gpa: std.mem.Allocator) !RGBAS {
     const len = grays.data.len;
-    var rgbas = try std.MultiArrayList(RGBA).initCapacity(gpa, len);
-    for (0..len) |i| rgbas.appendAssumeCapacity(grays.data[i].toRGBA());
+    var rgbas = try gpa.alloc(u8, len * 4);
+    for (0..len) |i| {
+        replaceAtIndex(self: *const RGBAS, i: usize, rgba: RGBA) !void {
+        const rgba = grays.data[i].toRGBA();
+        rgbas[i] = rgb.r;
+        rgbas[i + len] = rgb.g;
+    }
     return .{ .data = rgbas };
 }
 
