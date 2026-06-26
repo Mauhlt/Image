@@ -50,6 +50,13 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     };
 }
 
+pub fn dupe(self: RGBAS, gpa: std.mem.Allocator) !RGBAS {
+    const rgbas = try gpa.dupe();
+    // return .{
+    //     .ptr = ,
+    // };
+}
+
 pub fn deinit(self: RGBAS, gpa: std.mem.Allocator) void {
     gpa.free(self.ptr[0 .. self.len * field_names.len]);
 }
@@ -68,6 +75,26 @@ pub fn get(self: RGBAS, i: usize) !RGBA {
         @field(rgba, field_name) = self.ptr[i + k * self.len];
     }
     return rgba;
+}
+
+pub fn slice(
+    self: GRAYS,
+    gpa: std.mem.Allocator,
+    pos: struct {
+        start: usize = 0,
+        end: usize = self.len,
+    },
+) ![]RGBA {
+    if (pos.end < pos.start) return error.InvalidStartEnd;
+    if ((pos.end - pos.start) > self.len) return error.OutOfBounds;
+
+    const len = pos.end - pos.start;
+    const grays = try gpa.dupe(GRAY, len);
+    for (0..len) |i| {
+        grays[i] = self.get(pos.start + i) catch unreachable;
+    }
+
+    return grays;
 }
 
 pub fn toGRAYS(self: RGBAS, gpa: std.mem.Allocator) !GRAYS {
