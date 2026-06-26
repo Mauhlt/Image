@@ -14,7 +14,7 @@ const field_names = std.meta.fieldNames(GRAY);
 ptr: [*]u8, // ptr to start of g
 len: usize = 0,
 
-pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
+pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
     if (len == 0) return error.InvalidDataLen;
     const grays = try gpa.alloc(u8, len * field_names.len);
     return .{
@@ -23,7 +23,7 @@ pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
     };
 }
 
-pub fn allocData(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
+pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
     if (data.len == 0) return error.InvalidDataLen;
     const grays = try gpa.dupe(u8, data);
     return .{
