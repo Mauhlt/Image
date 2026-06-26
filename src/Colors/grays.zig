@@ -30,7 +30,7 @@ pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
     gpa.free(self.ptr[0..self.len]);
 }
 
-pub fn replaceAt(self: GRAYS, i: usize, gray: GRAY) !void {
+pub fn replace(self: GRAYS, i: usize, gray: GRAY) !void {
     if (i > self.len) return error.OutOfBounds;
     self.ptr[i] = gray;
 }

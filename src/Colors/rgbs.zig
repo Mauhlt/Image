@@ -8,14 +8,14 @@ const RGBAS = @import("rgbas.zig");
 const RGBS = @This();
 
 const Order = RGB.Order;
+const field_names = std.meta.fieldNames(RGB);
 
 r: [*]u8,
 g: [*]u8,
 b: [*]u8,
 len: usize,
 
-pub fn initEmpty(gpa: std.mem.Allocator, n: usize) !RGBS {
-    const field_names = comptime std.meta.fieldNames(RGB);
+pub fn allocEmpty(gpa: std.mem.Allocator, n: usize) !RGBS {
     const n_fields = field_names.len;
     if (@mod(n, n_fields) != 0) return error.InvalidDataLen;
     const len = n / n_fields;
@@ -30,7 +30,6 @@ pub fn initEmpty(gpa: std.mem.Allocator, n: usize) !RGBS {
 }
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
-    const field_names = comptime std.meta.fieldNames(RGB);
     const n_fields = field_names.len;
     if (@mod(data.len, n_fields) != 0) return error.InvalidDataLen;
     const len = data.len / n_fields;
@@ -45,28 +44,35 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
         j += n_fields;
     }) {
         const rgb: RGB = .init(data[j..][0..n_fields], order);
-        inline for (0..n_fields) |k| {
-            rgbs[i + len * k] = @field(rgb, field_names[k]);
+        inline for (field_names, 0..) |field_name, k| {
+            rgbs[i + len * k] = @field(rgb, field_name);
         }
     }
 
     return .{
-        .r = rgbs.ptr,
-        .g = @ptrFromInt(@intFromPtr(rgbs.ptr) + len),
-        .b = @ptrFromInt(@intFromPtr(rgbs.ptr) + (len << 1)),
+        .ptr = rgbs.ptr,
         .len = len,
     };
 }
 
 pub fn deinit(self: *const RGBS, gpa: std.mem.Allocator) void {
-    gpa.free(self.r[0 .. self.len * 3]);
+    gpa.free(self.r[0 .. self.len * field_names.len]);
 }
 
-pub fn replaceAt(self: *const RGB, i: usize, rgb: RGB) !void {
+pub fn replace(self: RGBS, i: usize, rgb: RGB) !void {
     if (i > self.len) return error.OutOfBounds;
-    inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-        @field(self, field_name) = @field(rgb);
+    inline for (field_names, 0..) |field_name, k| {
+        self.ptr[i + k * self.len] = @field(rgb, field_name);
     }
+}
+
+pub fn get(self: RGBS, i: usize) !RGB {
+    if (i > self.len) return error.OutOfBounds;
+    var rgb: RGB = undefined;
+    inline for (field_names, 0..) |field_name, k| {
+        @field(rgb, field_name) = self.ptr[i + k * self.len];
+    }
+    return rgb;
 }
 
 pub fn toGRAYS(rgbs: RGBS, gpa: std.mem.Allocator) !GRAYS {

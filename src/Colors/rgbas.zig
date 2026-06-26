@@ -14,12 +14,12 @@ const field_names = std.meta.fieldNames(RGBA);
 ptr: [*]u8, // ptr to r
 len: usize, // len of 1 field
 
-pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
-    if (len == 0) return error.InvalidDataLen;
-    const rgbas = try gpa.alloc(u8, len * 4);
+pub fn allocEmpty(gpa: std.mem.Allocator, n_per_field: usize) !RGBAS {
+    if (n_per_field == 0) return error.InvalidDataLen;
+    const rgbas = try gpa.alloc(u8, n_per_field * 4);
     return .{
         .ptr = rgbas.ptr,
-        .len = len,
+        .len = n_per_field,
     };
 }
 
@@ -55,11 +55,20 @@ pub fn deinit(self: *const RGBAS, gpa: std.mem.Allocator) void {
     gpa.free(self.r[0 .. self.len * 4]);
 }
 
-pub fn replaceAt(self: *const RGBAS, i: usize, rgba: RGBA) !void {
+pub fn replace(self: RGBAS, i: usize, rgba: RGBA) !void {
     if (i > (self.len >> 2)) return error.OutOfBounds;
-    inline for (std.meta.fieldNames(RGBA), 0..) |field_name, k| {
+    inline for (field_names, 0..) |field_name, k| {
         @field(self, field_name)[i + k * self.len] = @field(rgba, field_name);
     }
+}
+
+pub fn get(self: RGBAS, i: usize) RGBA {
+    if (i > self.len) return error.OutOfBounds;
+    var rgba: RGBA = undefined;
+    inline for (field_names, 0..) |field_name, k| {
+        @field(rgba, field_name) = self.ptr[i + k * self.len];
+    }
+    return rgba;
 }
 
 pub fn toGRAYS(rgbas: RGBAS, gpa: std.mem.Allocator) !GRAYS {
@@ -80,28 +89,36 @@ test "RGBAS" {
     const allo = std.testing.allocator;
     const data = [_]u8{ 255, 100, 0, 10 };
 
-    const rgbas: RGBAS = try .init(allo, &data, .rgba);
-    defer rgbas.deinit(allo);
-    try std.testing.expectEqualDeep(
-        rgbas.data.get(0),
-        RGBA{ .r = data[0], .g = data[1], .b = data[2], .a = data[3] },
-    );
+    {
+        const rgbas: RGBAS = try .init(allo, &data, .rgba);
+        defer rgbas.deinit(allo);
+        try std.testing.expectEqualDeep(
+            rgbas.get(0),
+            RGBA{ .r = data[0], .g = data[1], .b = data[2], .a = data[3] },
+        );
+    }
 
-    const rgbas2: RGBAS = try .init(allo, &data, .abgr);
-    defer rgbas2.deinit(allo);
-    try std.testing.expectEqualDeep(
-        rgbas2.slice[0],
-        RGBA{ .r = data[3], .g = data[2], .b = data[1], .a = data[0] },
-    );
+    {
+        const rgbas: RGBAS = try .init(allo, &data, .abgr);
+        defer rgbas.deinit(allo);
+        try std.testing.expectEqualDeep(
+            rgbas.get(0),
+            RGBA{ .r = data[3], .g = data[2], .b = data[1], .a = data[0] },
+        );
+    }
 
-    const grays = try rgbas.toGRAYS(allo);
-    defer grays.deinit(allo);
-    try std.testing.expectEqualDeep(grays.slice[0], GRAY{ .g = 134 });
+    {
+        const grays = try rgbas.toGRAYS(allo);
+        defer grays.deinit(allo);
+        try std.testing.expectEqualDeep(grays.slice[0], GRAY{ .g = 134 });
+    }
 
-    const rgbs = try rgbas.toRGBS(allo);
-    defer rgbs.deinit(allo);
-    try std.testing.expectEqualDeep(
-        rgbs.slice[0],
-        RGB{ .r = data[0], .g = data[1], .b = data[2] },
-    );
+    {
+        const rgbs = try rgbas.toRGBS(allo);
+        defer rgbs.deinit(allo);
+        try std.testing.expectEqualDeep(
+            rgbs.slice[0],
+            RGB{ .r = data[0], .g = data[1], .b = data[2] },
+        );
+    }
 }
