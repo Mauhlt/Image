@@ -7,12 +7,12 @@ const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
 const GRAYS = @This();
 
-ptr: [*]GRAY,
+ptr: [*]u8,
 len: usize,
 
 pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
     if (len == 0) return error.InvalidDataLen;
-    const grays = try gpa.alloc(GRAY, len);
+    const grays = try gpa.alloc(u8, len);
     return .{
         .ptr = grays.ptr,
         .len = grays.len,
@@ -21,6 +21,14 @@ pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
     const grays = try gpa.dupe(u8, data);
+    return .{
+        .ptr = grays.ptr,
+        .len = grays.len,
+    };
+}
+
+pub fn dupe(self: GRAYS, gpa: std.mem.Allocator) !GRAYS {
+    const grays = gpa.dupe(u8, self.ptr[0..self.len]);
     return .{
         .ptr = grays.ptr,
         .len = grays.len,
@@ -39,6 +47,26 @@ pub fn replace(self: GRAYS, i: usize, gray: GRAY) !void {
 pub fn get(self: GRAYS, i: usize) !GRAY {
     if (i > self.len) return error.OutOfBounds;
     return self.ptr[i];
+}
+
+pub fn slice(
+    self: GRAYS,
+    gpa: std.mem.Allocator,
+    pos: struct {
+        start: usize = 0,
+        end: usize = self.len,
+    },
+) ![]GRAY {
+    if (pos.end < pos.start) return error.InvalidStartEnd;
+    if ((pos.end - pos.start) > self.len) return error.OutOfBounds;
+    const len = pos.end - pos.start;
+
+    const grays = try gpa.dupe(GRAY, len);
+    for (0..len) |i| {
+        grays[i] = self.get(pos.start + i) catch unreachable;
+    }
+
+    return grays;
 }
 
 pub fn toRGBS(self: GRAYS, gpa: std.mem.Allocator) !RGBS {

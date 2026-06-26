@@ -145,7 +145,7 @@ pub const Pixels = union(PixelOrder) {
     ) !@This() {
         return switch (self) {
             .gray => |grays| switch (order) {
-                .gray => .{ .gray = GRAYS{ .slice = try gpa.dupe(GRAY, grays.slice) } },
+                .gray => .{ .gray = grays.dupe(gpa) },
                 .rgb => .{ .rgb = try grays.toRGBS(gpa) },
                 .rgba => .{ .rgba = try grays.toRGBAS(gpa) },
             },

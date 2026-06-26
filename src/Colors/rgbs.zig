@@ -71,6 +71,26 @@ pub fn get(self: RGBS, i: usize) !RGB {
     return rgb;
 }
 
+pub fn slice(
+    self: GRAYS,
+    gpa: std.mem.Allocator,
+    pos: struct {
+        start: usize = 0,
+        end: usize = self.len,
+    },
+) ![]RGB {
+    if (pos.end < pos.start) return error.InvalidStartEnd;
+    if ((pos.end - pos.start) > self.len) return error.OutOfBounds;
+
+    const len = pos.end - pos.start;
+    const grays = try gpa.dupe(GRAY, len);
+    for (0..len) |i| {
+        grays[i] = self.get(pos.start + i) catch unreachable;
+    }
+
+    return grays;
+}
+
 pub fn toGRAYS(self: RGBS, gpa: std.mem.Allocator) !GRAYS {
     const len = self.len;
     const grays: GRAYS = try .allocEmpty(gpa, len);
