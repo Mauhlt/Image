@@ -10,15 +10,16 @@ const RGBAS = @This();
 const Order = RGBA.Order;
 const field_names = std.meta.fieldNames(RGBA);
 
-ptr: [*]u8,
-len: usize,
+// organized r g b a
+ptr: [*]u8, // ptr to r
+len: usize, // len of 1 field
 
 pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
     if (len == 0) return error.InvalidDataLen;
     const rgbas = try gpa.alloc(u8, len * 4);
     return .{
         .ptr = rgbas.ptr,
-        .len = rgbas.len,
+        .len = len,
     };
 }
 
@@ -28,8 +29,8 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
         return error.InvalidDataLen;
     const len = data.len / field_names.len;
 
-    const new_data = try gpa.alloc(u8, len * field_names.len);
-    errdefer gpa.free(new_data);
+    const rgbas = try gpa.alloc(u8, data.len);
+    errdefer gpa.free(rgbas);
 
     var i: usize = 0;
     var j: usize = 0;
@@ -39,20 +40,18 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     }) {
         const rgba: RGBA = .initOrder(data[j..][0..field_names.len], order);
         inline for (0..field_names.len) |k| {
-            new_data[i + len * k] = @field(rgba, field_names[k]);
+            rgbas.ptr[i + len * k] = @field(rgba, field_names[k]);
         }
     }
 
     return .{
-        .r = data.ptr,
-        .g = @ptrFromInt(@intFromPtr(data.ptr) + len),
-        .b = @ptrFromInt(@intFromPtr(data.ptr) + 2 * len),
-        .a = @ptrFromInt(@intFromPtr(data.ptr) + 3 * len),
-        .len = len,
+        .ptr = rgbas.ptr,
+        .len = rgbas.len,
     };
 }
 
 pub fn deinit(self: *const RGBAS, gpa: std.mem.Allocator) void {
+    gpa.free(self.ptr[0..self.len]);
     gpa.free(self.r[0 .. self.len * 4]);
 }
 
