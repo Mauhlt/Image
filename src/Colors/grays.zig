@@ -117,71 +117,57 @@ test "GRAYS" {
 
     const allo = std.testing.allocator;
 
-    {
+    { // Init Empty
         const empties: GRAYS = try .initEmpty(allo, data.len);
         defer empties.deinit(allo);
         try std.testing.expectEqual(empties.len, data.len);
 
         const sliced = try empties.slice(allo, .{});
         defer allo.free(sliced);
-        for (sliced) |curr_slice| {
-            try std.testing.expectEqual(curr_slice.g, 0);
+        try std.testing.expectEqual(sliced.len, data.len);
+    }
+
+    { // Init
+        const grays: GRAYS = try .init(allo, &data);
+        defer grays.deinit(allo);
+        const sliced = try grays.slice(allo, .{});
+        defer allo.free(sliced);
+        for (0..sliced.len) |i| {
+            try std.testing.expectEqual(sliced.ptr[i].g, data[i]);
         }
     }
 
-    // {
-    //     const grays: GRAYS = try .init(allo, &data);
-    //     defer grays.deinit(allo);
-    //     const sliced = try grays.slice(allo, .{});
-    //     defer allo.free(sliced);
-    // }
+    { // Dupe
+        const grays: GRAYS = try .init(allo, &data);
+        defer grays.deinit(allo);
+        const grays2 = try grays.dupe(allo);
+        defer grays2.deinit(allo);
+        for (0..grays.len) |i| {
+            try std.testing.expectEqual(grays.ptr[i], grays2.ptr[i]);
+        }
+    }
 
-    // pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
-    // pub fn dupe(self: GRAYS, gpa: std.mem.Allocator) !GRAYS {
-    // pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
-    // pub fn replace(self: GRAYS, i: usize, gray: GRAY) !void {
-    // pub fn get(self: GRAYS, i: usize) !GRAY {
-    // pub fn slice(
-    //     self: GRAYS,
-    //     gpa: std.mem.Allocator,
-    //     pos: struct {
-    //         start: usize = 0,
-    //         end: usize = self.len,
-    //     }
-    // )
-    // pub fn toRGBS(self: GRAYS, gpa: std.mem.Allocator) !RGBS {
-    // pub fn toRGBAS(self: GRAYS, gpa: std.mem.Allocator) !RGBAS {
+    { // Replace
+        const grays: GRAYS = try .init(allo, &data);
+        defer grays.deinit(allo);
+        try grays.replace(4, .{ .g = 255 });
+        for (0..grays.len) |i| {
+            if (i != 4) {
+                try std.testing.expectEqual(grays.ptr[i], data[i]);
+            } else {
+                try std.testing.expectEqual(grays.ptr[i], 255);
+            }
+        }
+        try std.testing.expectEqual((try grays.get(4)).g, 255);
+    }
 
-    // {
-    //     const grays2 = try grays.slice(allo, .{});
-    //     defer allo.free(grays2);
-    //     for (0..data.len, slice) |datum, datum2| {
-    //         try std.testing.expectEqual(datum, datum2.g);
-    //     }
-    // }
-    //
-    // {
-    //     const rgbs = try grays.toRGBS(allo);
-    //     defer rgbs.deinit(allo);
-    //     const len = rgbs.len;
-    //     for (0..len) |i| {
-    //         const rgb = rgbs.get(i);
-    //         const e_rgb = expected_rgbs[i];
-    //         try std.testing.expectEqualDeep(rgb, e_rgb);
-    //     }
-    // }
-    //
-    // {
-    //     const rgbas = try grays.toRGBAS(allo);
-    //     defer rgbas.deinit(allo);
-    //     const len = rgbas.len;
-    //     for (0..len) |i| {
-    //         const rgba = rgbas.get(i);
-    //         const e_rgb = expected_rgbs[i];
-    //         try std.testing.expectEqualDeep(
-    //             rgba,
-    //             RGBA{ .r = e_rgb.r, .g = e_rgb.g, .b = e_rgb.b },
-    //         );
-    //     }
-    // }
+    { // Slice
+        const grays: GRAYS = try .init(allo, &data);
+        defer grays.deinit(allo);
+        const sliced = try grays.slice(allo, .{});
+        defer allo.free(sliced);
+        for (0..grays.len) |i| {
+            try std.testing.expectEqual(try grays.get(i), sliced[i]);
+        }
+    }
 }
