@@ -7,19 +7,24 @@ const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
 const GRAYS = @This();
 
-ptr: [*]u8,
-len: usize,
+const Order = GRAY.Order;
+const field_names = std.meta.fieldNames(GRAY);
+
+// organized g..
+ptr: [*]u8, // ptr to start of g
+len: usize = 0,
 
 pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
     if (len == 0) return error.InvalidDataLen;
-    const grays = try gpa.alloc(u8, len);
+    const grays = try gpa.alloc(u8, len * field_names.len);
     return .{
         .ptr = grays.ptr,
         .len = grays.len,
     };
 }
 
-pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
+pub fn allocData(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
+    if (data.len == 0) return error.InvalidDataLen;
     const grays = try gpa.dupe(u8, data);
     return .{
         .ptr = grays.ptr,
@@ -31,7 +36,7 @@ pub fn dupe(self: GRAYS, gpa: std.mem.Allocator) !GRAYS {
     const grays = gpa.dupe(u8, self.ptr[0..self.len]);
     return .{
         .ptr = grays.ptr,
-        .len = grays.len,
+        .len = self.len,
     };
 }
 
@@ -40,12 +45,12 @@ pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
 }
 
 pub fn replace(self: GRAYS, i: usize, gray: GRAY) !void {
-    if (i > self.len) return error.OutOfBounds;
+    if (i >= self.len) return error.OutOfBounds;
     self.ptr[i] = gray;
 }
 
 pub fn get(self: GRAYS, i: usize) !GRAY {
-    if (i > self.len) return error.OutOfBounds;
+    if (i >= self.len) return error.OutOfBounds;
     return self.ptr[i];
 }
 
@@ -57,10 +62,10 @@ pub fn slice(
         end: usize = self.len,
     },
 ) ![]GRAY {
-    if (pos.end < pos.start) return error.InvalidStartEnd;
-    if ((pos.end - pos.start) > self.len) return error.OutOfBounds;
-    const len = pos.end - pos.start;
+    if (pos.end <= pos.start) return error.InvalidPosition;
+    if (pos.end > self.len) return error.OutOfBounds;
 
+    const len = pos.end - pos.start;
     const grays = try gpa.dupe(GRAY, len);
     for (0..len) |i| {
         grays[i] = self.get(pos.start + i) catch unreachable;
