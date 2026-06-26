@@ -47,12 +47,12 @@ pub fn deinit(self: GRAYS, allo: std.mem.Allocator) void {
 
 pub fn replace(self: GRAYS, i: usize, gray: GRAY) !void {
     if (i >= self.len) return error.OutOfBounds;
-    self.ptr[i] = gray;
+    self.ptr[i] = gray.g;
 }
 
 pub fn get(self: GRAYS, i: usize) !GRAY {
     if (i >= self.len) return error.OutOfBounds;
-    return self.ptr[i];
+    return .{ .g = self.ptr[i] };
 }
 
 pub fn slice(
@@ -71,7 +71,8 @@ pub fn slice(
     if (pos.end > self.len) return error.OutOfBounds;
 
     const len = pos.end - pos.start;
-    const grays = try allo.dupe(GRAY, len);
+    const grays = try allo.alloc(GRAY, len);
+    errdefer allo.free(grays);
     for (0..len) |i| grays[i] = try self.get(pos.start + i);
     return grays;
 }

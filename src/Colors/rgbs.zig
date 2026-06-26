@@ -38,7 +38,7 @@ pub fn init(allo: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
         i += 1;
         j += field_names.len;
     }) {
-        const rgb: RGB = .init(data[j..][0..field_names.len], order);
+        const rgb: RGB = .initOrder(data[j..][0..field_names.len], order);
         inline for (field_names, 0..) |field_name, k| {
             rgbs.ptr[i + len * k] = @field(rgb, field_name);
         }
@@ -95,6 +95,7 @@ pub fn slice(
 
     const len = pos.end - pos.start;
     const rgbs = try allo.alloc(RGB, len);
+    errdefer allo.free(rgbs);
     for (0..len) |i| rgbs[i] = try self.get(pos.start + i);
     return rgbs;
 }
