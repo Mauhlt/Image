@@ -84,24 +84,21 @@ pub fn slice(
 
     const len = pos.end - pos.start;
     const grays = try gpa.dupe(GRAY, len);
-    for (0..len) |i| {
-        grays[i] = self.get(pos.start + i) catch unreachable;
-    }
-
+    for (0..len) |i| grays[i] = try self.get(pos.start + i);
     return grays;
 }
 
 pub fn toGRAYS(self: RGBS, gpa: std.mem.Allocator) !GRAYS {
     const len = self.len;
     const grays: GRAYS = try .allocEmpty(gpa, len);
-    for (0..len) |i| grays.replace(i, self.get(i).toGrayFast16());
+    for (0..len) |i| try grays.replace(i, (try self.get(i)).toGrayFast16());
     return grays;
 }
 
 pub fn toRGBAS(rgbs: RGBS, gpa: std.mem.Allocator) !RGBAS {
     const len = rgbs.data.len;
     var rgbas: std.MultiArrayList(RGBA) = try .initCapacity(gpa, len);
-    for (0..len) |i| rgbas.appendAssumeCapacity(rgbs.data.get(i).toRGBA());
+    for (0..len) |i| rgbas.replace(i, (try rgbs.get(i)).toRGBA());
     return rgbas;
 }
 
