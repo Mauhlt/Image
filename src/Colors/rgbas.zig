@@ -14,7 +14,7 @@ const field_names = std.meta.fieldNames(RGBA);
 ptr: [*]u8, // ptr to start of r
 len: usize = 0, // len of 1 field
 
-pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
+pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
     if (len == 0) return error.InvalidDataLen;
     const rgbas = try gpa.alloc(u8, len * field_names.len);
     errdefer gpa.free(rgbas);
@@ -24,7 +24,7 @@ pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
     };
 }
 
-pub fn allocData(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
+pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     if (data.len == 0) return error.InvalidDataLen;
     if (@mod(data.len, field_names.len) != 0) return error.InvalidDataLen;
     const len = data.len / field_names.len;
@@ -65,7 +65,7 @@ pub fn deinit(self: RGBAS, gpa: std.mem.Allocator) void {
 pub fn replace(self: RGBAS, i: usize, rgba: RGBA) !void {
     if (i >= self.len) return error.OutOfBounds;
     inline for (field_names, 0..) |field_name, k| {
-        @field(self, field_name)[i + k * self.len] = @field(rgba, field_name);
+        self.ptr[i + k * self.len] = @field(rgba, field_name);
     }
 }
 
@@ -96,13 +96,13 @@ pub fn slice(
 }
 
 pub fn toGRAYS(self: RGBAS, gpa: std.mem.Allocator) !GRAYS {
-    const grays: GRAYS = try .allocEmpty(gpa, self.len);
-    for (0..self.len) |i| grays.replace((try self.get(i)).toGrayFast16());
+    const grays: GRAYS = try .initEmpty(gpa, self.len);
+    for (0..self.len) |i| grays.replace(i, (try self.get(i)).toGrayFast16());
     return grays;
 }
 
 pub fn toRGBS(self: RGBAS, gpa: std.mem.Allocator) !RGBS {
-    const rgbs: RGBS = try .allocEmpty(gpa, self.len);
+    const rgbs: RGBS = try .initEmpty(gpa, self.len);
     for (0..self.len) |i| rgbs.replace(i, (try self.get(i)).toRGB());
     return rgbs;
 }

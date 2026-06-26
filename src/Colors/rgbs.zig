@@ -13,12 +13,10 @@ const field_names = std.meta.fieldNames(RGB);
 ptr: [*]u8,
 len: usize,
 
-pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
+pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
     if (len == 0) return error.InvalidDataLen;
-    if (@mod(len, field_names.len) != 0) return error.InvalidDataLen;
-    const len = n / field_names.len;
-
-    const rgbs = try gpa.alloc(u8, n);
+    const rgbs = try gpa.alloc(u8, len * field_names.len);
+    errdefer gpa.free(rgbs);
     return .{
         .ptr = rgbs.ptr,
         .len = len,
@@ -26,22 +24,22 @@ pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
 }
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
-    const n_fields = field_names.len;
-    if (@mod(data.len, n_fields) != 0) return error.InvalidDataLen;
-    const len = data.len / n_fields;
+    if (data.len == 0) return error.InvalidDataLen;
+    if (@mod(data.len, field_names.len) != 0) return error.InvalidDataLen;
+    const len = data.len / field_names.len;
 
     const rgbs = try gpa.alloc(u8, data.len);
-    errdefer gpa.deinit(rgbs);
+    errdefer gpa.free(rgbs);
 
     var i: usize = 0;
     var j: usize = 0;
     while (i < len) : ({
         i += 1;
-        j += n_fields;
+        j += field_names.len;
     }) {
-        const rgb: RGB = .init(data[j..][0..n_fields], order);
+        const rgb: RGB = .init(data[j..][0..field_names.len], order);
         inline for (field_names, 0..) |field_name, k| {
-            rgbs[i + len * k] = @field(rgb, field_name);
+            rgbs.ptr[i + len * k] = @field(rgb, field_name);
         }
     }
 
@@ -51,12 +49,20 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     };
 }
 
-pub fn deinit(self: *const RGBS, gpa: std.mem.Allocator) void {
-    gpa.free(self.r[0 .. self.len * field_names.len]);
+pub fn dupe(self: RGBS, gpa: std.mem.Allocator) !RGBS {
+    const rgbs = try gpa.dupe(u8, self.ptr[0 .. self.len * field_names.len]);
+    return .{
+        .ptr = rgbs.ptr,
+        .len = self.len,
+    };
+}
+
+pub fn deinit(self: RGBS, gpa: std.mem.Allocator) void {
+    gpa.free(self.ptr[0 .. self.len * field_names.len]);
 }
 
 pub fn replace(self: RGBS, i: usize, rgb: RGB) !void {
-    if (i > self.len) return error.OutOfBounds;
+    if (i >= self.len) return error.OutOfBounds;
     inline for (field_names, 0..) |field_name, k| {
         self.ptr[i + k * self.len] = @field(rgb, field_name);
     }
@@ -72,33 +78,31 @@ pub fn get(self: RGBS, i: usize) !RGB {
 }
 
 pub fn slice(
-    self: GRAYS,
+    self: RGBS,
     gpa: std.mem.Allocator,
     pos: struct {
         start: usize = 0,
         end: usize = self.len,
     },
 ) ![]RGB {
-    if (pos.end < pos.start) return error.InvalidStartEnd;
-    if ((pos.end - pos.start) > self.len) return error.OutOfBounds;
+    if (pos.end < pos.start) return error.InvalidPosition;
+    if (pos.end > self.len) return error.OutOfBounds;
 
     const len = pos.end - pos.start;
-    const grays = try gpa.dupe(GRAY, len);
-    for (0..len) |i| grays[i] = try self.get(pos.start + i);
-    return grays;
+    const rgbs = try gpa.dupe(RGB, len);
+    for (0..len) |i| rgbs[i] = try self.get(pos.start + i);
+    return rgbs;
 }
 
 pub fn toGRAYS(self: RGBS, gpa: std.mem.Allocator) !GRAYS {
-    const len = self.len;
-    const grays: GRAYS = try .allocEmpty(gpa, len);
-    for (0..len) |i| try grays.replace(i, (try self.get(i)).toGrayFast16());
+    const grays: GRAYS = try .initEmpty(gpa, self.len);
+    for (0..self.len) |i| try grays.replace(i, (try self.get(i)).toGrayFast16());
     return grays;
 }
 
-pub fn toRGBAS(rgbs: RGBS, gpa: std.mem.Allocator) !RGBAS {
-    const len = rgbs.data.len;
-    var rgbas: std.MultiArrayList(RGBA) = try .initCapacity(gpa, len);
-    for (0..len) |i| rgbas.replace(i, (try rgbs.get(i)).toRGBA());
+pub fn toRGBAS(self: RGBS, gpa: std.mem.Allocator) !RGBAS {
+    const rgbas: RGBAS = try .initEmpty(gpa, self.len);
+    for (0..self.len) |i| rgbas.replace(i, (try self.get(i)).toRGBA());
     return rgbas;
 }
 
