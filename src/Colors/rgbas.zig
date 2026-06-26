@@ -103,13 +103,19 @@ pub fn slice(
 
 pub fn toGRAYS(self: RGBAS, gpa: std.mem.Allocator) !GRAYS {
     const grays: GRAYS = try .initEmpty(gpa, self.len);
-    for (0..self.len) |i| grays.replace(i, (try self.get(i)).toGrayFast16());
+    for (0..self.len) |i| {
+        const gray = (try self.get(i)).toGrayFast16();
+        try grays.replace(i, gray);
+    }
     return grays;
 }
 
 pub fn toRGBS(self: RGBAS, gpa: std.mem.Allocator) !RGBS {
     const rgbs: RGBS = try .initEmpty(gpa, self.len);
-    for (0..self.len) |i| rgbs.replace(i, (try self.get(i)).toRGB());
+    for (0..self.len) |i| {
+        const rgb = (try self.get(i)).toRGB();
+        try rgbs.replace(i, rgb);
+    }
     return rgbs;
 }
 

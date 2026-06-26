@@ -34,7 +34,7 @@ pub fn init(allo: std.mem.Allocator, data: []const u8) !GRAYS {
 }
 
 pub fn dupe(self: GRAYS, allo: std.mem.Allocator) !GRAYS {
-    const grays = allo.dupe(u8, self.ptr[0..self.len]);
+    const grays = try allo.dupe(u8, self.ptr[0..self.len]);
     return .{
         .ptr = grays.ptr,
         .len = self.len,
@@ -81,7 +81,7 @@ pub fn toRGBS(self: GRAYS, allo: std.mem.Allocator) !RGBS {
     const rgbs: RGBS = try .initEmpty(allo, self.len);
     for (0..self.len) |i| {
         const rgb = (try self.get(i)).toRGB();
-        rgbs.replace(i, rgb);
+        try rgbs.replace(i, rgb);
     }
     return rgbs;
 }
@@ -90,7 +90,7 @@ pub fn toRGBAS(self: GRAYS, allo: std.mem.Allocator) !RGBAS {
     const rgbas: RGBAS = try .initEmpty(allo, self.len);
     for (0..self.len) |i| {
         const rgba = (try self.get(i)).toRGBA();
-        rgbas.replace(i, rgba);
+        try rgbas.replace(i, rgba);
     }
     return rgbas;
 }
