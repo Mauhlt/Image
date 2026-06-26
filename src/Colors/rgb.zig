@@ -1,7 +1,7 @@
 const std = @import("std");
 
 const GRAY = @import("gray.zig");
-const RGBA = @import("rgba.zig").RGBA;
+const RGBA = @import("rgba.zig");
 
 const RGB = @This();
 // pub const RGB = packed struct(u24) {
