@@ -108,7 +108,7 @@ pub fn toGRAYS(self: RGBS, allo: std.mem.Allocator) !GRAYS {
 
 pub fn toRGBAS(self: RGBS, allo: std.mem.Allocator) !RGBAS {
     const rgbas: RGBAS = try .initEmpty(allo, self.len);
-    for (0..self.len) |i| rgbas.replace(i, (try self.get(i)).toRGBA());
+    for (0..self.len) |i| try rgbas.replace(i, (try self.get(i)).toRGBA());
     return rgbas;
 }
 
