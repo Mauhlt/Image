@@ -12,11 +12,12 @@ const field_names = std.meta.fieldNames(RGBA);
 
 // organized r.. g.. b.. a..
 ptr: [*]u8, // ptr to start of r
-len: usize, // len of 1 field
+len: usize = 0, // len of 1 field
 
 pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
     if (len == 0) return error.InvalidDataLen;
     const rgbas = try gpa.alloc(u8, len * field_names.len);
+    errdefer gpa.free(rgbas);
     return .{
         .ptr = rgbas.ptr,
         .len = len,
@@ -25,8 +26,7 @@ pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     if (data.len == 0) return error.InvalidDataLen;
-    if (@mod(data.len, field_names.len) != 0) //
-        return error.InvalidDataLen;
+    if (@mod(data.len, field_names.len) != 0) return error.InvalidDataLen;
     const len = data.len / field_names.len;
 
     const rgbas = try gpa.alloc(u8, data.len);
@@ -51,10 +51,10 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
 }
 
 pub fn dupe(self: RGBAS, gpa: std.mem.Allocator) !RGBAS {
-    const rgbas = try gpa.dupe();
-    // return .{
-    //     .ptr = ,
-    // };
+    const rgbas = try gpa.alloc(RGBA, self.len);
+    errdefer gpa.free(rgbas);
+    for (0..self.len) |i| rgbas[i] = try self.get(i);
+    return rgbas;
 }
 
 pub fn deinit(self: RGBAS, gpa: std.mem.Allocator) void {
@@ -90,10 +90,7 @@ pub fn slice(
 
     const len = pos.end - pos.start;
     const grays = try gpa.dupe(GRAY, len);
-    for (0..len) |i| {
-        grays[i] = self.get(pos.start + i) catch unreachable;
-    }
-
+    for (0..len) |i| grays[i] = try self.get(pos.start + i);
     return grays;
 }
 
