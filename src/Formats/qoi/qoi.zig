@@ -21,10 +21,8 @@ const GRAY = @import("../../Colors/gray.zig");
 const GRAYS = @import("../../Colors/grays.zig");
 const RGB = @import("../../Colors/rgb.zig");
 const RGBS = @import("../../Colors/rgbs.zig");
-const RGB_SOA = @import("../../Colors/rgb_soa.zig");
 const RGBA = @import("../../Colors/rgba.zig");
 const RGBAS = @import("../../Colors/rgbas.zig");
-const RGBA_SOA = @import("../../Colors/rgb_soa.zig");
 const Pixels = @import("../../Colors/Pixels.zig");
 
 const isSigSame = @import("Misc.zig").isSigSame;
