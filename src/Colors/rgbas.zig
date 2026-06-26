@@ -86,6 +86,7 @@ pub fn slice(
 ) ![]RGBA {
     if (pos.start == 0 and pos.end == 0) {
         const rgbas = try allo.alloc(RGBA, self.len);
+        errdefer allo.free(rgbas);
         for (0..self.len) |i| rgbas[i] = try self.get(i);
         return rgbas;
     }
@@ -95,6 +96,7 @@ pub fn slice(
 
     const len = pos.end - pos.start;
     const rgbas = try allo.dupe(RGBAS, len);
+    errdefer allo.free(rgbas);
     for (0..len) |i| rgbas[i] = try self.get(pos.start + i);
     return rgbas;
 }

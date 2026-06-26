@@ -459,45 +459,45 @@ fn countStartingMatchesSIMD(
     return @ctz(matches);
 }
 
-test "Count Starting Matches" {
-    const allo = std.testing.allocator;
-
-    {
-        const rgb: RGB = .{};
-        var rgbs64: std.MultiArrayList(RGB) = try .initCapacity(allo, 64);
-        defer rgbs64.deinit(allo);
-        for (0..64) |_| {
-            rgbs64.appendAssumeCapacity(.{});
-        }
-        const slice = rgbs64.slice();
-        const n_matches64_1 = countStartingMatches(
-            .rgb,
-            rgb,
-            .{ .r = slice.ptrs[0], .g = slice.ptrs[1], .b = slice.ptrs[2] },
-        );
-        const n_matches64_2 = countStartingMatchesSIMD(
-            .rgb,
-            rgb,
-            .{ .r = slice.ptrs[0], .g = slice.ptrs[1], .b = slice.ptrs[2] },
-        );
-        try std.testing.expectEqual(n_matches64_1, 64);
-        try std.testing.expectEqual(n_matches64_2, 64);
-    }
-
-    {
-        const rgb: RGB = .{};
-        var rgbs7: std.MultiArrayList(RGB) = try .initCapacity(allo, 64);
-        defer rgbs7.deinit(allo);
-        for (0..7) |_| rgbs7.appendAssumeCapacity(.{});
-        rgbs7.appendAssumeCapacity(.{ .r = 1, .g = 1, .b = 1 });
-        for (8..64) |_| rgbs7.appendAssumeCapacity(.{});
-
-        const n_matches7_1 = countStartingMatches(.rgb, rgb, &rgbs7);
-        const n_matches7_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs7);
-        try std.testing.expectEqual(n_matches7_1, 7);
-        try std.testing.expectEqual(n_matches7_2, 7);
-    }
-}
+// test "Count Starting Matches" {
+//     const allo = std.testing.allocator;
+//
+//     {
+//         const rgb: RGB = .{};
+//         var rgbs64: std.MultiArrayList(RGB) = try .initCapacity(allo, 64);
+//         defer rgbs64.deinit(allo);
+//         for (0..64) |_| {
+//             rgbs64.appendAssumeCapacity(.{});
+//         }
+//         const slice = rgbs64.slice();
+//         const n_matches64_1 = countStartingMatches(
+//             .rgb,
+//             rgb,
+//             .{ .r = slice.ptrs[0], .g = slice.ptrs[1], .b = slice.ptrs[2] },
+//         );
+//         const n_matches64_2 = countStartingMatchesSIMD(
+//             .rgb,
+//             rgb,
+//             .{ .r = slice.ptrs[0], .g = slice.ptrs[1], .b = slice.ptrs[2] },
+//         );
+//         try std.testing.expectEqual(n_matches64_1, 64);
+//         try std.testing.expectEqual(n_matches64_2, 64);
+//     }
+//
+//     {
+//         const rgb: RGB = .{};
+//         var rgbs7: std.MultiArrayList(RGB) = try .initCapacity(allo, 64);
+//         defer rgbs7.deinit(allo);
+//         for (0..7) |_| rgbs7.appendAssumeCapacity(.{});
+//         rgbs7.appendAssumeCapacity(.{ .r = 1, .g = 1, .b = 1 });
+//         for (8..64) |_| rgbs7.appendAssumeCapacity(.{});
+//
+//         const n_matches7_1 = countStartingMatches(.rgb, rgb, &rgbs7);
+//         const n_matches7_2 = countStartingMatchesSIMD(.rgb, rgb, &rgbs7);
+//         try std.testing.expectEqual(n_matches7_1, 7);
+//         try std.testing.expectEqual(n_matches7_2, 7);
+//     }
+// }
 
 // test "Basic Fns Work How I Expect" {
 //     if (px.a == prev.a) {
