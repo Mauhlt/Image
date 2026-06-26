@@ -11,6 +11,7 @@ ptr: [*]GRAY,
 len: usize,
 
 pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
+    if (len == 0) return error.InvalidDataLen;
     const grays = try gpa.alloc(GRAY, len);
     return .{
         .ptr = grays.ptr,
@@ -36,24 +37,24 @@ pub fn replace(self: GRAYS, i: usize, gray: GRAY) !void {
 }
 
 pub fn get(self: GRAYS, i: usize) !GRAY {
-    if (self.len < i) return error.OutOfBounds;
+    if (i > self.len) return error.OutOfBounds;
     return self.ptr[i];
 }
 
 pub fn toRGBS(self: GRAYS, gpa: std.mem.Allocator) !RGBS {
-    var rgbs: RGBS = try .allocEmpty(gpa, self.len);
+    const rgbs: RGBS = try .allocEmpty(gpa, self.len);
     for (0..self.len) |i| {
         const rgb = (try self.get(i)).toRGB();
-        rgbs.replaceAt(i, rgb);
+        rgbs.replace(i, rgb);
     }
     return rgbs;
 }
 
 pub fn toRGBAS(self: GRAYS, gpa: std.mem.Allocator) !RGBAS {
-    var rgbas = try gpa.alloc(u8, self.len * 4);
+    const rgbas: RGBAS = try .allocEmpty(gpa, self.len);
     for (0..self.len) |i| {
-        const rgba = (try self.get(i)).toRBBA();
-        rgbas.replaceAt(i, rgba);
+        const rgba = (try self.get(i)).toRGBA();
+        rgbas.replace(i, rgba);
     }
     return rgbas;
 }

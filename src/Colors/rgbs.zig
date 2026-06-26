@@ -10,21 +10,17 @@ const RGBS = @This();
 const Order = RGB.Order;
 const field_names = std.meta.fieldNames(RGB);
 
-r: [*]u8,
-g: [*]u8,
-b: [*]u8,
+ptr: [*]u8,
 len: usize,
 
-pub fn allocEmpty(gpa: std.mem.Allocator, n: usize) !RGBS {
-    const n_fields = field_names.len;
-    if (@mod(n, n_fields) != 0) return error.InvalidDataLen;
-    const len = n / n_fields;
+pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
+    if (len == 0) return error.InvalidDataLen;
+    if (@mod(len, field_names.len) != 0) return error.InvalidDataLen;
+    const len = n / field_names.len;
 
-    const data = try gpa.alloc(u8, n);
+    const rgbs = try gpa.alloc(u8, n);
     return .{
-        .r_ptr = data.ptr,
-        .g_ptr = @ptrFromInt(@intFromPtr(data.ptr) + n),
-        .b_ptr = @ptrFromInt(@intFromPtr(data.ptr) + (n << 1)),
+        .ptr = rgbs.ptr,
         .len = len,
     };
 }
@@ -75,18 +71,18 @@ pub fn get(self: RGBS, i: usize) !RGB {
     return rgb;
 }
 
-pub fn toGRAYS(rgbs: RGBS, gpa: std.mem.Allocator) !GRAYS {
-    const len = rgbs.data.len;
-    const grays = try gpa.alloc(GRAY, len);
-    for (0..len) |i| grays[i] = rgbs.data.get(i).toGrayFast16();
-    return .{ .data = grays };
+pub fn toGRAYS(self: RGBS, gpa: std.mem.Allocator) !GRAYS {
+    const len = self.len;
+    const grays: GRAYS = try .allocEmpty(gpa, len);
+    for (0..len) |i| grays.replace(i, self.get(i).toGrayFast16());
+    return grays;
 }
 
 pub fn toRGBAS(rgbs: RGBS, gpa: std.mem.Allocator) !RGBAS {
     const len = rgbs.data.len;
     var rgbas: std.MultiArrayList(RGBA) = try .initCapacity(gpa, len);
     for (0..len) |i| rgbas.appendAssumeCapacity(rgbs.data.get(i).toRGBA());
-    return .{ .data = rgbas };
+    return rgbas;
 }
 
 test "RGBS" {
