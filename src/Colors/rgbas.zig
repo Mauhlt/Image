@@ -24,7 +24,7 @@ pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
     };
 }
 
-pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
+pub fn allocData(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     if (data.len == 0) return error.InvalidDataLen;
     if (@mod(data.len, field_names.len) != 0) return error.InvalidDataLen;
     const len = data.len / field_names.len;
@@ -39,8 +39,8 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
         j += field_names.len;
     }) {
         const rgba: RGBA = .initOrder(data[j..][0..field_names.len], order);
-        inline for (0..field_names.len) |k| {
-            rgbas.ptr[i + len * k] = @field(rgba, field_names[k]);
+        inline for (field_names, 0..) |field_name, k| {
+            rgbas.ptr[i + len * k] = @field(rgba, field_name);
         }
     }
 
@@ -51,10 +51,11 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
 }
 
 pub fn dupe(self: RGBAS, gpa: std.mem.Allocator) !RGBAS {
-    const rgbas = try gpa.alloc(RGBA, self.len);
-    errdefer gpa.free(rgbas);
-    for (0..self.len) |i| rgbas[i] = try self.get(i);
-    return rgbas;
+    const rgbas = try gpa.dupe(u8, self.ptr[0 .. self.len * field_names.len]);
+    return .{
+        .ptr = rgbas.ptr,
+        .len = self.len,
+    };
 }
 
 pub fn deinit(self: RGBAS, gpa: std.mem.Allocator) void {
@@ -62,14 +63,14 @@ pub fn deinit(self: RGBAS, gpa: std.mem.Allocator) void {
 }
 
 pub fn replace(self: RGBAS, i: usize, rgba: RGBA) !void {
-    if (i > (self.len >> 2)) return error.OutOfBounds;
+    if (i >= self.len) return error.OutOfBounds;
     inline for (field_names, 0..) |field_name, k| {
         @field(self, field_name)[i + k * self.len] = @field(rgba, field_name);
     }
 }
 
 pub fn get(self: RGBAS, i: usize) !RGBA {
-    if (i > self.len) return error.OutOfBounds;
+    if (i >= self.len) return error.OutOfBounds;
     var rgba: RGBA = undefined;
     inline for (field_names, 0..) |field_name, k| {
         @field(rgba, field_name) = self.ptr[i + k * self.len];
@@ -78,20 +79,20 @@ pub fn get(self: RGBAS, i: usize) !RGBA {
 }
 
 pub fn slice(
-    self: GRAYS,
+    self: RGBAS,
     gpa: std.mem.Allocator,
     pos: struct {
         start: usize = 0,
         end: usize = self.len,
     },
 ) ![]RGBA {
-    if (pos.end < pos.start) return error.InvalidStartEnd;
-    if ((pos.end - pos.start) > self.len) return error.OutOfBounds;
+    if (pos.end <= pos.start) return error.InvalidPosition;
+    if (pos.end > self.len) return error.OutOfBounds;
 
     const len = pos.end - pos.start;
-    const grays = try gpa.dupe(GRAY, len);
-    for (0..len) |i| grays[i] = try self.get(pos.start + i);
-    return grays;
+    const rgbas = try gpa.dupe(RGBAS, len);
+    for (0..len) |i| rgbas[i] = try self.get(pos.start + i);
+    return rgbas;
 }
 
 pub fn toGRAYS(self: RGBAS, gpa: std.mem.Allocator) !GRAYS {
