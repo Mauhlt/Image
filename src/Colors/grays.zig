@@ -7,41 +7,55 @@ const RGBA = @import("rgba.zig").RGBA;
 const RGBAS = @import("rgbas.zig");
 const GRAYS = @This();
 
-g: [*]GRAY,
+ptr: [*]GRAY,
 len: usize,
 
-pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
-    const grays: []GRAY = @ptrCast(try gpa.dupe(u8, data));
+pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !GRAYS {
+    const grays = try gpa.alloc(GRAY, len);
     return .{
-        .g_ptr = grays.ptr,
+        .ptr = grays.ptr,
+        .len = grays.len,
+    };
+}
+
+pub fn init(gpa: std.mem.Allocator, data: []const u8) !GRAYS {
+    const grays = try gpa.dupe(u8, data);
+    return .{
+        .ptr = grays.ptr,
         .len = grays.len,
     };
 }
 
 pub fn deinit(self: GRAYS, gpa: std.mem.Allocator) void {
-    gpa.free(self.data[0..self.len]);
+    gpa.free(self.ptr[0..self.len]);
 }
 
-pub fn toRGBS(grays: GRAYS, gpa: std.mem.Allocator) !RGBS {
-    const len = grays.data.len;
-    var rgbs: RGBS = try .initEmpty(gpa, len << 2);
-    for (0..len) |i| {
-        const rgb = grays.g_ptr[i].toRGB();
-        rgbs.replaceAt();
-    }
-    return .{ .data = rgbs };
+pub fn replaceAt(self: GRAYS, i: usize, gray: GRAY) !void {
+    if (i > self.len) return error.OutOfBounds;
+    self.ptr[i] = gray;
 }
 
-pub fn toRGBAS(grays: GRAYS, gpa: std.mem.Allocator) !RGBAS {
-    const len = grays.data.len;
-    var rgbas = try gpa.alloc(u8, len * 4);
-    for (0..len) |i| {
-        replaceAtIndex(self: *const RGBAS, i: usize, rgba: RGBA) !void {
-        const rgba = grays.data[i].toRGBA();
-        rgbas[i] = rgb.r;
-        rgbas[i + len] = rgb.g;
+pub fn get(self: GRAYS, i: usize) !GRAY {
+    if (self.len < i) return error.OutOfBounds;
+    return self.ptr[i];
+}
+
+pub fn toRGBS(self: GRAYS, gpa: std.mem.Allocator) !RGBS {
+    var rgbs: RGBS = try .allocEmpty(gpa, self.len);
+    for (0..self.len) |i| {
+        const rgb = (try self.get(i)).toRGB();
+        rgbs.replaceAt(i, rgb);
     }
-    return .{ .data = rgbas };
+    return rgbs;
+}
+
+pub fn toRGBAS(self: GRAYS, gpa: std.mem.Allocator) !RGBAS {
+    var rgbas = try gpa.alloc(u8, self.len * 4);
+    for (0..self.len) |i| {
+        const rgba = (try self.get(i)).toRBBA();
+        rgbas.replaceAt(i, rgba);
+    }
+    return rgbas;
 }
 
 test "GRAYS" {
@@ -60,24 +74,28 @@ test "GRAYS" {
     const grays = try init(allo, &data);
     defer grays.deinit(allo);
 
-    const rgbs = try grays.toRGBS(allo);
-    defer rgbs.deinit(allo);
-    const len1 = rgbs.data.len;
-    for (0..len1) |i| {
-        const rgb = rgbs.data.get(i);
-        const e_rgb = expected_rgbs[i];
-        try std.testing.expectEqualDeep(rgb, e_rgb);
+    {
+        const rgbs = try grays.toRGBS(allo);
+        defer rgbs.deinit(allo);
+        const len = rgbs.len;
+        for (0..len) |i| {
+            const rgb = rgbs.get(i);
+            const e_rgb = expected_rgbs[i];
+            try std.testing.expectEqualDeep(rgb, e_rgb);
+        }
     }
 
-    const rgbas = try grays.toRGBAS(allo);
-    defer rgbas.deinit(allo);
-    const len2 = rgbas.data.len;
-    for (0..len2) |i| {
-        const rgba = rgbas.data.get(i);
-        const e_rgb = expected_rgbs[i];
-        try std.testing.expectEqualDeep(
-            rgba,
-            RGBA{ .r = e_rgb.r, .g = e_rgb.g, .b = e_rgb.b },
-        );
+    {
+        const rgbas = try grays.toRGBAS(allo);
+        defer rgbas.deinit(allo);
+        const len = rgbas.len;
+        for (0..len) |i| {
+            const rgba = rgbas.get(i);
+            const e_rgb = expected_rgbs[i];
+            try std.testing.expectEqualDeep(
+                rgba,
+                RGBA{ .r = e_rgb.r, .g = e_rgb.g, .b = e_rgb.b },
+            );
+        }
     }
 }

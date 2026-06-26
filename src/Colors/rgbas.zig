@@ -8,30 +8,37 @@ const RGBA = @import("rgba.zig");
 const RGBAS = @This();
 
 const Order = RGBA.Order;
+const field_names = std.meta.fieldNames(RGBA);
 
-r: [*]u8,
-g: [*]u8,
-b: [*]u8,
-a: [*]u8,
+ptr: [*]u8,
 len: usize,
 
-pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
-    const field_names = comptime std.meta.fieldNames(RGBA);
-    const n_fields = field_names.len;
-    if (@mod(data.len, n_fields) != 0) return error.InvalidDataLen;
-    const len = data.len / n_fields;
+pub fn allocEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
+    if (len == 0) return error.InvalidDataLen;
+    const rgbas = try gpa.alloc(u8, len * 4);
+    return .{
+        .ptr = rgbas.ptr,
+        .len = rgbas.len,
+    };
+}
 
-    const new_data = try gpa.alloc(u8, len * 4);
+pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
+    if (data.len == 0) return error.InvalidDataLen;
+    if (@mod(data.len, field_names.len) != 0) //
+        return error.InvalidDataLen;
+    const len = data.len / field_names.len;
+
+    const new_data = try gpa.alloc(u8, len * field_names.len);
     errdefer gpa.free(new_data);
 
     var i: usize = 0;
     var j: usize = 0;
     while (i < len) : ({
         i += 1;
-        j += n_fields;
+        j += field_names.len;
     }) {
-        const rgba: RGBA = .initOrder(data[j..][0..4], order);
-        inline for (0..n_fields) |k| {
+        const rgba: RGBA = .initOrder(data[j..][0..field_names.len], order);
+        inline for (0..field_names.len) |k| {
             new_data[i + len * k] = @field(rgba, field_names[k]);
         }
     }
