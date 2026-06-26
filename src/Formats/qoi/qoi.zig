@@ -131,7 +131,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
             },
         }
 
-        indices[hashRGBA(prev_pixel)] = prev_pixel;
+        table[hashRGBA(prev_pixel)] = prev_pixel;
 
         if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
         j += 1;
@@ -425,8 +425,8 @@ fn countStartingMatches(
         .rgba => RGBA,
     },
     haystack: switch (T) {
-        .rgb => RGB_SOA,
-        .rgba => RGBA_SOA,
+        .rgb => RGB,
+        .rgba => RGBA,
     },
 ) usize {
     for (haystack, 0..) |s, i| {
@@ -441,8 +441,8 @@ fn countStartingMatchesSIMD(
         .rgba => RGBA,
     },
     haystack: switch (T) {
-        .rgb => RGB_SOA,
-        .rgba => RGBA_SOA,
+        .rgb => RGB,
+        .rgba => RGBA,
     },
 ) u64 {
     const V = @Vector(64, u8);

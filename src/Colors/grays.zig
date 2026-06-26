@@ -1,9 +1,10 @@
 const std = @import("std");
 
+const POSITION = @import("position.zig");
 const GRAY = @import("gray.zig");
-const RGB = @import("rgb.zig").RGB;
+const RGB = @import("rgb.zig");
 const RGBS = @import("rgbs.zig");
-const RGBA = @import("rgba.zig").RGBA;
+const RGBA = @import("rgba.zig");
 const RGBAS = @import("rgbas.zig");
 const GRAYS = @This();
 
@@ -57,20 +58,21 @@ pub fn get(self: GRAYS, i: usize) !GRAY {
 pub fn slice(
     self: GRAYS,
     allo: std.mem.Allocator,
-    pos: struct {
-        start: usize = 0,
-        end: usize = self.len,
-    },
+    pos: POSITION,
 ) ![]GRAY {
+    if (pos.start == 0 and pos.end == 0) {
+        const grays = try allo.alloc(GRAY, self.len);
+        errdefer allo.free(grays);
+        for (0..self.len) |i| grays[i] = try self.get(i);
+        return grays;
+    }
+
     if (pos.end <= pos.start) return error.InvalidPosition;
     if (pos.end > self.len) return error.OutOfBounds;
 
     const len = pos.end - pos.start;
     const grays = try allo.dupe(GRAY, len);
-    for (0..len) |i| {
-        grays[i] = self.get(pos.start + i) catch unreachable;
-    }
-
+    for (0..len) |i| grays[i] = try self.get(pos.start + i);
     return grays;
 }
 
@@ -118,8 +120,11 @@ test "GRAYS" {
         const empties: GRAYS = try .initEmpty(allo, data.len);
         defer empties.deinit(allo);
         try std.testing.expectEqual(empties.len, data.len);
-        for (empties.ptr[0..empties.len]) |emptie| {
-            try std.testing.expectEqual(emptie.g, 0);
+
+        const sliced = try empties.slice(allo, .{});
+        defer allo.free(sliced);
+        for (sliced) |curr_slice| {
+            try std.testing.expectEqual(curr_slice.g, 0);
         }
     }
 
