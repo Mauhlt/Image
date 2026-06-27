@@ -47,7 +47,7 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
 
     return .{
         .ptr = rgbas.ptr,
-        .len = rgbas.len,
+        .len = len,
     };
 }
 
