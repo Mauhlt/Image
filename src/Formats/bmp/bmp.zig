@@ -30,10 +30,10 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const exp_n_pixels = hdr.width * hdr.height;
     const start = hdr.data_offset;
     const end = start + hdr.compressed_image_size;
-    std.debug.print(
-        "Start: {}\nEnd: {}\nData Len: {}\n",
-        .{ start, end, data.len },
-    );
+    // std.debug.print(
+    //     "Start: {}\nEnd: {}\nData Len: {}\n",
+    //     .{ start, end, data.len },
+    // );
     std.debug.assert(end <= data.len and start <= data.len);
     const pixels_slice = data[start..end];
     const n_pixels = pixels_slice.len / bpp;

@@ -9,7 +9,6 @@ const RGBA = @import("rgba.zig");
 const RGBAS = @This();
 
 const Order = RGBA.Order;
-const field_names = std.meta.fieldNames(RGBA);
 
 // organized r.. g.. b.. a..
 ptr: [*]u8, // ptr to start of r
@@ -17,7 +16,7 @@ len: usize = 0, // len of 1 field
 
 pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
     if (len == 0) return error.InvalidDataLen;
-    const rgbas = try gpa.alloc(u8, len * field_names.len);
+    const rgbas = try gpa.alloc(u8, len * @sizeOf(RGBA));
     errdefer gpa.free(rgbas);
     return .{
         .ptr = rgbas.ptr,
@@ -27,8 +26,8 @@ pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBAS {
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     if (data.len == 0) return error.InvalidDataLen;
-    if (@mod(data.len, field_names.len) != 0) return error.InvalidDataLen;
-    const len = data.len / field_names.len;
+    if (@mod(data.len, @sizeOf(RGBA)) != 0) return error.InvalidDataLen;
+    const len = data.len / @sizeOf(RGBA);
 
     const rgbas = try gpa.alloc(u8, data.len);
     errdefer gpa.free(rgbas);
@@ -37,10 +36,10 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
     var j: usize = 0;
     while (i < len) : ({
         i += 1;
-        j += field_names.len;
+        j += @sizeOf(RGBA);
     }) {
-        const rgba: RGBA = .initOrder(data[j..][0..field_names.len], order);
-        inline for (field_names, 0..) |field_name, k| {
+        const rgba: RGBA = .initOrder(data[j..][0..@sizeOf(RGBA)], order);
+        inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
             rgbas.ptr[i + len * k] = @field(rgba, field_name);
         }
     }
@@ -52,7 +51,7 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBAS {
 }
 
 pub fn dupe(self: RGBAS, gpa: std.mem.Allocator) !RGBAS {
-    const rgbas = try gpa.dupe(u8, self.ptr[0 .. self.len * field_names.len]);
+    const rgbas = try gpa.dupe(u8, self.ptr[0 .. self.len * @sizeOf(RGBA)]);
     return .{
         .ptr = rgbas.ptr,
         .len = self.len,
@@ -60,12 +59,12 @@ pub fn dupe(self: RGBAS, gpa: std.mem.Allocator) !RGBAS {
 }
 
 pub fn deinit(self: RGBAS, gpa: std.mem.Allocator) void {
-    gpa.free(self.ptr[0 .. self.len * field_names.len]);
+    gpa.free(self.ptr[0 .. self.len * @sizeOf(RGBA)]);
 }
 
 pub fn replace(self: RGBAS, i: usize, rgba: RGBA) !void {
     if (i >= self.len) return error.OutOfBounds;
-    inline for (field_names, 0..) |field_name, k| {
+    inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
         self.ptr[i + k * self.len] = @field(rgba, field_name);
     }
 }
@@ -73,7 +72,7 @@ pub fn replace(self: RGBAS, i: usize, rgba: RGBA) !void {
 pub fn get(self: RGBAS, i: usize) !RGBA {
     if (i >= self.len) return error.OutOfBounds;
     var rgba: RGBA = undefined;
-    inline for (field_names, 0..) |field_name, k| {
+    inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
         @field(rgba, field_name) = self.ptr[i + k * self.len];
     }
     return rgba;
@@ -127,7 +126,7 @@ test "RGBAS" {
     defer base.deinit(allo);
 
     { // init
-        try std.testing.expectEqual(data.len / field_names.len, base.len);
+        try std.testing.expectEqual(data.len / @sizeOf(RGBA), base.len);
         const rgba = try base.get(0);
         const ergba: RGBA = .{ .r = data[0], .g = data[1], .b = data[2], .a = data[3] };
         try std.testing.expectEqualDeep(ergba, rgba);
@@ -136,7 +135,7 @@ test "RGBAS" {
     { // flip order
         const rgbas: RGBAS = try .init(allo, &data, .abgr);
         defer rgbas.deinit(allo);
-        try std.testing.expectEqual(data.len / field_names.len, rgbas.len);
+        try std.testing.expectEqual(data.len / @sizeOf(RGBA), rgbas.len);
         const rgba = try rgbas.get(0);
         const ergba: RGBA = .{ .r = data[3], .g = data[2], .b = data[1], .a = data[0] };
         try std.testing.expectEqualDeep(ergba, rgba);
