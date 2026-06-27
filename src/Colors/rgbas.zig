@@ -119,40 +119,45 @@ pub fn toRGBS(self: RGBAS, gpa: std.mem.Allocator) !RGBS {
     return rgbs;
 }
 
-// test "RGBAS" {
-//     const allo = std.testing.allocator;
-//     const data = [_]u8{ 255, 100, 0, 10 };
-//
-//     {
-//         const rgbas: RGBAS = try .init(allo, &data, .rgba);
-//         defer rgbas.deinit(allo);
-//         try std.testing.expectEqualDeep(
-//             rgbas.get(0),
-//             RGBA{ .r = data[0], .g = data[1], .b = data[2], .a = data[3] },
-//         );
-//     }
-//
-//     {
-//         const rgbas: RGBAS = try .init(allo, &data, .abgr);
-//         defer rgbas.deinit(allo);
-//         try std.testing.expectEqualDeep(
-//             rgbas.get(0),
-//             RGBA{ .r = data[3], .g = data[2], .b = data[1], .a = data[0] },
-//         );
-//     }
-//
-//     {
-//         const grays = try rgbas.toGRAYS(allo);
-//         defer grays.deinit(allo);
-//         try std.testing.expectEqualDeep(grays.slice[0], GRAY{ .g = 134 });
-//     }
-//
-//     {
-//         const rgbs = try rgbas.toRGBS(allo);
-//         defer rgbs.deinit(allo);
-//         try std.testing.expectEqualDeep(
-//             rgbs.slice[0],
-//             RGB{ .r = data[0], .g = data[1], .b = data[2] },
-//         );
-//     }
-// }
+test "RGBAS" {
+    const allo = std.testing.allocator;
+    const data = [_]u8{ 255, 100, 0, 10 };
+
+    const base: RGBAS = try .init(allo, &data, .rgba);
+    defer base.deinit(allo);
+
+    { // init
+        try std.testing.expectEqual(data.len / field_names.len, base.len);
+        const rgba = try base.get(0);
+        const ergba: RGBA = .{ .r = data[0], .g = data[1], .b = data[2], .a = data[3] };
+        try std.testing.expectEqualDeep(ergba, rgba);
+    }
+
+    { // flip order
+        const rgbas: RGBAS = try .init(allo, &data, .abgr);
+        defer rgbas.deinit(allo);
+        try std.testing.expectEqual(data.len / field_names.len, rgbas.len);
+        const rgba = try rgbas.get(0);
+        const ergba: RGBA = .{ .r = data[3], .g = data[2], .b = data[1], .a = data[0] };
+        try std.testing.expectEqualDeep(ergba, rgba);
+    }
+
+    { // convert + sliced
+        const grays = try base.toGRAYS(allo);
+        defer grays.deinit(allo);
+        try std.testing.expectEqual(base.len, grays.len);
+        const sliced = try grays.slice(allo, .{});
+        defer allo.free(sliced);
+        const gray = sliced[0];
+        const egray: GRAY = .{ .g = 134 };
+        try std.testing.expectEqualDeep(egray, gray);
+    }
+
+    {
+        const rgbs = try base.toRGBS(allo);
+        defer rgbs.deinit(allo);
+        const rgb = try rgbs.get(0);
+        const ergb: RGB = .{ .r = data[0], .g = data[1], .b = data[2] };
+        try std.testing.expectEqualDeep(ergb, rgb);
+    }
+}
