@@ -88,7 +88,7 @@ pub fn read(args: ReadArgs) !@This() {
 
     return switch (ext) {
         .bmp => try BMP.decode(args.gpa, data),
-        // .qoi => try QOI.decode(gpa, data),
+        .qoi => try QOI.decode(args.gpa, data),
         // .grayscale => std.debug.print("Grayscale.\n", .{}),
         else => unreachable,
     };

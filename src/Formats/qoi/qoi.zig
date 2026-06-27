@@ -23,21 +23,21 @@ const RGB = @import("../../Colors/rgb.zig");
 const RGBS = @import("../../Colors/rgbs.zig");
 const RGBA = @import("../../Colors/rgba.zig");
 const RGBAS = @import("../../Colors/rgbas.zig");
-const Pixels = @import("../../Colors/Pixels.zig");
+const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const isSigSame = @import("Misc.zig").isSigSame;
 
 // Constants
 pub const HASH_TABLE_SIZE = 64;
 
-pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
+pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     const pixels_slice = data[14 .. data.len - 8];
     if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - END_MARKER.len ..], &END_MARKER))
         return Error.Decode.InvalidEndMarker;
 
     const n_pixels = hdr.width * hdr.height;
-    const pixels: Pixels = switch (hdr.channels) {
+    const pixels: Pixels = switch (hdr.channel) {
         .rgb => .{ .rgb = try .initEmpty(gpa, n_pixels) },
         .rgba => .{ .rgba = try .initEmpty(gpa, n_pixels) },
     };
@@ -58,8 +58,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
                 i += @sizeOf(RGB);
             },
             .rgba => {
-                if (i + @sizeOf(RGBA) > pixels_slice.len) return Error.Decode.UnexpectedEndOfData;
-                inline for (comptime std.meta.fieldNamse(RGBA), 0..) |field_name, k| {
+                if (i + @sizeOf(RGBA) > pixels_slice.len) //
+                    return Error.Decode.UnexpectedEndOfData;
+                inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
                     @field(prev_pixel, field_name) = pixels_slice[i + k + 1];
                 }
                 i += @sizeOf(RGBA);
@@ -92,7 +93,8 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
                     },
                     .run => {
                         const run: usize = (byte & 0x3F) +% 1;
-                        if (j + run > n_pixels) return Error.Decode.DataOutOfBounds;
+                        if (j + run > n_pixels) //
+                            return Error.Decode.DataOutOfBounds;
                         switch (pixels) {
                             .rgb => |rgbs| {
                                 inline for (comptime std.meta.fieldNames(RGB)) |field_name| {
@@ -124,9 +126,18 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void {
             else => unreachable,
         }
     }
-
     // verify end marker
     if (i != pixels_slice.len - 8) return Error.Decode.InvalidEndMarker;
+    // return image
+    return .{
+        .fmt = switch (hdr.channel) {
+            .rgb => .r8g8b8_srgb,
+            .rgba => .r8g8b8a8_srgb,
+        },
+        .width = hdr.width,
+        .height = hdr.height,
+        .pixels = pixels,
+    };
 }
 
 // pub fn encode(
