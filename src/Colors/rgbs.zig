@@ -9,14 +9,13 @@ const RGBAS = @import("rgbas.zig");
 const RGBS = @This();
 
 const Order = RGB.Order;
-const field_names = std.meta.fieldNames(RGB);
 
 ptr: [*]u8,
 len: usize,
 
 pub fn initEmpty(allo: std.mem.Allocator, len: usize) !RGBS {
     if (len == 0) return error.InvalidDataLen;
-    const rgbs = try allo.alloc(u8, len * field_names.len);
+    const rgbs = try allo.alloc(u8, len * @sizeOf(RGB));
     errdefer allo.free(rgbs);
     return .{
         .ptr = rgbs.ptr,
@@ -26,8 +25,8 @@ pub fn initEmpty(allo: std.mem.Allocator, len: usize) !RGBS {
 
 pub fn init(allo: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     if (data.len == 0) return error.InvalidDataLen;
-    if (@mod(data.len, field_names.len) != 0) return error.InvalidDataLen;
-    const len = data.len / field_names.len;
+    if (@mod(data.len, @sizeOf(RGB)) != 0) return error.InvalidDataLen;
+    const len = data.len / @sizeOf(RGB);
 
     const rgbs = try allo.alloc(u8, data.len);
     errdefer allo.free(rgbs);
@@ -36,10 +35,10 @@ pub fn init(allo: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     var j: usize = 0;
     while (i < len) : ({
         i += 1;
-        j += field_names.len;
+        j += @sizeOf(RGB);
     }) {
-        const rgb: RGB = .initOrder(data[j..][0..field_names.len], order);
-        inline for (field_names, 0..) |field_name, k| {
+        const rgb: RGB = .initOrder(data[j..][0..@sizeOf(RGB)], order);
+        inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
             rgbs.ptr[i + len * k] = @field(rgb, field_name);
         }
     }
@@ -51,7 +50,7 @@ pub fn init(allo: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
 }
 
 pub fn dupe(self: RGBS, allo: std.mem.Allocator) !RGBS {
-    const rgbs = try allo.dupe(u8, self.ptr[0 .. self.len * field_names.len]);
+    const rgbs = try allo.dupe(u8, self.ptr[0 .. self.len * @sizeOf(RGB)]);
     return .{
         .ptr = rgbs.ptr,
         .len = self.len,
@@ -59,12 +58,12 @@ pub fn dupe(self: RGBS, allo: std.mem.Allocator) !RGBS {
 }
 
 pub fn deinit(self: RGBS, allo: std.mem.Allocator) void {
-    allo.free(self.ptr[0 .. self.len * field_names.len]);
+    allo.free(self.ptr[0 .. self.len * @sizeOf(RGB)]);
 }
 
 pub fn replace(self: RGBS, i: usize, rgb: RGB) !void {
     if (i >= self.len) return error.OutOfBounds;
-    inline for (field_names, 0..) |field_name, k| {
+    inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
         self.ptr[i + k * self.len] = @field(rgb, field_name);
     }
 }
@@ -72,7 +71,7 @@ pub fn replace(self: RGBS, i: usize, rgb: RGB) !void {
 pub fn get(self: RGBS, i: usize) !RGB {
     if (i > self.len) return error.OutOfBounds;
     var rgb: RGB = undefined;
-    inline for (field_names, 0..) |field_name, k| {
+    inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
         @field(rgb, field_name) = self.ptr[i + k * self.len];
     }
     return rgb;
