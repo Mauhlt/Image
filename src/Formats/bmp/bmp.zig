@@ -68,19 +68,22 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     try hdr.encode(w);
     switch (img.pixels) {
         .gray => |grays| {
-            for (grays.slice) |gray| {
+            for (0..grays.len) |i| {
+                const gray = try grays.get(i);
                 try w.writeByte(gray.g);
             }
         },
         .rgb => |rgbs| {
-            for (rgbs.slice) |rgb| {
+            for (0..rgbs.len) |i| {
+                const rgb = try rgbs.get(i);
                 try w.writeByte(rgb.b);
                 try w.writeByte(rgb.g);
                 try w.writeByte(rgb.r);
             }
         },
         .rgba => |rgbas| {
-            for (rgbas.slice) |rgba| {
+            for (0..rgbas.len) |i| {
+                const rgba = try rgbas.get(i);
                 try w.writeByte(rgba.b);
                 try w.writeByte(rgba.g);
                 try w.writeByte(rgba.r);
