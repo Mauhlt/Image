@@ -22,18 +22,10 @@ pub fn fromImage(img: *const Image) !@This() {
         .rgba => .rgba,
         else => return Error.Encode.InvalidColorspace,
     };
-    const colorspace = blk: {
-        const tagname = @tagName(img.fmt);
-        var colorspace: Colorspace = undefined;
-        if (std.mem.endsWith(u8, tagname, "srgb")) {
-            colorspace = .srgb;
-        } else if (std.mem.endsWith(u8, tagname, "unorm")) {
-            colorspace = .linear;
-        } else {
-            return Error.Encode.InvalidColorspace;
-        }
-        break :blk colorspace;
-    };
+    const tagname = @tagName(img.fmt);
+    const colorspace = if (std.mem.endsWith(u8, tagname, "srgb")) .srgb //
+        else if (std.mem.endsWith(u8, tagname, "unorm")) .linear //
+        else return Error.Encode.InvalidColorspace;
     return .{
         .width = img.width,
         .height = img.height,
@@ -45,8 +37,8 @@ pub fn fromImage(img: *const Image) !@This() {
 pub fn decode(data: []const u8) !@This() {
     std.debug.assert(data.len > 14);
     var i: usize = 0;
-    try isSigSame(SIG, data[i..][0..SIG.LEN]);
-    i += SIG.LEN;
+    try isSigSame(SIG, data[i..][0..SIG.len]);
+    i += SIG.len;
     const width = std.mem.readInt(u32, data[i..][0..4], .big);
     i += 4;
     const height = std.mem.readInt(u32, data[i..][0..4], .big);
@@ -61,7 +53,7 @@ pub fn decode(data: []const u8) !@This() {
         .width = width,
         .height = height,
         .channel = channel,
-        .colorpace = colorspace,
+        .colorspace = colorspace,
     };
 }
 
