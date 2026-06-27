@@ -25,12 +25,8 @@ pub const BitTags = enum(u2) {
     diff = 1,
     luma = 2,
     run = 3,
+
+    pub fn asU8(self: BitTags) u8 {
+        return @as(u8, @intFromEnum(self)) << 6;
+    }
 };
-
-pub fn hashRGBA(c: RGBA) u6 {
-    return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
-}
-
-pub fn hashRGB(c: RGB) u6 {
-    return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7);
-}
