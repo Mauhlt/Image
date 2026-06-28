@@ -118,13 +118,13 @@ pub fn toRGBS(self: RGBAS, gpa: std.mem.Allocator) !RGBS {
     return rgbs;
 }
 
-pub fn first64Matches(self: @This(), i: usize, rgb: RGBA) !usize {
+pub fn first64Matches(self: @This(), i: usize, rgba: RGBA) !usize {
     if (i >= self.len) return error.OutOfBounds;
     const V64 = @Vector(64, u8);
-    const rs: V64 = @splat(rgb.r);
-    const gs: V64 = @splat(rgb.g);
-    const bs: V64 = @splat(rgb.b);
-    const as: V64 = @splat(rgb.a);
+    const rs: V64 = @splat(rgba.r);
+    const gs: V64 = @splat(rgba.g);
+    const bs: V64 = @splat(rgba.b);
+    const as: V64 = @splat(rgba.a);
     if (i + 64 < self.len) {
         const match: u64 = @bitCast( //
             (@as(V64, self.ptr[self.len + i ..][0..64].*) == rs) & //
@@ -135,6 +135,7 @@ pub fn first64Matches(self: @This(), i: usize, rgb: RGBA) !usize {
         return @ctz(match);
     }
     const len = self.len - i;
+    if (len == 0) return 0;
     var r2s = [_]u8{0} ** 64;
     var g2s = [_]u8{0} ** 64;
     var b2s = [_]u8{0} ** 64;

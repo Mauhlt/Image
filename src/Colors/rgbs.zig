@@ -126,6 +126,7 @@ pub fn first64Matches(self: @This(), i: usize, rgb: RGB) !usize {
         return @ctz(match);
     }
     const len = self.len - i;
+    if (len == 0) return 0;
     var r2s = [_]u8{0} ** 64;
     var g2s = [_]u8{0} ** 64;
     var b2s = [_]u8{0} ** 64;
