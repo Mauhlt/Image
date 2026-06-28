@@ -132,15 +132,16 @@ pub fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixel
         if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
         j += 1;
 
-        switch (pixels) {
-            .rgb => |rgbs| try rgbs.replace(i, prev_pixel.toRGB()),
-            .rgba => |rgbas| try rgbas.replace(i, prev_pixel),
-            else => unreachable,
-        }
+        try pixels.rgbs.replace(i, prev_pixel);
     }
+
+    return pixels;
 }
 
 pub fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
+    const pixels = .{ .rgba = try .initEmpty(gpa, n_pixels) };
+    errdefer pixels.deinit(gpa);
+
     var i: usize = 0; // data position
     var j: usize = 0; // pixels position
     var prev_pixel: RGBA = .{ .r = 0, .b = 0, .g = 0, .a = 0xFF };
@@ -168,7 +169,7 @@ pub fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixe
             else => {
                 const bit_tag: BitTags = @enumFromInt(byte >> 6);
                 switch (bit_tag) {
-                    .index => prev_pixel = table[(byte & 0x3F)],
+                    .index => prev_pixel = table[byte & 0x3F],
                     .diff => {
                         const drgb: RGB = .{
                             .r = (byte >> 4) & 0x03,
@@ -197,8 +198,13 @@ pub fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixe
                         const run: usize = (byte & 0x3F) +% 1;
                         if (j + run > n_pixels) //
                             return Error.Decode.DataOutOfBounds;
-                        inline for (comptime std.meta.fieldNames(RGBA)) |field_name| {
-                            @memset(rgbas.ptr[j..][0..run], @field(prev_pixel, field_name));
+                        switch (pixels) {
+                            .rgb => |rgbs| {
+                                inline for (comptime std.meta.fieldNames(RGB)) |field_name| {
+                                    @memset(rgbs.ptr[j..][0..run], @field(prev_pixel, field_name));
+                                }
+                            },
+                            else => unreachable,
                         }
                         j += run;
                         continue;
@@ -212,12 +218,9 @@ pub fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixe
         if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
         j += 1;
 
-        switch (pixels) {
-            .rgb => |rgbs| try rgbs.replace(i, prev_pixel.toRGB()),
-            .rgba => |rgbas| try rgbas.replace(i, prev_pixel),
-            else => unreachable,
-        }
+        try pixels.rgbas.replace(i, prev_pixel);
     }
+
     return pixels;
 }
 
