@@ -319,8 +319,9 @@ fn encodeRGB(buf: []u8, data: []const RGB) !usize {
         }
         // rgb
         buf[j] = @intFromEnum(ByteTags.rgb);
+        j += 1;
         inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-            buf[j + k + 1] = @field(px, field_name);
+            buf[j + k] = @field(px, field_name);
         }
         j += comptime std.meta.fieldNames(RGB).len;
     }
@@ -342,8 +343,8 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
         inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
             @field(px, field_name) = data[i + k];
         }
-        // run
-        if (px.eql(prev)) {
+        // run - slow - should be simd
+        if (px.eql(prev)) { // too slow
             run += 1;
             if (run == 62 or j == n_pixels - 1) {
                 buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
@@ -395,10 +396,22 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
             prev = px;
             continue;
         }
+        // rgb
+        if (px.a == prev.a) {
+            buf[j] = @intFromEnum(ByteTags.rgb);
+            j += 1;
+            inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
+                buf[j + k] = @field(px, field_name);
+            }
+            j += comptime std.meta.fieldNames(RGB).len;
+            prev = px;
+            continue;
+        }
         // rgba
         buf[j] = @intFromEnum(ByteTags.rgba);
+        j += 1;
         inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
-            buf[j + k + 1] = @field(px, field_name);
+            buf[j + k] = @field(px, field_name);
         }
         j += comptime std.meta.fieldNames(RGBA).len;
     }
