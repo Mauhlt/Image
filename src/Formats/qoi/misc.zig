@@ -25,8 +25,4 @@ pub const BitTags = enum(u2) {
     diff = 1,
     luma = 2,
     run = 3,
-
-    pub fn asU8(self: BitTags) u8 {
-        return @as(u8, @intFromEnum(self)) << 6;
-    }
 };
