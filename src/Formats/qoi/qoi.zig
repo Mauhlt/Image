@@ -395,17 +395,12 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
             prev = px;
             continue;
         }
-        // rgb
-        buf[j] = @intFromEnum(ByteTags.rgb);
-        inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-            buf[j + k + 1] = @field(px, field_name);
-        }
-        j += comptime std.meta.fieldNames(RGB).len;
         // rgba
         buf[j] = @intFromEnum(ByteTags.rgba);
         inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
             buf[j + k + 1] = @field(px, field_name);
         }
+        j += comptime std.meta.fieldNames(RGBA).len;
     }
     return j;
 }
