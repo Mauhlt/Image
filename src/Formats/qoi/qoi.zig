@@ -230,48 +230,114 @@ pub fn encode(
     w: *std.Io.Writer,
     maybe_hdr: ?Header,
 ) !void {
-    _ = gpa;
-    _ = img;
-    _ = w;
-    _ = maybe_hdr;
+    const n_pixels = switch (img.pixels) {
+        inline else => |colors| colors.len,
+    };
 
-    // const n_pixels = switch (img.pixels) {
-    //     inline else => |colors| colors.slice.len,
-    // };
-    // const max_size = @sizeOf(Header) + n_pixels * 5 + END_MARKER.len;
-    // var buf = try gpa.alloc(u8, max_size);
-    // defer gpa.free(buf);
+    // over-allocate memory
+    const max_size = @sizeOf(Header) + n_pixels * 5 + END_MARKER.len;
+    var buf = try gpa.alloc(u8, max_size);
+    defer gpa.free(buf);
 
-    // const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
-    // try hdr.encode(w);
+    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
+    try hdr.encode(w);
 
-    // switch (img.pixels) {
-    //     .rgb => |rgbs| encodeRGBSIMD(.rgb, &buf, rgbs, hashRGB),
-    //     .rgba => |rgbas| encodeRGBASIMD(.rgba, &buf, rgbas, hashRGBA),
-    //     else => unreachable,
-    // }
+    switch (img.pixels) {
+        .rgb => |rgbs| try encodeRGB(&buf, rgbs),
+        .rgba => |rgbas| try encodeRGBA(&buf, rgbas),
+        else => unreachable,
+    }
+
+    try w.writeAll(&END_MARKER);
 }
 
 fn encodeRGB(buf: []u8, data: []const RGB) !void {
-    const n_pixels = data.len;
+    if (@mod(data.len, @sizeOf(RGB)) != 0) return error.InvalidDataLength;
+    const n_pixels = data.len / @sizeOf(RGB);
     var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
     var prev: RGB = .{};
     var px: RGB = .{};
-    var run: usize = 0;
+    var run: u8 = 0;
 
-    var i: usize = 0;
-    var j: usize = 0;
+    var i: usize = 0; // data idx
+    var j: usize = 0; // pixel idx
     while (i < data.len) : (i += 1) {
-        // fill in px
+        // fill px
         inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
             @field(px, field_name) = data[i + k];
         }
         // run
         if (px.eql(prev)) {
-            const tag = BitTags.run;
             run += 1;
-            if (run == 62 or i == n_pixels - 1) {
-                buf[j] = tag.to | @as(u8, @intCast(run - 1));
+            if (run == 62 or j == n_pixels - 1) {
+                buf[j] = @intFromEnum(BitTags.run) | run - 1;
+                j += 1;
+                run = 0;
+            }
+            prev = px;
+            continue;
+        }
+        // flush
+        if (run > 0) {
+            buf[j] = @as(u8, @intFromEnum(BitTags.run) << 6) | @as(u8, @intCast(run - 1));
+        }
+        // index
+        const idx = hashRGB(px);
+        if (table[idx].eql(px)) {
+            buf[j] = @as(u8, @intFromEnum(BitTags.index) << 6) | @as(u8, idx);
+            j += 1;
+            table[idx] = px;
+            prev = px;
+            continue;
+        }
+        table[idx] = px;
+
+        const dr = px.r -% prev.r;
+        const dg = px.g -% prev.g;
+        const db = px.b -% prev.b;
+        if (dr +% 2 <= 3 and dg +% 2 <= 3 and db +% 2 <= 3) { // diff
+            buf[j] = @as(u8, @intFromEnum(BitTags.diff) << 6) |
+                @as(u8, @intCast(dr +% 2)) << 4 |
+                @as(u8, @intCast(dg +% 2)) << 2 |
+                @as(u8, @intCast(db +% 2));
+            j += 1;
+            continue;
+        }
+        const dr_dg = dr -% dg;
+        const db_dg = db -% dg;
+        if (dg +% 32 <= 64 and dr_dg +% 8 <= 16 and db_dg +% 8 <= 16) { // luma
+            buf[j] = (@intFromEnum(BitTags.luma) << 6) | dg + 32;
+            buf[j + 1] = dr_dg << 4 | db_dg +% 8;
+            continue;
+        }
+        buf[j] = @intFromEnum(ByteTags.rgb);
+        inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
+            buf[j + k + 1] = @field(px, field_name);
+        }
+        j += comptime std.meta.fieldNames(RGB).len;
+    }
+}
+
+fn encodeRGBA(buf: []u8, data: []const RGBA) !void {
+    if (@mod(data.len, @sizeOf(RGBA)) != 0) return error.InvalidDataLength;
+    const n_pixels = data.len / @sizeOf(RGBA);
+    var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
+    var prev: RGBA = .{};
+    var px: RGBA = .{};
+    var run: u8 = 0;
+
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < data.len) : (i += 1) {
+        // fill px
+        inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
+            @field(px, field_name) = data[i + k];
+        }
+        // run
+        if (px.eql(prev)) {
+            run += 1;
+            if (run == 62 or j == n_pixels - 1) {
+                buf[j] = @intFromEnum(BitTags.run) | run - 1;
                 j += 1;
                 run = 0;
             }
@@ -318,29 +384,7 @@ fn encodeRGB(buf: []u8, data: []const RGB) !void {
         j += comptime std.meta.fieldNames(RGB).len;
     }
 }
-//         } else {
-//             // RGBA
-//             buf[b] = @intFromEnum(ByteTags.rgba);
-//             buf[b + 1] = px.r;
-//             buf[b + 2] = px.g;
-//             buf[b + 3] = px.b;
-//             buf[b + 4] = px.a;
-//         }
-//         prev = px;
-//     }
-//     // end marker
-//     @memcpy(buf[b .. b + END_MARKER.len], &END_MARKER);
-//     b += END_MARKER.len;
-//     return buf;
-//
-//     // shrink memory to used values
-//     // const result = try gpa.realloc(buf, b);
-//     // return result;
-// }
-//
-//
-// fn encodeDataRGBA() !void {}
-//
+
 // fn encodeDataSIMD(
 //     comptime T: Channel,
 //     buf: []u8,
@@ -556,49 +600,49 @@ fn encodeRGB(buf: []u8, data: []const RGB) !void {
 //     }
 // }
 //
-// // test "Basic Fns Work How I Expect" {
-// //     if (px.a == prev.a) {
-// //         const drgb: RGB = .{
-// //             .r = px.r -% prev.r,
-// //             .g = px.g -% prev.g,
-// //             .b = px.b -% prev.b,
-// //         };
-// //         const drgb_dg: RGB = .{
-// //             .r = drgb.r - drgb.g,
-// //             .g = drgb.g,
-// //             .b = drgb.b - drgb.g,
-// //         };
-// //         if (drgb.r >= -2 and drgb <= 1 and //
-// //             dg >= -2 and dg <= 1 and //
-// //             db >= -2 and db <= 1)
-// //         {
-// //             // diff
-// //             buf[j] = calcDiff(.{ .r = @intCast(dr), .g = @intCast(dg), .b = @intCast(db) });
-// //             j += 1;
-// //         } else if (dg >= -32 and dg <= 31 and
-// //             dr_dg >= -8 and dr_dg <= 7 and
-// //             db_dg >= -8 and db_dg <= 7)
-// //         {
-// //             // luma
-// //             buf[j] = (@intFromEnum(BitTags.luma) << 6) | (@as(u8, @intCast(dg)) + 32);
-// //             buf[j + 1] = (@as(u8, @intCast(dr_dg + 8)) << 4) | (@as(u8, @intCast(db_dg)) + 8);
-// //         } else {
-// //             // rgb
-// //             buf[j] = @intFromEnum(ByteTags.rgb);
-// //             buf[j + 1] = px.r;
-// //             buf[j + 2] = px.g;
-// //             buf[j + 3] = px.b;
-// //             j += 4;
-// //         }
-// //     } else {
-// //         // RGBA
-// //         buf[j] = @intFromEnum(ByteTags.rgba);
-// //         buf[j + 1] = px.r;
-// //         buf[j + 2] = px.g;
-// //         buf[j + 3] = px.b;
-// //         buf[j + 4] = px.a;
-// //         j += 5;
-// //     }
-// //     prev = px;
-// // }
-// //
+// test "Basic Fns Work How I Expect" {
+//     if (px.a == prev.a) {
+//         const drgb: RGB = .{
+//             .r = px.r -% prev.r,
+//             .g = px.g -% prev.g,
+//             .b = px.b -% prev.b,
+//         };
+//         const drgb_dg: RGB = .{
+//             .r = drgb.r - drgb.g,
+//             .g = drgb.g,
+//             .b = drgb.b - drgb.g,
+//         };
+//         if (drgb.r >= -2 and drgb <= 1 and //
+//             dg >= -2 and dg <= 1 and //
+//             db >= -2 and db <= 1)
+//         {
+//             // diff
+//             buf[j] = calcDiff(.{ .r = @intCast(dr), .g = @intCast(dg), .b = @intCast(db) });
+//             j += 1;
+//         } else if (dg >= -32 and dg <= 31 and
+//             dr_dg >= -8 and dr_dg <= 7 and
+//             db_dg >= -8 and db_dg <= 7)
+//         {
+//             // luma
+//             buf[j] = (@intFromEnum(BitTags.luma) << 6) | (@as(u8, @intCast(dg)) + 32);
+//             buf[j + 1] = (@as(u8, @intCast(dr_dg + 8)) << 4) | (@as(u8, @intCast(db_dg)) + 8);
+//         } else {
+//             // rgb
+//             buf[j] = @intFromEnum(ByteTags.rgb);
+//             buf[j + 1] = px.r;
+//             buf[j + 2] = px.g;
+//             buf[j + 3] = px.b;
+//             j += 4;
+//         }
+//     } else {
+//         // RGBA
+//         buf[j] = @intFromEnum(ByteTags.rgba);
+//         buf[j + 1] = px.r;
+//         buf[j + 2] = px.g;
+//         buf[j + 3] = px.b;
+//         buf[j + 4] = px.a;
+//         j += 5;
+//     }
+//     prev = px;
+// }
+//
