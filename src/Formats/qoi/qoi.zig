@@ -234,7 +234,7 @@ pub fn encode(
         inline else => |colors| colors.len,
     };
 
-    // over-allocate memory
+    // over-allocate memory - needs to be minimized later
     const max_size = @sizeOf(Header) + n_pixels * 5 + END_MARKER.len;
     var buf = try gpa.alloc(u8, max_size);
     defer gpa.free(buf);
@@ -258,7 +258,7 @@ fn encodeRGB(buf: []u8, data: []const RGB) !void {
     var prev: RGB = .{};
     var px: RGB = .{};
     var run: u8 = 0;
-
+    // idx
     var i: usize = 0; // data idx
     var j: usize = 0; // pixel idx
     while (i < data.len) : (i += 1) {
@@ -270,32 +270,33 @@ fn encodeRGB(buf: []u8, data: []const RGB) !void {
         if (px.eql(prev)) {
             run += 1;
             if (run == 62 or j == n_pixels - 1) {
-                buf[j] = @intFromEnum(BitTags.run) | run - 1;
+                buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
                 j += 1;
                 run = 0;
             }
             prev = px;
             continue;
         }
-        // flush
+        // flush run
         if (run > 0) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.run) << 6) | @as(u8, @intCast(run - 1));
+            buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | (run - 1);
+            run = 0;
         }
         // index
-        const idx = hashRGB(px);
+        const idx: u8 = hashRGB(px);
         if (table[idx].eql(px)) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.index) << 6) | @as(u8, idx);
+            buf[j] = @as(u8, @intFromEnum(BitTags.index)) << 6 | idx;
             j += 1;
             table[idx] = px;
             prev = px;
             continue;
         }
         table[idx] = px;
-
+        // diff
         const dr = px.r -% prev.r;
         const dg = px.g -% prev.g;
         const db = px.b -% prev.b;
-        if (dr +% 2 <= 3 and dg +% 2 <= 3 and db +% 2 <= 3) { // diff
+        if (dr +% 2 <= 3 and dg +% 2 <= 3 and db +% 2 <= 3) {
             buf[j] = @as(u8, @intFromEnum(BitTags.diff) << 6) |
                 @as(u8, @intCast(dr +% 2)) << 4 |
                 @as(u8, @intCast(dg +% 2)) << 2 |
@@ -303,13 +304,15 @@ fn encodeRGB(buf: []u8, data: []const RGB) !void {
             j += 1;
             continue;
         }
+        // luma
         const dr_dg = dr -% dg;
         const db_dg = db -% dg;
-        if (dg +% 32 <= 64 and dr_dg +% 8 <= 16 and db_dg +% 8 <= 16) { // luma
+        if (dg +% 32 <= 64 and dr_dg +% 8 <= 16 and db_dg +% 8 <= 16) {
             buf[j] = (@intFromEnum(BitTags.luma) << 6) | dg + 32;
             buf[j + 1] = dr_dg << 4 | db_dg +% 8;
             continue;
         }
+        // rgb
         buf[j] = @intFromEnum(ByteTags.rgb);
         inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
             buf[j + k + 1] = @field(px, field_name);
@@ -337,21 +340,22 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !void {
         if (px.eql(prev)) {
             run += 1;
             if (run == 62 or j == n_pixels - 1) {
-                buf[j] = @intFromEnum(BitTags.run) | run - 1;
+                buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
                 j += 1;
                 run = 0;
             }
             prev = px;
             continue;
         }
-        // flush
+        // flush run
         if (run > 0) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.run) << 6) | @as(u8, @intCast(run - 1));
+            buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | (run - 1);
+            run = 0;
         }
         // index
-        const idx = hashRGB(px);
+        const idx = hashRGBA(px);
         if (table[idx].eql(px)) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.index) << 6) | @as(u8, idx);
+            buf[j] = @as(u8, @intFromEnum(BitTags.index)) << 6 | idx;
             j += 1;
             table[idx] = px;
             prev = px;
@@ -359,9 +363,11 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !void {
         }
         table[idx] = px;
 
-        const dr = px.r -% prev.r;
-        const dg = px.g -% prev.g;
-        const db = px.b -% prev.b;
+        const drgb: RGBA = .{
+            .r = px.r -% prev.r,
+            .g = px.g -% prev.g,
+            .b = px.b -% prev.b,
+        };
         if (dr +% 2 <= 3 and dg +% 2 <= 3 and db +% 2 <= 3) { // diff
             buf[j] = @as(u8, @intFromEnum(BitTags.diff) << 6) |
                 @as(u8, @intCast(dr +% 2) << 4) |
@@ -516,7 +522,7 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !void {
 //         (rgb.g + 2) << 2 |
 //         (rgb.b + 2);
 // }
-// //
+
 // // fn calcLuma() void {}
 //
 // fn countStartingMatches(
