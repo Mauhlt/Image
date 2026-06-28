@@ -250,7 +250,7 @@ pub fn encode(
     try w.writeAll(&END_MARKER);
 }
 
-fn encodeRGB(buf: []u8, data: []const RGB) !usize {
+fn encodeRGB(buf: []u8, data: RGBS) !usize {
     if (@mod(data.len, @sizeOf(RGB)) != 0) return error.InvalidDataLength;
     const n_pixels = data.len / @sizeOf(RGB);
     var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
@@ -262,9 +262,7 @@ fn encodeRGB(buf: []u8, data: []const RGB) !usize {
     var j: usize = 0; // pixel idx
     while (i < data.len) : (i += 1) {
         // fill px
-        inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-            @field(px, field_name) = data[i + k];
-        }
+        px = data.get(i) catch unreachable;
         // run
         if (px.eql(prev)) {
             run += 1;
@@ -307,10 +305,10 @@ fn encodeRGB(buf: []u8, data: []const RGB) !usize {
             continue;
         }
         // luma
-        drgb.g +% 32;
+        drgb.g = drgb.g +% 32;
         const dr_dg = drgb.r -% drgb.g +% 8;
         const db_dg = drgb.b -% drgb.g +% 8;
-        if (drgb.g <= 64 and dr_dg <= 16 and db_dg <= 16) {
+        if (drgb.g < 64 and dr_dg < 16 and db_dg < 16) {
             buf[j] = (@as(u8, @intFromEnum(BitTags.luma)) << 6) | drgb.g;
             buf[j + 1] = (dr_dg << 4) | (db_dg & 0x0F);
             j += 2;
@@ -324,11 +322,12 @@ fn encodeRGB(buf: []u8, data: []const RGB) !usize {
             buf[j + k] = @field(px, field_name);
         }
         j += comptime std.meta.fieldNames(RGB).len;
+        prev = px;
     }
     return j;
 }
 
-fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
+fn encodeRGBA(buf: []u8, data: RGBAS) !usize {
     if (@mod(data.len, @sizeOf(RGBA)) != 0) return error.InvalidDataLength;
     const n_pixels = data.len / @sizeOf(RGBA);
     var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
@@ -339,11 +338,8 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
     var i: usize = 0;
     var j: usize = 0;
     while (i < data.len) : (i += 1) {
-        // fill px
-        inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
-            @field(px, field_name) = data[i + k];
-        }
-        // run - slow - should be simd
+        px = data.get(i) catch unreachable;
+        // simd approach
         if (px.eql(prev)) { // too slow
             run += 1;
             if (run == 62 or j == n_pixels - 1) {
@@ -369,13 +365,12 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
             continue;
         }
         table[idx] = px;
-
+        // diff
         var drgb: RGBA = .{
             .r = px.r -% prev.r,
             .g = px.g -% prev.g,
             .b = px.b -% prev.b,
         };
-        // diff
         if (drgb.r +% 2 <= 3 and drgb.g +% 2 <= 3 and drgb.b +% 2 <= 3) {
             buf[j] = (@as(u8, @intFromEnum(BitTags.diff)) << 6) |
                 (@as(u8, @intCast(drgb.r +% 2)) << 4) |
@@ -389,7 +384,7 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
         drgb.g = drgb.g +% 32;
         const dr_dg = drgb.r -% drgb.g +% 8;
         const db_dg = drgb.b -% drgb.g +% 8;
-        if (drgb.g <= 64 and dr_dg <= 16 and db_dg <= 16) {
+        if (drgb.g < 64 and dr_dg < 16 and db_dg < 16) {
             buf[j] = (@intFromEnum(BitTags.luma) << 6) | drgb.g;
             buf[j + 1] = (dr_dg << 4) | (db_dg & 0x0F);
             j += 2;
@@ -414,6 +409,7 @@ fn encodeRGBA(buf: []u8, data: []const RGBA) !usize {
             buf[j + k] = @field(px, field_name);
         }
         j += comptime std.meta.fieldNames(RGBA).len;
+        prev = px;
     }
     return j;
 }
