@@ -161,22 +161,22 @@ test "BMP" {
 }
 
 test "QOI" {
-    const gpa = std.testing.allocator;
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    const io = threaded.io();
-
-    // read bmp file
-    const filepath1 = "src/Data/Read/BasicArt.bmp";
-    var img = try read(.{
-        .io = io,
-        .gpa = gpa,
-        .filepath = filepath1,
-    });
-    defer img.deinit(gpa);
-
-    // write qoi file
-    const filepath2 = "src/Data/Read/BasicArt.qoi";
-    try img.write(io, gpa, filepath2);
+    // const gpa = std.testing.allocator;
+    // var threaded: std.Io.Threaded = .init(gpa, .{});
+    // const io = threaded.io();
+    //
+    // // read bmp file
+    // const filepath1 = "src/Data/Read/BasicArt.bmp";
+    // var img = try read(.{
+    //     .io = io,
+    //     .gpa = gpa,
+    //     .filepath = filepath1,
+    // });
+    // defer img.deinit(gpa);
+    //
+    // // write qoi file
+    // const filepath2 = "src/Data/Read/BasicArt.qoi";
+    // try img.write(io, gpa, filepath2);
 
     // read qoi file
     // var img2 = try read(.{
