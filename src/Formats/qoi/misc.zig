@@ -1,11 +1,11 @@
 const RGB = @import("../../Colors/rgb.zig");
 const RGBA = @import("../../Colors/rgba.zig");
 
-pub const SIG: []const u8 = "QOIF";
+pub const SIG: []const u8 = "qoif";
 pub const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
 
 pub const Colorspace = enum(u8) {
-    srgb = 0,
+    srgb = 0, // linear alpha
     linear = 1,
 };
 

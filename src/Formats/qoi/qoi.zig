@@ -28,18 +28,19 @@ const isSigSame = @import("Misc.zig").isSigSame;
 // Constants
 pub const HASH_TABLE_SIZE = 64;
 
-pub fn hashRGBA(c: RGBA) u6 {
-    return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7 +% c.a *% 11);
+pub fn hashRGB(rgb: RGB) u6 {
+    return @truncate(rgb.r *% 3 +% rgb.g *% 5 +% rgb.b *% 7);
 }
 
-pub fn hashRGB(c: RGB) u6 {
-    return @truncate(c.r *% 3 +% c.g *% 5 +% c.b *% 7);
+pub fn hashRGBA(rgba: RGBA) u6 {
+    return @truncate(rgba.r *% 3 +% rgba.g *% 5 +% rgba.b *% 7 +% rgba.a *% 11);
 }
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
-    const hdr: Header = try .decode(data);
+    if (data.len < 22) return error.InvalidDataLength;
+    const hdr: Header = try .decode(data[0..14]);
     const pixels_slice = data[14 .. data.len - 8];
-    if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - END_MARKER.len ..], &END_MARKER))
+    if (!std.mem.eql(u8, data[data.len - END_MARKER.len ..], END_MARKER[0..END_MARKER.len]))
         return Error.Decode.InvalidEndMarker;
     const fmt: Format = switch (hdr.channel) {
         .rgb => .r8g8b8_srgb,
@@ -47,8 +48,8 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
     const n_pixels = hdr.width * hdr.height;
     const pixels: Pixels = switch (hdr.channel) {
-        .rgb => try decodeRGB(gpa, n_pixels, data),
-        .rgba => try decodeRGBA(gpa, n_pixels, data),
+        .rgb => try decodeRGB(gpa, n_pixels, pixels_slice),
+        .rgba => try decodeRGBA(gpa, n_pixels, pixels_slice),
     };
     defer pixels.deinit(gpa);
     return .{
@@ -131,7 +132,7 @@ pub fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixel
         j += 1;
         try pixels.rgb.replace(i, prev_pixel);
     }
-
+    std.debug.assert(j == n_pixels);
     return pixels;
 }
 
@@ -223,24 +224,21 @@ pub fn encode(
     w: *std.Io.Writer,
     maybe_hdr: ?Header,
 ) !void {
-    const n_pixels = switch (img.pixels) {
-        inline else => |colors| colors.len,
-    };
-
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
 
-    const max_size = n_pixels * 5; // overestimate
-    var buf = try gpa.alloc(u8, max_size);
+    const max_size = img.width * img.height * 5; // overestimate: assumes new RGBA per pixel
+    const buf = try gpa.alloc(u8, max_size);
     defer gpa.free(buf);
+
     const n_bytes_written = switch (img.pixels) {
-        .rgb => |rgbs| try encodeRGB(&buf, rgbs),
-        .rgba => |rgbas| try encodeRGBA(&buf, rgbas),
+        .rgb => |rgbs| try encodeRGB(buf, rgbs),
+        .rgba => |rgbas| try encodeRGBA(buf, rgbas),
         else => unreachable,
     };
     try w.writeAll(buf[0..n_bytes_written]);
-
-    try w.writeAll(&END_MARKER);
+    for (0..END_MARKER.len) |i| try w.writeByte(END_MARKER[i]);
+    try w.flush();
 }
 
 fn encodeRGB(buf: []u8, rgbs: RGBS) !usize {
@@ -255,9 +253,9 @@ fn encodeRGB(buf: []u8, rgbs: RGBS) !usize {
     while (i < rgbs.len) : (i += 1) {
         px = rgbs.get(i) catch unreachable;
         // simd run
-        const matches = rgbs.first64MatchesAt(i) catch unreachable;
+        const matches: u8 = rgbs.first64MatchesAt(i) catch unreachable;
         if (matches > 1) { // 2..64
-            run = @max(63, matches) - 1; // 1..62
+            run = @max(63, matches) - 1; // 1..62 = 0b0011 1111
             buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | run;
             j += 1;
             i += run;
@@ -280,17 +278,14 @@ fn encodeRGB(buf: []u8, rgbs: RGBS) !usize {
             .g = px.g -% prev.g,
             .b = px.b -% prev.b,
         };
-        if (drgb.r +% 2 <= 3 and drgb.g +% 2 <= 3 and drgb.b +% 2 <= 3) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.diff) << 6) |
-                @as(u8, @intCast(drgb.r +% 2)) << 4 |
-                @as(u8, @intCast(drgb.g +% 2)) << 2 |
-                @as(u8, @intCast(drgb.b +% 2));
+        if ((drgb.r +% 2) <= 3 and (drgb.g +% 2) <= 3 and (drgb.b +% 2) <= 3) {
+            buf[j] = @as(u8, @intFromEnum(BitTags.diff)) << 6 | (drgb.r +% 2) << 4 | (drgb.g +% 2) << 2 | (drgb.b +% 2);
             j += 1;
             prev = px;
             continue;
         }
         // luma
-        drgb.g = drgb.g +% 32;
+        drgb.g +%= 32;
         const dr_dg = drgb.r -% drgb.g +% 8;
         const db_dg = drgb.b -% drgb.g +% 8;
         if (drgb.g < 64 and dr_dg < 16 and db_dg < 16) {
@@ -363,7 +358,7 @@ fn encodeRGBA(buf: []u8, rgbas: RGBAS) !usize {
         const dr_dg = drgb.r -% drgb.g +% 8;
         const db_dg = drgb.b -% drgb.g +% 8;
         if (drgb.g < 64 and dr_dg < 16 and db_dg < 16) {
-            buf[j] = (@intFromEnum(BitTags.luma) << 6) | drgb.g;
+            buf[j] = @as(u8, @intFromEnum(BitTags.luma)) << 6 | drgb.g;
             buf[j + 1] = (dr_dg << 4) | (db_dg & 0x0F);
             j += 2;
             prev = px;

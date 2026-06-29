@@ -1,15 +1,15 @@
 const std = @import("std");
-const isSigSame = @import("Misc.zig").isSigSame;
-const Error = @import("error.zig").Decode;
+const isSigSame = @import("../misc.zig").isSigSame;
+const Error = @import("../error.zig").Decode;
 
-const Image = @import("../root.zig");
-const GRAY = @import("../Colors/gray.zig");
-const GRAYS = @import("../Colors/grays.zig");
-const RGB = @import("../Colors/rgb.zig");
-const RGBS = @import("../Colors/rgbs.zig");
-const RGBA = @import("../Colors/rgba.zig");
-const RGBAS = @import("../Colors/rgbas.zig");
-const Pixels = @import("../Colors/Pixels.zig");
+const Image = @import("../../root.zig");
+const GRAY = @import("../../Colors/gray.zig");
+const GRAYS = @import("../../Colors/grays.zig");
+const RGB = @import("../../Colors/rgb.zig");
+const RGBS = @import("../../Colors/rgbs.zig");
+const RGBA = @import("../..//Colors/rgba.zig");
+const RGBAS = @import("../../Colors/rgbas.zig");
+const Pixels = @import("../../Colors/Pixels.zig");
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
     _ = gpa;
