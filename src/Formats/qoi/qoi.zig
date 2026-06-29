@@ -243,9 +243,8 @@ pub fn encode(
     try w.writeAll(&END_MARKER);
 }
 
-fn encodeRGB(buf: []u8, data: RGBS) !usize {
-    if (@mod(data.len, @sizeOf(RGB)) != 0) return error.InvalidDataLength;
-    const n_pixels = data.len / @sizeOf(RGB);
+fn encodeRGB(buf: []u8, rgbs: RGBS) !usize {
+    if (@mod(rgbs.len, @sizeOf(RGB)) != 0) return error.InvalidDataLength;
     var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
     var prev: RGB = .{};
     var px: RGB = .{};
@@ -253,26 +252,41 @@ fn encodeRGB(buf: []u8, data: RGBS) !usize {
     // idx
     var i: usize = 0; // data idx
     var j: usize = 0; // pixel idx
-    while (i < data.len) : (i += 1) {
-        // fill px
-        px = data.get(i) catch unreachable;
-        // run
-        if (px.eql(prev)) {
-            run += 1;
-            if (run == 62 or j == n_pixels - 1) {
-                buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
+    while (i < rgbs.len) : (i += 1) {
+        px = rgbs.get(i) catch unreachable;
+        // simd run
+        const matches = rgbs.first64MatchesAt(i) catch unreachable;
+        if (matches > 0) {
+            run = @max(62, matches);
+            if (run > 1) {
+                buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | (run - 1);
                 j += 1;
                 run = 0;
             }
             prev = px;
+            i += run;
             continue;
         }
-        // flush run
-        if (run > 0) {
-            buf[j] = (@as(u8, @intFromEnum(BitTags.run)) << 6) | (run - 1);
-            j += 1;
-            run = 0;
-        }
+        // old
+        // fill px
+        // px = data.get(i) catch unreachable;
+        // // run
+        // if (px.eql(prev)) {
+        //     run += 1;
+        //     if (run == 62 or j == n_pixels - 1) {
+        //         buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
+        //         j += 1;
+        //         run = 0;
+        //     }
+        //     prev = px;
+        //     continue;
+        // }
+        // // flush run
+        // if (run > 0) {
+        //     buf[j] = (@as(u8, @intFromEnum(BitTags.run)) << 6) | (run - 1);
+        //     j += 1;
+        //     run = 0;
+        // }
         // index
         const idx: u8 = hashRGB(px);
         if (table[idx].eql(px)) {
@@ -320,9 +334,8 @@ fn encodeRGB(buf: []u8, data: RGBS) !usize {
     return j;
 }
 
-fn encodeRGBA(buf: []u8, data: RGBAS) !usize {
-    if (@mod(data.len, @sizeOf(RGBA)) != 0) return error.InvalidDataLength;
-    const n_pixels = data.len / @sizeOf(RGBA);
+fn encodeRGBA(buf: []u8, rgbas: RGBAS) !usize {
+    if (@mod(rgbas.len, @sizeOf(RGBA)) != 0) return error.InvalidDataLength;
     var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
     var prev: RGBA = .{};
     var px: RGBA = .{};
@@ -330,25 +343,36 @@ fn encodeRGBA(buf: []u8, data: RGBAS) !usize {
 
     var i: usize = 0;
     var j: usize = 0;
-    while (i < data.len) : (i += 1) {
-        px = data.get(i) catch unreachable;
-        // simd approach
-        if (px.eql(prev)) { // too slow
-            run += 1;
-            if (run == 62 or j == n_pixels - 1) {
-                buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
-                j += 1;
-                run = 0;
-            }
-            prev = px;
-            continue;
-        }
-        // flush run
-        if (run > 0) {
+    const len = rgbas.len;
+    while (i < len) : (i += 1) {
+        const matches = rgbas.first64MatchesAt(i) catch unreachable;
+        if (matches > 0) {
+            run = @min(62, matches);
             buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | (run - 1);
             j += 1;
             run = 0;
+            prev = px;
+            i += run;
+            continue;
         }
+        // old
+        // if (px.eql(prev)) { // too slow
+        //     run += 1;
+        //     if (run == 62 or j == n_pixels - 1) {
+        //         buf[j] = @as(u8, @intFromEnum(BitTags.run)) | (run - 1);
+        //         j += 1;
+        //         run = 0;
+        //     }
+        //     prev = px;
+        //     continue;
+        // }
+        // flush run
+        // if (run > 0) {
+        //     buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | (run - 1);
+        //     j += 1;
+        //     run = 0;
+        // }
+        px = rgbas.get(i) catch unreachable;
         // index
         const idx = hashRGBA(px);
         if (table[idx].eql(px)) {
