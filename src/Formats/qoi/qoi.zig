@@ -35,7 +35,6 @@ pub fn hash(rgba: RGBA) u6 {
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (data.len < 22) return error.InvalidDataLength;
     const hdr: Header = try .decode(data[0..14]);
-    std.debug.print("{f}", .{hdr});
     if (!std.mem.eql(u8, data[data.len - END_MARKER.len ..], &END_MARKER))
         return Error.Decode.InvalidEndMarker;
     const pixels_slice = data[14 .. data.len - 8];
@@ -116,15 +115,15 @@ pub fn decoding(
                             .rgb => {
                                 const rgbs = pixels.rgb;
                                 @memset(rgbs.ptr[j..][0..run], prev_px.r);
-                                @memset(rgbs.ptr[j..][0..run], prev_px.g);
-                                @memset(rgbs.ptr[j..][0..run], prev_px.b);
+                                @memset(rgbs.ptr[rgbs.len + j ..][0..run], prev_px.g);
+                                @memset(rgbs.ptr[2 * rgbs.len + j ..][0..run], prev_px.b);
                             },
                             .rgba => {
                                 const rgbas = pixels.rgba;
                                 @memset(rgbas.ptr[j..][0..run], prev_px.r);
-                                @memset(rgbas.ptr[j..][0..run], prev_px.g);
-                                @memset(rgbas.ptr[j..][0..run], prev_px.b);
-                                @memset(rgbas.ptr[j..][0..run], prev_px.a);
+                                @memset(rgbas.ptr[rgbas.len + j ..][0..run], prev_px.g);
+                                @memset(rgbas.ptr[2 * rgbas.len + j ..][0..run], prev_px.b);
+                                @memset(rgbas.ptr[3 * rgbas.len + j ..][0..run], prev_px.a);
                             },
                         }
                         j += run;
@@ -135,8 +134,8 @@ pub fn decoding(
         }
         table[hash(prev_px)] = prev_px;
         switch (channel) {
-            .rgb => pixels.rgb.replace(j, prev_px.toRGB()),
-            .rgba => pixels.rgba.replace(j, prev_px),
+            .rgb => try pixels.rgb.replace(j, prev_px.toRGB()),
+            .rgba => try pixels.rgba.replace(j, prev_px),
         }
         j += 1;
     }
@@ -156,14 +155,14 @@ pub fn encode(
     const buf = try gpa.alloc(u8, max_size);
     defer gpa.free(buf);
 
-    const n_bytes_written = encoding(buf, img.pixels);
+    const n_bytes_written = try encoding(buf, img.pixels);
     try w.writeAll(buf[0..n_bytes_written]);
 
     try w.writeAll(END_MARKER[0..END_MARKER.len]);
     try w.flush();
 }
 
-fn encoding(buf: []u8, pixels: Pixels) usize {
+fn encoding(buf: []u8, pixels: Pixels) !usize {
     var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
     var prev_px: RGBA = .{};
     var px: RGBA = .{};
@@ -176,19 +175,21 @@ fn encoding(buf: []u8, pixels: Pixels) usize {
     var j: usize = 0;
     while (i < len) : (i += 1) {
         px = switch (pixels) {
-            .rgb => |rgbs| rgbs.get(i) catch unreachable,
-            .rgba => |rgbas| rgbas.get(i) catch unreachable,
+            .rgb => |rgbs| (try rgbs.get(i)).toRGBA(),
+            .rgba => |rgbas| try rgbas.get(i),
+            else => unreachable,
         };
         // run
         const matches = switch (pixels) {
             .rgb => |rgbs| rgbs.first64MatchesAt(i) catch unreachable,
             .rgba => |rgbas| rgbas.first64MatchesAt(i) catch unreachable,
+            else => unreachable,
         };
         if (matches > 1) {
             run = @min(63, matches) - 1;
             buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | run;
             j += 1;
-            i += run;
+            i += run; // +1 from iter
             run = 0;
             prev_px = px;
             continue;
@@ -231,21 +232,20 @@ fn encoding(buf: []u8, pixels: Pixels) usize {
         // rgb
         if (px.a == prev_px.a) {
             buf[j] = @intFromEnum(ByteTags.rgb);
-            j += 1;
-            inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-                buf[j + k] = @field(px, field_name);
-            }
-            j += comptime std.meta.fieldNames(RGB).len;
+            buf[j + 1] = prev_px.r;
+            buf[j + 2] = prev_px.g;
+            buf[j + 3] = prev_px.b;
+            j += 4;
             prev_px = px;
             continue;
         }
         // rgba
         buf[j] = @intFromEnum(ByteTags.rgba);
-        j += 1;
-        inline for (comptime std.meta.fieldNames(RGBA), 0..) |field_name, k| {
-            buf[j + k] = @field(px, field_name);
-        }
-        j += comptime std.meta.fieldNames(RGBA).len;
+        buf[j + 1] = px.r;
+        buf[j + 2] = px.g;
+        buf[j + 3] = px.b;
+        buf[j + 4] = px.a;
+        j += 5;
         prev_px = px;
     }
     return j;
