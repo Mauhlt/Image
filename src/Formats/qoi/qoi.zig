@@ -41,7 +41,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const pixels_slice = data[14 .. data.len - 8];
     if (!std.mem.eql(u8, pixels_slice[pixels_slice.len - END_MARKER.len ..], &END_MARKER))
         return Error.Decode.InvalidEndMarker;
-    const fmt: @TypeOf(@FieldType(Image, "fmt")) = switch (hdr.channel) {
+    const fmt: Format = switch (hdr.channel) {
         .rgb => .r8g8b8_srgb,
         .rgba => .r8g8b8a8_srgb,
     };
@@ -60,7 +60,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 }
 
 pub fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
-    const pixels = .{ .rgb = try .initEmpty(gpa, n_pixels) };
+    const pixels: Pixels = .{ .rgb = try .initEmpty(gpa, n_pixels) };
     errdefer pixels.deinit(gpa);
 
     var i: usize = 0; // data position
@@ -126,20 +126,17 @@ pub fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixel
                 }
             },
         }
-        // table
         table[hashRGB(prev_pixel)] = prev_pixel;
-
         if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
         j += 1;
-
-        try pixels.rgbs.replace(i, prev_pixel);
+        try pixels.rgb.replace(i, prev_pixel);
     }
 
     return pixels;
 }
 
 pub fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
-    const pixels = .{ .rgba = try .initEmpty(gpa, n_pixels) };
+    const pixels: Pixels = .{ .rgba = try .initEmpty(gpa, n_pixels) };
     errdefer pixels.deinit(gpa);
 
     var i: usize = 0; // data position
@@ -212,15 +209,11 @@ pub fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixe
                 }
             },
         }
-
         table[hashRGBA(prev_pixel)] = prev_pixel;
-
         if (j + 1 > n_pixels) return Error.Decode.DataOutOfBounds;
         j += 1;
-
-        try pixels.rgbas.replace(i, prev_pixel);
+        try pixels.rgba.replace(i, prev_pixel);
     }
-
     return pixels;
 }
 
