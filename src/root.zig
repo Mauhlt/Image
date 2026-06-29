@@ -164,6 +164,7 @@ test "QOI" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
+    // if (try std.Io.Dir.cwd().access(io, "src/Data/Read/BasicArt.qoi", .{}))
     // read bmp file
     const filepath1 = "src/Data/Read/BasicArt.bmp";
     var img = try read(.{

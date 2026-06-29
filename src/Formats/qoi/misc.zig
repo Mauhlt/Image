@@ -15,8 +15,8 @@ pub const Channel = enum(u8) {
 };
 
 pub const ByteTags = enum(u8) {
-    rgb = 254,
-    rgba = 255,
+    rgb = 0xFE,
+    rgba = 0xFF,
     _,
 };
 
