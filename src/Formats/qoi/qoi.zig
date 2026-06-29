@@ -323,6 +323,7 @@ fn encodeRGBA(buf: []u8, rgbas: RGBAS) !usize {
     var j: usize = 0;
     const len = rgbas.len;
     while (i < len) : (i += 1) {
+        px = rgbas.get(i) catch unreachable;
         const matches = rgbas.first64MatchesAt(i) catch unreachable;
         if (matches > 1) {
             run = @min(63, matches) - 1;
@@ -333,7 +334,6 @@ fn encodeRGBA(buf: []u8, rgbas: RGBAS) !usize {
             prev = px;
             continue;
         }
-        px = rgbas.get(i) catch unreachable;
         // index
         const idx = hashRGBA(px);
         if (table[idx].eql(px)) {
