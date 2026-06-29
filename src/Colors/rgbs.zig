@@ -256,7 +256,7 @@ test "RGBS" {
         };
         const rgbs = try init(allo, &data1, .rgb);
         defer rgbs.deinit(allo);
-        const n_matches = try rgbs.first64Matches(0, .{ .r = 255, .g = 100, .b = 0 });
+        const n_matches = try rgbs.first64MatchesAt(0);
         try std.testing.expectEqual(63, n_matches);
     }
 
@@ -319,7 +319,7 @@ test "RGBS" {
         };
         const rgbs = try init(allo, &data1, .rgb);
         defer rgbs.deinit(allo);
-        const n_matches = try rgbs.first64Matches(0, .{ .r = 255, .g = 100, .b = 0 });
+        const n_matches = try rgbs.first64MatchesAt(0);
         try std.testing.expectEqual(n_matches, 47);
     }
 }

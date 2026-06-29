@@ -267,7 +267,7 @@ test "RGBAS" {
         };
         const rgbas = try init(allo, &data1, .rgba);
         defer rgbas.deinit(allo);
-        const n_matches = try rgbas.first64Matches(0, .{ .r = 255, .g = 100, .b = 0, .a = 255 });
+        const n_matches = try rgbas.first64MatchesAt(0);
         try std.testing.expectEqual(63, n_matches);
     }
 
@@ -330,7 +330,7 @@ test "RGBAS" {
         };
         const rgbas = try init(allo, &data1, .rgba);
         defer rgbas.deinit(allo);
-        const n_matches = try rgbas.first64Matches(0, .{ .r = 255, .g = 100, .b = 0, .a = 255 });
+        const n_matches = try rgbas.first64MatchesAt(0);
         try std.testing.expectEqual(n_matches, 47);
     }
 }
