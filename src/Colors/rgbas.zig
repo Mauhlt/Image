@@ -118,8 +118,9 @@ pub fn toRGBS(self: RGBAS, gpa: std.mem.Allocator) !RGBS {
     return rgbs;
 }
 
-pub fn first64Matches(self: @This(), i: usize, rgba: RGBA) !usize {
+pub fn first64MatchesAt(self: @This(), i: usize) !usize {
     if (i >= self.len) return error.OutOfBounds;
+    const rgba = self.get(i) catch unreachable;
     const V64 = @Vector(64, u8);
     const rs: V64 = @splat(rgba.r);
     const gs: V64 = @splat(rgba.g);
