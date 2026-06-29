@@ -111,7 +111,7 @@ pub fn toRGBAS(self: RGBS, allo: std.mem.Allocator) !RGBAS {
     return rgbas;
 }
 
-pub fn first64MatchesAt(self: @This(), i: usize) !usize {
+pub fn first64MatchesAt(self: @This(), i: usize) !u8 {
     if (i >= self.len) return error.OutOfBounds;
     const rgb = self.get(i) catch unreachable;
     const V64 = @Vector(64, u8);
@@ -123,7 +123,7 @@ pub fn first64MatchesAt(self: @This(), i: usize) !usize {
         const g2s: V64 = self.ptr[self.len * 1 + i ..][0..64].*;
         const b2s: V64 = self.ptr[self.len * 2 + i ..][0..64].*;
         const match: u64 = @bitCast((r2s != rs) | (g2s != gs) | (b2s != bs));
-        return @ctz(match);
+        return @truncate(@ctz(match));
     }
     const len = self.len - i;
     if (len == 0) return 0;
@@ -134,7 +134,7 @@ pub fn first64MatchesAt(self: @This(), i: usize) !usize {
     @memcpy(g2s[0..len], self.ptr[i + self.len .. 2 * self.len]);
     @memcpy(b2s[0..len], self.ptr[i + self.len * 2 .. 3 * self.len]);
     const match: u64 = @bitCast((r2s != rs) | (g2s != gs) | (b2s != bs));
-    return @min(len, @ctz(match));
+    return @truncate(@min(len, @ctz(match)));
 }
 
 test "RGBS" {

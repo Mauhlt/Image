@@ -23,7 +23,7 @@ pub fn fromImage(img: *const Image) !@This() {
         else => return Error.Encode.InvalidColorspace,
     };
     const tagname = @tagName(img.fmt);
-    const colorspace = if (std.mem.endsWith(u8, tagname, "srgb")) .srgb //
+    const colorspace: Colorspace = if (std.mem.endsWith(u8, tagname, "srgb")) .srgb //
         else if (std.mem.endsWith(u8, tagname, "unorm")) .linear //
         else return Error.Encode.InvalidColorspace;
     return .{
@@ -35,20 +35,22 @@ pub fn fromImage(img: *const Image) !@This() {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    std.debug.assert(data.len > 14);
+    if (data.len > 14) return error.InvalidDataLength;
     var i: usize = 0;
     try isSigSame(SIG, data[i..][0..SIG.len]);
-    i += SIG.len;
+    i = SIG.len;
     const width = std.mem.readInt(u32, data[i..][0..4], .big);
-    i += 4;
+    i += @sizeOf(u32);
     const height = std.mem.readInt(u32, data[i..][0..4], .big);
+    i += @sizeOf(u32);
     _, const overflow: u1 = @mulWithOverflow(width, height);
     if (overflow > 0) return error.InvalidDimensions;
     const channel = std.enums.fromInt(Channel, data[i]) orelse
         return error.InvalidChannels;
-    i += 1;
+    i += @sizeOf(u8);
     const colorspace = std.enums.fromInt(Colorspace, data[i]) orelse
         return error.InvalidColorspace;
+    i += @sizeOf(u8);
     return .{
         .width = width,
         .height = height,
