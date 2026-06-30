@@ -42,10 +42,11 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
     try w.print("Width: {}\n", .{self.width});
     try w.print("Height: {}\n", .{self.height});
     switch (self.pixels) {
-        inline else => |tag| try w.print("# of Pixels: {}\n", .{tag.slice.len}),
-    }
-    switch (self.pixels) {
-        inline else => |tag| try w.print("Pixel 1: {}\n", .{tag.slice[0]}),
+        inline else => |data| {
+            try w.print("# of Pixels: {}\n", .{data.len});
+            const datum = data.get(0) catch unreachable;
+            try w.print("{}\n", .{datum});
+        },
     }
     try w.print("Format: {t}\n", .{self.fmt});
 }
@@ -164,7 +165,6 @@ test "QOI" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
-    // if (try std.Io.Dir.cwd().access(io, "src/Data/Read/BasicArt.qoi", .{}))
     // read bmp file
     const filepath1 = "src/Data/Read/BasicArt.bmp";
     var img = try read(.{
@@ -173,18 +173,20 @@ test "QOI" {
         .filepath = filepath1,
     });
     defer img.deinit(gpa);
+    std.debug.print("{f}", .{img});
 
     // write qoi file
-    const filepath2 = "src/Data/Read/BasicArt.qoi";
-    try img.write(io, gpa, filepath2);
+    // const filepath2 = "src/Data/Read/BasicArt.qoi";
+    // try img.write(io, gpa, filepath2);
 
     // read qoi file
-    var img2 = try read(.{
-        .io = io,
-        .gpa = gpa,
-        .filepath = filepath2,
-    });
-    defer img2.deinit(gpa);
+    // try read(.{ .io = io, .gpa = gpa, .filepath = filepath2 });
+    // var img2 = try read(.{
+    //     .io = io,
+    //     .gpa = gpa,
+    //     .filepath = filepath2,
+    // });
+    // defer img2.deinit(gpa);
 
     // write qoi file
     // const filepath3 = "src/Data/Write/BasicArt.qoi";

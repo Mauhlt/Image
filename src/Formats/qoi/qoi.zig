@@ -35,8 +35,10 @@ pub fn hash(rgba: RGBA) u6 {
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (data.len < 22) return error.InvalidDataLength;
     const hdr: Header = try .decode(data[0..14]);
+
     if (!std.mem.eql(u8, data[data.len - END_MARKER.len ..], &END_MARKER))
         return Error.Decode.InvalidEndMarker;
+
     const pixels_slice = data[14 .. data.len - 8];
     const fmt: Format = switch (hdr.channel) {
         .rgb => .r8g8b8_srgb,
@@ -44,7 +46,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
     const n_pixels = hdr.width * hdr.height;
     const pixels: Pixels = try decoding(gpa, n_pixels, pixels_slice, hdr.channel);
-    defer pixels.deinit(gpa);
+    errdefer pixels.deinit(gpa);
     return .{
         .fmt = fmt,
         .width = hdr.width,
@@ -53,7 +55,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
 }
 
-pub fn decoding(
+fn decoding(
     gpa: std.mem.Allocator,
     n_pixels: u32,
     data: []const u8,
@@ -150,8 +152,8 @@ pub fn encode(
 ) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
-
-    const max_size = img.width * img.height * 5; // overestimate: assumes new RGBA per pixel
+    // overestimate: assumes new RGBA per pixel
+    const max_size = img.width * img.height * 5;
     const buf = try gpa.alloc(u8, max_size);
     defer gpa.free(buf);
 
@@ -211,9 +213,9 @@ fn encoding(buf: []u8, pixels: Pixels) !usize {
         };
         if (drgb.r +% 2 <= 3 and drgb.g +% 2 <= 3 and drgb.b +% 2 <= 3) {
             buf[j] = (@as(u8, @intFromEnum(BitTags.diff)) << 6) |
-                (@as(u8, @intCast(drgb.r +% 2)) << 4) |
-                (@as(u8, @intCast(drgb.g +% 2)) << 2) |
-                (@as(u8, @intCast(drgb.b +% 2)));
+                ((drgb.r +% 2) << 4) |
+                ((drgb.g +% 2) << 2) |
+                (drgb.b +% 2);
             j += 1;
             prev_px = px;
             continue;
