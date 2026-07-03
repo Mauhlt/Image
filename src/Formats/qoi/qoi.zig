@@ -48,18 +48,23 @@ inline fn hashRGB(rgb: RGB) u6 {
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (data.len < (@sizeOf(Header) + END_MARKER.len)) return error.InvalidDataLength;
     const hdr: Header = try .decode(data);
-    const fmt = switch (hdr.channel) {
-        .rgb => switch (hdr.colorspace) {
-            .srgb => {},
-            .linear => {},
-        },
-        .rgba => switch (hdr.colorspace) {
-            .srgb => {},
-            .linear => {},
-        },
+    const fmt = blk: {
+        var buf: [8]u8 = undefined;
+        const fmt = try std.fmt.bufPrint(&buf, "{}_{}\n", .{
+            switch (hdr.channel) {
+                .rgb => "r8g8b8",
+                .rgba => "r8g8b8a8",
+            },
+            switch (hdr.colorspace) {
+                .srgb => "srgb",
+                .linear => "unorm",
+            },
+        });
+        break :blk fmt;
     };
-    var pixels: Pixels = .initEmpty();
-
+    const n_pixels = hdr.width * hdr.height;
+    var pixels: Pixels = try .initEmpty(gpa, n_pixels);
+    errdefer pixels.deinit(gpa);
     return .{
         .fmt = fmt,
         .width = hdr.width,
