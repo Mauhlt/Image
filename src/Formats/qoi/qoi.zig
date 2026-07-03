@@ -33,7 +33,7 @@ pub fn hash(rgba: RGBA) u6 {
 }
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
-    if (data.len < 22) return error.InvalidDataLength;
+    if (data.len < (@sizeOf(Header) + END_MARKER.len)) return error.InvalidDataLength;
     const hdr: Header = try .decode(data[0..14]);
 
     if (!std.mem.eql(u8, data[data.len - END_MARKER.len ..], &END_MARKER))
@@ -55,16 +55,40 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
 }
 
-fn decoding(
+fn decodingRGB(
     gpa: std.mem.Allocator,
     n_pixels: u32,
     data: []const u8,
     channel: Channel,
-) !Pixels {
-    const pixels: Pixels = switch (channel) {
-        .rgb => .{ .rgb = try .initEmpty(gpa, n_pixels) },
-        .rgba => .{ .rgba = try .initEmpty(gpa, n_pixels) },
-    };
+) !RGBS {
+    const pixels: Pixels = .{ .rgb = try .initEmpty(gpa, n_pixels) };
+    errdefer pixels.deinit(gpa);
+
+    var prev_px: RGBA = .{};
+    var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
+
+    var i: usize = 0;
+    var j: usize = 0;
+    while (i < data.len) : (i += 1) {
+        const byte_tag: ByteTags = @enumFromInt(data[i]);
+        switch (byte_tag) {
+            .rgb => {
+                prev_px.r = data[i + 1];
+                prev_px.g = data[i + 2];
+                prev_px.b = data[i + 3];
+            },
+            .rgba => unreachable,
+            else => {},
+        }
+    }
+}
+
+fn decodingRGBA(
+    gpa: std.mem.Allocator,
+    n_pixels: u32,
+    data: []const u8,
+) !RGBAS {
+    const pixels: Pixels = .{ .rgba = try .initEmpty(gpa, n_pixels) };
     errdefer pixels.deinit(gpa);
 
     var prev_px: RGBA = .{};
@@ -72,15 +96,14 @@ fn decoding(
 
     var i: usize = 0; // data position
     var j: usize = 0; // pixels position
-    while (i < data.len) : (i += 1) {
-        const byte = data[i];
-        switch (@as(ByteTags, @enumFromInt(byte))) {
-            .rgb => {
-                prev_px.r = data[i + 1];
-                prev_px.g = data[i + 2];
-                prev_px.b = data[i + 3];
-                i += 3;
-            },
+}
+
+fn decoding(
+    gpa: std.mem.Allocator,
+    n_pixels: u32,
+    data: []const u8,
+    channel: Channel,
+) !Pixels {
             .rgba => {
                 prev_px.r = data[i + 1];
                 prev_px.g = data[i + 2];
@@ -102,11 +125,11 @@ fn decoding(
                         prev_px.b = prev_px.b +% drgb.b -% 2;
                     },
                     .luma => {
-                        const dg = byte & 0x3F;
+                        const dg = (byte & 0x3F) -% 32;
                         const byte2 = data[i + 1];
                         const drdg = byte2 >> 4;
                         const dbdg = byte2 & 0x0F;
-                        prev_px.g = prev_px.g +% dg -% 32;
+                        prev_px.g = prev_px.g +% dg;
                         prev_px.r = prev_px.r +% drdg +% dg -% 8;
                         prev_px.b = prev_px.b +% dbdg +% dg -% 8;
                         i += 1;
@@ -145,26 +168,20 @@ fn decoding(
 }
 
 pub fn encode(
-    gpa: std.mem.Allocator,
     img: *const Image,
     w: *std.Io.Writer,
     maybe_hdr: ?Header,
 ) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
-    // overestimate: assumes new RGBA per pixel
-    const max_size = img.width * img.height * 5;
-    const buf = try gpa.alloc(u8, max_size);
-    defer gpa.free(buf);
 
-    const n_bytes_written = try encoding(buf, img.pixels);
-    try w.writeAll(buf[0..n_bytes_written]);
-
-    try w.writeAll(END_MARKER[0..END_MARKER.len]);
+    try encoding(w, img.pixels);
+    for (END_MARKER) |em| try w.writeByte(em);
+    // try w.writeAll(END_MARKER[0..END_MARKER.len]);
     try w.flush();
 }
 
-fn encoding(buf: []u8, pixels: Pixels) !usize {
+fn encoding(w: *std.Io.Writer, pixels: Pixels) !void {
     var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
     var prev_px: RGBA = .{};
     var px: RGBA = .{};
@@ -174,7 +191,7 @@ fn encoding(buf: []u8, pixels: Pixels) !usize {
     };
 
     var i: usize = 0;
-    var j: usize = 0;
+    // var j: usize = 0;
     while (i < len) : (i += 1) {
         px = switch (pixels) {
             .rgb => |rgbs| (try rgbs.get(i)).toRGBA(),
@@ -189,8 +206,8 @@ fn encoding(buf: []u8, pixels: Pixels) !usize {
         };
         if (matches > 1) {
             run = @min(63, matches) - 1;
-            buf[j] = @as(u8, @intFromEnum(BitTags.run)) << 6 | run;
-            j += 1;
+            try w.writeByte(@as(u8, @intFromEnum(BitTags.run)) << 6 | run);
+            // j += 1;
             i += run; // +1 from iter
             run = 0;
             prev_px = px;
@@ -199,8 +216,8 @@ fn encoding(buf: []u8, pixels: Pixels) !usize {
         // index
         const idx = hash(px);
         if (table[idx].eql(px)) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.index)) << 6 | idx;
-            j += 1;
+            try w.writeByte(@as(u8, @intFromEnum(BitTags.index)) << 6 | idx);
+            // j += 1;
             prev_px = px;
             continue;
         }
@@ -212,11 +229,11 @@ fn encoding(buf: []u8, pixels: Pixels) !usize {
             .b = px.b -% prev_px.b,
         };
         if (drgb.r +% 2 <= 3 and drgb.g +% 2 <= 3 and drgb.b +% 2 <= 3) {
-            buf[j] = (@as(u8, @intFromEnum(BitTags.diff)) << 6) |
+            try w.writeByte((@as(u8, @intFromEnum(BitTags.diff)) << 6) |
                 ((drgb.r +% 2) << 4) |
                 ((drgb.g +% 2) << 2) |
-                (drgb.b +% 2);
-            j += 1;
+                (drgb.b +% 2));
+            // j += 1;
             prev_px = px;
             continue;
         }
@@ -225,30 +242,30 @@ fn encoding(buf: []u8, pixels: Pixels) !usize {
         const dr_dg = drgb.r -% drgb.g +% 8;
         const db_dg = drgb.b -% drgb.g +% 8;
         if (drgb.g < 64 and dr_dg < 16 and db_dg < 16) {
-            buf[j] = @as(u8, @intFromEnum(BitTags.luma)) << 6 | drgb.g;
-            buf[j + 1] = (dr_dg << 4) | (db_dg & 0x0F);
-            j += 2;
+            try w.writeByte(@as(u8, @intFromEnum(BitTags.luma)) << 6 | drgb.g);
+            try w.writeByte((dr_dg << 4) | (db_dg & 0x0F));
+            // j += 2;
             prev_px = px;
             continue;
         }
         // rgb
         if (px.a == prev_px.a) {
-            buf[j] = @intFromEnum(ByteTags.rgb);
-            buf[j + 1] = prev_px.r;
-            buf[j + 2] = prev_px.g;
-            buf[j + 3] = prev_px.b;
-            j += 4;
+            try w.writeByte(@intFromEnum(ByteTags.rgb));
+            try w.writeByte(prev_px.r);
+            try w.writeByte(prev_px.g);
+            try w.writeByte(prev_px.b);
+            // j += 4;
             prev_px = px;
             continue;
         }
         // rgba
-        buf[j] = @intFromEnum(ByteTags.rgba);
-        buf[j + 1] = px.r;
-        buf[j + 2] = px.g;
-        buf[j + 3] = px.b;
-        buf[j + 4] = px.a;
-        j += 5;
+        try w.writeByte(@intFromEnum(ByteTags.rgba));
+        try w.writeByte(px.r);
+        try w.writeByte(px.g);
+        try w.writeByte(px.b);
+        try w.writeByte(px.a);
+        // j += 5;
         prev_px = px;
     }
-    return j;
+    // return j;
 }

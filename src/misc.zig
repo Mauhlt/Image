@@ -20,7 +20,7 @@ pub fn timer(
     return time_taken;
 }
 
-pub fn readDataPositional(
+pub fn readData(
     io: std.Io,
     gpa: std.mem.Allocator,
     file: std.Io.File,
@@ -28,72 +28,9 @@ pub fn readDataPositional(
     const len = try file.length(io);
     const data = try gpa.alloc(u8, len);
     errdefer gpa.free(data);
-
-    const n = (std.Thread.getCpuCount() catch 2) - 1;
-    const threads = try gpa.alloc(std.Thread, n);
-    defer gpa.free(threads);
-
-    const chunk_size = if (n > 1) (len / n) - @mod(len / n, 64) else len;
-
-    const work_results = try gpa.alloc(WorkResult, n);
-    defer gpa.free(work_results);
-    @memset(work_results, .{});
-
-    const work_items = try gpa.alloc(Work, n);
-    defer gpa.free(work_items);
-    for (0..n) |i| {
-        work_items[i] = .{
-            .file = file,
-            .io = io,
-            .offset = i * chunk_size,
-            .data = data[i * chunk_size ..][0..chunk_size],
-            .result = &work_results[i],
-        };
-    }
-
-    for (0..n - 1) |i|
-        threads[i] = try std.Thread.spawn(.{}, readPositional, .{&work_items[i]});
-    threads[n - 1] = try std.Thread.spawn(.{}, readPositional, .{&work_items[n - 1]});
-    for (0..n) |i| threads[i].join();
-    for (work_items) |w| if (w.result.err) |e| return e;
-
+    const n_bytes = try file.readPositionalAll(io, data, 0);
+    if (n_bytes != len) return error.FailedToReadFile;
     return data;
-}
-
-const WorkResult = struct {
-    err: ?anyerror = null,
-};
-
-const Work = struct {
-    io: std.Io,
-    file: std.Io.File,
-    offset: u64,
-    data: []u8,
-    result: *WorkResult,
-};
-
-pub fn readPositional(work: *Work) void {
-    _ = work.file.readPositionalAll(work.io, work.data, work.offset) catch |err| {
-        work.result.err = err;
-        return;
-    };
-}
-
-pub fn readDataMmap(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    file: std.Io.File,
-) ![]u8 {
-    const file_len = try file.length(io);
-    var mmap = try file.createMemoryMap(io, .{
-        .len = file_len,
-        .offset = 0,
-        .protection = .{ .read = true },
-    });
-    defer mmap.destroy(io);
-    try mmap.read(io);
-
-    return gpa.dupe(u8, mmap.memory[0..file_len]);
 }
 
 pub fn tagFromExt(path: []const u8) !ImageTag {
@@ -117,7 +54,7 @@ pub const ImageTag = enum {
     webp,
 };
 
-// const ImageTagUnion = union(ImageTagUnion) {
+// const ImageTagUnion = union(ImageTag) {
 //     bmp: BMP,
 //     // gif: @import("gif.zig"),
 //     // heic: @import("heic.zig"),
