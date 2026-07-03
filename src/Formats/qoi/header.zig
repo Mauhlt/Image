@@ -35,7 +35,7 @@ pub fn fromImage(img: *const Image) !@This() {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    if (data.len > 14) return error.InvalidDataLength;
+    if (data.len < 14) return error.InvalidDataLength;
     var i: usize = 0;
     try isSigSame(SIG, data[i..][0..SIG.len]);
     i = SIG.len;

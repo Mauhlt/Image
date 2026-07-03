@@ -13,23 +13,23 @@ const Order = RGB.Order;
 ptr: [*]u8,
 len: usize,
 
-pub fn initEmpty(allo: std.mem.Allocator, len: usize) !RGBS {
+pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
     if (len == 0) return error.InvalidDataLen;
-    const rgbs = try allo.alloc(u8, len * @sizeOf(RGB));
-    errdefer allo.free(rgbs);
+    const rgbs = try gpa.alloc(u8, len * @sizeOf(RGB));
+    errdefer gpa.free(rgbs);
     return .{
         .ptr = rgbs.ptr,
         .len = len,
     };
 }
 
-pub fn init(allo: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
+pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
     if (data.len == 0) return error.InvalidDataLen;
     if (@mod(data.len, @sizeOf(RGB)) != 0) return error.InvalidDataLen;
     const len = data.len / @sizeOf(RGB);
 
-    const rgbs = try allo.alloc(u8, data.len);
-    errdefer allo.free(rgbs);
+    const rgbs = try gpa.alloc(u8, data.len);
+    errdefer gpa.free(rgbs);
 
     var i: usize = 0;
     var j: usize = 0;
@@ -42,23 +42,22 @@ pub fn init(allo: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
             rgbs.ptr[i + len * k] = @field(rgb, field_name);
         }
     }
-
     return .{
         .ptr = rgbs.ptr,
         .len = len,
     };
 }
 
-pub fn dupe(self: RGBS, allo: std.mem.Allocator) !RGBS {
-    const rgbs = try allo.dupe(u8, self.ptr[0 .. self.len * @sizeOf(RGB)]);
+pub fn dupe(self: RGBS, gpa: std.mem.Allocator) !RGBS {
+    const rgbs = try gpa.dupe(u8, self.ptr[0 .. self.len * @sizeOf(RGB)]);
     return .{
         .ptr = rgbs.ptr,
         .len = self.len,
     };
 }
 
-pub fn deinit(self: RGBS, allo: std.mem.Allocator) void {
-    allo.free(self.ptr[0 .. self.len * @sizeOf(RGB)]);
+pub fn deinit(self: RGBS, gpa: std.mem.Allocator) void {
+    gpa.free(self.ptr[0 .. self.len * @sizeOf(RGB)]);
 }
 
 pub fn replace(self: RGBS, i: usize, rgb: RGB) !void {
@@ -79,12 +78,12 @@ pub fn get(self: RGBS, i: usize) !RGB {
 
 pub fn slice(
     self: RGBS,
-    allo: std.mem.Allocator,
+    gpa: std.mem.Allocator,
     pos: POSITION,
 ) ![]RGB {
     if (pos.start == 0 and pos.end == 0) {
-        const rgbs = try allo.alloc(RGB, self.len);
-        errdefer allo.free(rgbs);
+        const rgbs = try gpa.alloc(RGB, self.len);
+        errdefer gpa.free(rgbs);
         for (0..self.len) |i| rgbs[i] = try self.get(i);
         return rgbs;
     }
@@ -93,20 +92,20 @@ pub fn slice(
     if (pos.end > self.len) return error.OutOfBounds;
 
     const len = pos.end - pos.start;
-    const rgbs = try allo.alloc(RGB, len);
-    errdefer allo.free(rgbs);
+    const rgbs = try gpa.alloc(RGB, len);
+    errdefer gpa.free(rgbs);
     for (0..len) |i| rgbs[i] = try self.get(pos.start + i);
     return rgbs;
 }
 
-pub fn toGRAYS(self: RGBS, allo: std.mem.Allocator) !GRAYS {
-    const grays: GRAYS = try .initEmpty(allo, self.len);
+pub fn toGRAYS(self: RGBS, gpa: std.mem.Allocator) !GRAYS {
+    const grays: GRAYS = try .initEmpty(gpa, self.len);
     for (0..self.len) |i| try grays.replace(i, (try self.get(i)).toGrayFast16());
     return grays;
 }
 
-pub fn toRGBAS(self: RGBS, allo: std.mem.Allocator) !RGBAS {
-    const rgbas: RGBAS = try .initEmpty(allo, self.len);
+pub fn toRGBAS(self: RGBS, gpa: std.mem.Allocator) !RGBAS {
+    const rgbas: RGBAS = try .initEmpty(gpa, self.len);
     for (0..self.len) |i| try rgbas.replace(i, (try self.get(i)).toRGBA());
     return rgbas;
 }
