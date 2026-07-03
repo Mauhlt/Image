@@ -10,7 +10,7 @@ const QOI = @import("Formats/qoi/qoi.zig");
 const ImageTag = @import("misc.zig").ImageTag;
 const tagFromExt = @import("misc.zig").tagFromExt;
 const mapImageTagFromExt = @import("misc.zig").mapImageTagFromExt;
-const readDataPositional = @import("misc.zig").readDataPositional;
+const readData = @import("misc.zig").readData;
 
 width: u32,
 height: u32,
@@ -79,8 +79,10 @@ pub fn read(args: ReadArgs) !@This() {
     };
     defer file.close(args.io);
 
-    const data = try readDataPositional(args.io, args.gpa, file);
+    const data = try readData(args.io, args.gpa, file);
+    // const data = try readDataPositional(args.io, args.gpa, file);
     defer args.gpa.free(data);
+    std.debug.print("Data Length: {}\n", .{data.len});
 
     const ext_str = std.fs.path.extension(args.filepath)[1..];
     const ext = std.meta.stringToEnum(ImageTag, ext_str) orelse
@@ -98,7 +100,6 @@ pub fn read(args: ReadArgs) !@This() {
 pub fn write(
     img: *const @This(),
     io: std.Io,
-    gpa: std.mem.Allocator,
     filepath: []const u8,
 ) !void {
     var file = try std.Io.Dir.cwd().createFile(io, filepath, .{});
@@ -111,7 +112,7 @@ pub fn write(
     const image_tag = try tagFromExt(filepath);
     return switch (image_tag) {
         .bmp => BMP.encode(img, io_writer, null),
-        .qoi => QOI.encode(gpa, img, io_writer, null),
+        .qoi => QOI.encode(img, io_writer, null),
         else => unreachable,
     };
 }
@@ -172,21 +173,20 @@ test "QOI" {
         .gpa = gpa,
         .filepath = filepath1,
     });
-    defer img.deinit(gpa);
-    std.debug.print("{f}", .{img});
+    img.deinit(gpa);
 
     // write qoi file
-    // const filepath2 = "src/Data/Read/BasicArt.qoi";
-    // try img.write(io, gpa, filepath2);
+    const filepath2 = "src/Data/Read/BasicArt.qoi";
+    try img.write(io, filepath2);
+    img.deinit(gpa);
 
     // read qoi file
-    // try read(.{ .io = io, .gpa = gpa, .filepath = filepath2 });
-    // var img2 = try read(.{
-    //     .io = io,
-    //     .gpa = gpa,
-    //     .filepath = filepath2,
-    // });
-    // defer img2.deinit(gpa);
+    var img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath2,
+    });
+    img2.deinit(gpa);
 
     // write qoi file
     // const filepath3 = "src/Data/Write/BasicArt.qoi";
