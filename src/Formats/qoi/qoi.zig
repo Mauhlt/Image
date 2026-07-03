@@ -14,6 +14,7 @@ const RGBAS = @import("../../Colors/rgbas.zig");
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const HASH_TABLE_SIZE = 64;
+pub const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
 
 pub const ByteTags = enum(u8) {
     rgb = 0xFE,
@@ -53,17 +54,18 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
         break :blk fmt;
     };
     const n_pixels = hdr.width * hdr.height;
-    var pixels: Pixels = try .initEmpty(gpa, n_pixels);
-    defer pixels.deinit(gpa);
-    std.debug.print("{f}", .{hdr});
-    std.debug.print("# of Pixels: {}\n", .{n_pixels});
-    std.debug.print("Fmt: {t}\n", .{fmt});
-    // return .{
-    //     .fmt = fmt,
-    //     .width = hdr.width,
-    //     .height = hdr.height,
-    //     .pixels = pixels,
-    // };
+    const pixels = switch (hdr.channel) {
+        .rgb => try decodeRGB(gpa, n_pixels),
+        .rgba => try decodeRGBA(gpa, n_pixels),
+    };
+    if (std.mem.eql(u8, data[data.len - END_MARKER.len .. data.len], END_MARKER[0..END_MARKER.len])) //
+        return error.InvalidEndMarker;
+    return .{
+        .fmt = fmt,
+        .width = hdr.width,
+        .height = hdr.height,
+        .pixels = pixels,
+    };
 }
 
 pub fn encode(w: *std.Io.Writer, img: *const Image) !void {
@@ -73,11 +75,51 @@ pub fn encode(w: *std.Io.Writer, img: *const Image) !void {
         .rgb => |rgbs| try encodeRGB(w, rgbs),
         .rgba => |rgbas| try encodeRGBA(w, rgbas),
     }
+    for (END_MARKER) |em| try w.writeByte(em);
+    try w.flush();
 }
 
-fn decodeRGB() !void {}
+fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBS {
+    var rgbs: RGBS = try .initEmpty(gpa, n_pixels);
+    errdefer rgbs.deinit(gpa);
 
-fn decodeRGBA() !void {}
+    var prev: RGB = .{};
+    var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
+
+    var i: usize = 0; // data idx
+    var j: usize = 0; // rgbs idx
+    while (i < data.len) : (i += 1) {
+        const byte1 = data[i];
+        switch (@as(ByteTags, @enumFromInt(byte1))) {
+            .rgb => {
+                prev = .{ .r = data[i + 1], .g = data[i + 2], .b = data[i + 3] };
+                rgbs.set(j, prev);
+                i += 3;
+                j += 1;
+                continue;
+            },
+            .rgba => unreachable,
+            else => switch (@as(BitTags, @enumFromInt(byte1 >> 6))) {
+                .run => {
+                    const run = (byte1 & 0x3F) + 1;
+                    @memset(rgbs.ptr[j..][0..run], prev.r);
+                    @memset(rgbs.ptr[rgbs.len + j ..][0..run], prev.g);
+                    @memset(rgbs.ptr[2 * rgbs.len + j ..][0..run], prev.b);
+                    j += run;
+                },
+                .index => {},
+                .diff => {},
+                .luma => {},
+            }
+        }
+    }
+    return rgbs;
+}
+
+fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBAS {
+    var rgbas: RGBAS = try .initEmpty(gpa, n_pixels);
+    errdefer rgbas.deinit(gpa);
+}
 
 fn encodeRGB(w: *std.Io.Writer, rgbs: RGBS) !void {
     var px: RGB = .{};
@@ -88,7 +130,7 @@ fn encodeRGB(w: *std.Io.Writer, rgbs: RGBS) !void {
     {
         const n = try first64RGBMatchesAt(rgbs, 0, px);
         if (n > 1) {
-            const run = @min(n, 63) - 1;
+            const run = @min(n, 63) - 1; // 1..62
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
             i += run;
@@ -100,7 +142,7 @@ fn encodeRGB(w: *std.Io.Writer, rgbs: RGBS) !void {
 
         const n = try first64RGBMatchesAt(rgbs, i, px);
         if (n > 1) {
-            const run = @min(n, 63) - 1;
+            const run = @min(n, 63) - 1; // 1..62
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
             i += run;
@@ -163,7 +205,7 @@ fn encodeRGBA(w: *std.Io.Writer, rgbas: RGBAS) !void {
     {
         const n = try first64RGBAMatchesAt(rgbas, 0, px);
         if (n > 1) {
-            const run = @min(n, 63) - 1;
+            const run = @min(n, 62) - 1;
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
             i += run;
@@ -175,7 +217,7 @@ fn encodeRGBA(w: *std.Io.Writer, rgbas: RGBAS) !void {
 
         const n = try first64RGBAMatchesAt(rgbas, i, px);
         if (n > 1) {
-            const run = @min(n, 63) - 1;
+            const run = @min(n, 62) - 1;
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
             i += run;
@@ -293,4 +335,296 @@ pub fn first64RGBAMatchesAt(self: RGBAS, i: usize, rgba: RGBA) !u8 {
     @memcpy(a2s[0..len], self.ptr[i + self.len * 3 .. 4 * self.len]);
     const match: u64 = @bitCast((r2s != rs) | (g2s != gs) | (b2s != bs) | (a2s != as));
     return @truncate(@min(len, @ctz(match)));
+}
+
+test "First 64 Matches" {
+    const allo = std.testing.allocator;
+
+    {
+        // Mismatch at 63
+        const data1 = [_]u8{
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 10, //
+        };
+        const rgbs: RGBS = try .init(allo, &data1, .rgb);
+        defer rgbs.deinit(allo);
+        const n_matches = try first64RGBMatchesAt(0);
+        try std.testing.expectEqual(63, n_matches);
+    }
+
+    {
+        // Mismatch at 47
+        const data1 = [_]u8{
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 0, //
+            255, 100, 10, //
+        };
+        const rgbs: RGBS = try .init(allo, &data1, .rgb);
+        defer rgbs.deinit(allo);
+        const n_matches = try first64RGBMatchesAt(0);
+        try std.testing.expectEqual(n_matches, 47);
+    }
+
+    {
+        // Mismatch at 63
+        const data1 = [_]u8{
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 10, 255, //
+        };
+        const rgbas = try .init(allo, &data1, .rgba);
+        defer rgbas.deinit(allo);
+        const n_matches = try first64RGBAMatchesAt(0);
+        try std.testing.expectEqual(63, n_matches);
+    }
+
+    {
+        // Mismatch at 47
+        const data1 = [_]u8{
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 0, 255, //
+            255, 100, 10, 255, //
+        };
+        const rgbas: RGBAS = try .init(allo, &data1, .rgba);
+        defer rgbas.deinit(allo);
+        const n_matches = try first64RGBAMatchesAt(0);
+        try std.testing.expectEqual(n_matches, 47);
+    }
 }
