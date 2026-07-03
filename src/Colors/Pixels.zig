@@ -79,48 +79,61 @@ pub const Pixels = union(PixelOrder) {
     rgb: RGBS,
     rgba: RGBAS,
 
+    pub fn initEmpty(
+        gpa: std.mem.Allocator,
+        pixel_order: PixelOrder,
+        n_pixels: usize,
+    ) !@This() {
+        return switch (pixel_order) {
+            .gray => .{ .gray = try .initEmpty(gpa, n_pixels) },
+            .rgb => .{ .rgb = try .initEmpty(gpa, n_pixels) },
+            .rgba => .{ .rgba = try .initEmpty(gpa, n_pixels) },
+        };
+    }
+
     pub fn init(
-        allo: std.mem.Allocator,
+        gpa: std.mem.Allocator,
         data: []const u8,
         data_order: DataOrder,
         pixel_order: PixelOrder,
     ) !@This() {
         const in_data: Pixels = switch (data_order) {
-            .g => .{ .gray = try .init(allo, data) },
-            .rgb, .rbg, .grb, .gbr, .brg, .bgr => .{ .rgb = try .init(allo, data, @enumFromInt(@intFromEnum(data_order))) },
-            else => .{ .rgba = try .init(allo, data, @enumFromInt(@intFromEnum(data_order))) },
+            .g => .{ .gray = try .init(gpa, data) },
+            .rgb, .rbg, .grb, .gbr, .brg, .bgr => //
+            .{ .rgb = try .init(gpa, data, @enumFromInt(@intFromEnum(data_order))) },
+            else => .{ .rgba = try .init(gpa, data, @enumFromInt(@intFromEnum(data_order))) },
         };
         switch (pixel_order) {
             .gray => switch (in_data) {
                 .gray => return in_data,
                 .rgb => |rgbs| {
-                    defer in_data.deinit(allo);
-                    return .{ .gray = try rgbs.toGRAYS(allo) };
+                    defer in_data.deinit(gpa);
+                    return .{ .gray = try rgbs.toGRAYS(gpa) };
                 },
                 .rgba => |rgbas| {
-                    defer in_data.deinit(allo);
-                    return .{ .gray = try rgbas.toGRAYS(allo) };
+                    defer in_data.deinit(gpa);
+                    return .{ .gray = try rgbas.toGRAYS(gpa) };
                 },
             },
             .rgb => switch (in_data) {
                 .gray => |grays| {
-                    defer in_data.deinit(allo);
-                    return .{ .rgb = try grays.toRGBS(allo) };
+                    defer in_data.deinit(gpa);
+                    return .{ .rgb = try grays.toRGBS(gpa) };
                 },
                 .rgb => return in_data,
                 .rgba => |rgbas| {
-                    defer in_data.deinit(allo);
-                    return .{ .rgb = try rgbas.toRGBS(allo) };
+                    defer in_data.deinit(gpa);
+                    return .{ .rgb = try rgbas.toRGBS(gpa) };
                 },
             },
             .rgba => switch (in_data) {
                 .gray => |grays| {
-                    defer in_data.deinit(allo);
-                    return .{ .rgba = try grays.toRGBAS(allo) };
+                    defer in_data.deinit(gpa);
+                    return .{ .rgba = try grays.toRGBAS(gpa) };
                 },
                 .rgb => |rgbs| {
-                    defer in_data.deinit(allo);
-                    return .{ .rgba = try rgbs.toRGBAS(allo) };
+                    defer in_data.deinit(gpa);
+                    return .{ .rgba = try rgbs.toRGBAS(gpa) };
                 },
                 .rgba => return in_data,
             },
@@ -129,35 +142,35 @@ pub const Pixels = union(PixelOrder) {
 
     pub fn deinit(
         self: @This(),
-        allo: std.mem.Allocator,
+        gpa: std.mem.Allocator,
     ) void {
         switch (self) {
-            .gray => |grays| grays.deinit(allo),
-            .rgb => |rgbs| rgbs.deinit(allo),
-            .rgba => |rgbas| rgbas.deinit(allo),
+            .gray => |grays| grays.deinit(gpa),
+            .rgb => |rgbs| rgbs.deinit(gpa),
+            .rgba => |rgbas| rgbas.deinit(gpa),
         }
     }
 
     pub fn convert(
         self: @This(),
-        allo: std.mem.Allocator,
+        gpa: std.mem.Allocator,
         order: PixelOrder,
     ) !@This() {
         return switch (self) {
             .gray => |grays| switch (order) {
-                .gray => .{ .gray = try grays.dupe(allo) },
-                .rgb => .{ .rgb = try grays.toRGBS(allo) },
-                .rgba => .{ .rgba = try grays.toRGBAS(allo) },
+                .gray => .{ .gray = try grays.dupe(gpa) },
+                .rgb => .{ .rgb = try grays.toRGBS(gpa) },
+                .rgba => .{ .rgba = try grays.toRGBAS(gpa) },
             },
             .rgb => |rgbs| switch (order) {
-                .gray => .{ .gray = try rgbs.toGRAYS(allo) },
-                .rgb => .{ .rgb = try rgbs.dupe(allo) },
-                .rgba => .{ .rgba = try rgbs.toRGBAS(allo) },
+                .gray => .{ .gray = try rgbs.toGRAYS(gpa) },
+                .rgb => .{ .rgb = try rgbs.dupe(gpa) },
+                .rgba => .{ .rgba = try rgbs.toRGBAS(gpa) },
             },
             .rgba => |rgbas| switch (order) {
-                .gray => .{ .gray = try rgbas.toGRAYS(allo) },
-                .rgb => .{ .rgb = try rgbas.toRGBS(allo) },
-                .rgba => .{ .rgba = try rgbas.dupe(allo) },
+                .gray => .{ .gray = try rgbas.toGRAYS(gpa) },
+                .rgb => .{ .rgb = try rgbas.toRGBS(gpa) },
+                .rgba => .{ .rgba = try rgbas.dupe(gpa) },
             },
         };
     }
