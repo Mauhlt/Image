@@ -102,24 +102,31 @@ fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBS {
             else => switch (@as(BitTags, @enumFromInt(byte1 >> 6))) {
                 .run => {
                     const run = (byte1 & 0x3F) + 1;
-                    @memset(rgbs.ptr[j..][0..run], prev.r);
-                    @memset(rgbs.ptr[rgbs.len + j ..][0..run], prev.g);
-                    @memset(rgbs.ptr[2 * rgbs.len + j ..][0..run], prev.b);
+                    rgbs.setMany(j, run, prev);
                     j += run;
                 },
-                .index => {},
-                .diff => {},
-                .luma => {},
+                .index => {
+                    const index = (@intFromEnum(byte1) & 0x3F);
+                    table[index] = prev;
+                },
+                .diff => {
+                    const dr = (byte1 >> 4) & 0x03;
+                    const dg = (byte1 >> 2) & 0x03;
+                    const db = byte1 & 0x03;
+                },
+                .luma => {
+                    const dg = byte1 & 0x3F;
+                    const byte2 = data[i + 1];
+                    const drdg = byte2 & 0xF0;
+                    const dbdg = byte2 & 0x0F;
+                },
             }
         }
     }
     return rgbs;
 }
 
-fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBAS {
-    var rgbas: RGBAS = try .initEmpty(gpa, n_pixels);
-    errdefer rgbas.deinit(gpa);
-}
+fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBAS {}
 
 fn encodeRGB(w: *std.Io.Writer, rgbs: RGBS) !void {
     var px: RGB = .{};
