@@ -84,6 +84,7 @@ fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBS {
     errdefer rgbs.deinit(gpa);
 
     var prev: RGB = .{};
+    var px: RGB = .{};
     var table = [_]RGB{.{}} ** HASH_TABLE_SIZE;
 
     var i: usize = 0; // data idx
@@ -92,41 +93,107 @@ fn decodeRGB(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBS {
         const byte1 = data[i];
         switch (@as(ByteTags, @enumFromInt(byte1))) {
             .rgb => {
-                prev = .{ .r = data[i + 1], .g = data[i + 2], .b = data[i + 3] };
-                rgbs.set(j, prev);
+                px.r = data[i + 1];
+                px.g = data[i + 2];
+                px.b = data[i + 3];
                 i += 3;
-                j += 1;
-                continue;
             },
             .rgba => unreachable,
             else => switch (@as(BitTags, @enumFromInt(byte1 >> 6))) {
                 .run => {
                     const run = (byte1 & 0x3F) + 1;
-                    rgbs.setMany(j, run, prev);
+                    rgbs.setMany(j, run, prev) catch unreachable;
                     j += run;
+                    continue;
                 },
                 .index => {
-                    const index = (@intFromEnum(byte1) & 0x3F);
-                    table[index] = prev;
+                    const index = byte1 & 0x3F;
+                    px = table[index];
                 },
                 .diff => {
-                    const dr = (byte1 >> 4) & 0x03;
-                    const dg = (byte1 >> 2) & 0x03;
-                    const db = byte1 & 0x03;
+                    px.r = prev.r +% ((byte1 >> 4) & 0x03) -% 2;
+                    px.g = prev.g +% ((byte1 >> 2) & 0x03) -% 2;
+                    px.b = prev.b +% (byte1 & 0x03) -% 2;
                 },
                 .luma => {
-                    const dg = byte1 & 0x3F;
                     const byte2 = data[i + 1];
-                    const drdg = byte2 & 0xF0;
-                    const dbdg = byte2 & 0x0F;
+                    const dg: i8 = @intCast((byte1 & 0x3F) -% 32); // -32 .. 31
+                    const drdg: i8 = @intCast((byte2 & 0xF0) -% 8); // -8 .. 7
+                    const dbdg: i8 = @intCast((byte2 & 0x0F) -% 8); // -8 .. 7
+                    px.g = prev.g +% dg;
+                    px.r = prev.r +% drdg +% dg;
+                    px.b = prev.b +% dbdg +% dg;
                 },
             }
         }
+        prev = px;
+        table[hashRGB(px)] = px;
+        rgbs.set(j, px) catch unreachable;
+        j += 1;
     }
     return rgbs;
 }
 
-fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBAS {}
+fn decodeRGBA(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !RGBAS {
+    var rgbas: RGBAS = try .initEmpty(gpa, n_pixels);
+    errdefer rgbas.deinit(gpa);
+
+    var prev: RGBA = .{};
+    var px: RGBA = .{};
+    var table = [_]RGBA{.{}} ** HASH_TABLE_SIZE;
+
+    var i: usize = 0; // data idx
+    var j: usize = 0; // rgbs idx
+    while (i < data.len) : (i += 1) {
+        const byte1 = data[i];
+        switch (@as(ByteTags, @enumFromInt(byte1))) {
+            .rgb => {
+                px.r = data[i + 1];
+                px.g = data[i + 2];
+                px.b = data[i + 3];
+                i += 3;
+            },
+            .rgba => {
+                px.r = data[i + 1];
+                px.g = data[i + 1];
+                px.b = data[i + 1];
+                px.a = data[i + 1];
+                i += 4;
+            },
+            else => switch (@as(BitTags, @enumFromInt(byte1 >> 6))) {
+                .run => {
+                    const run = (byte1 & 0x3F) + 1;
+                    rgbas.setMany(j, run, prev) catch unreachable;
+                    j += run;
+                    continue;
+                },
+                .index => {
+                    const index = byte1 & 0x3F;
+                    px = table[index];
+                },
+                .diff => {
+                    px.r = prev.r +% ((byte1 >> 4) & 0x03) -% 2;
+                    px.g = prev.g +% ((byte1 >> 2) & 0x03) -% 2;
+                    px.b = prev.b +% (byte1 & 0x03) -% 2;
+                },
+                .luma => {
+                    const byte2 = data[i + 1];
+                    const dg: i8 = @intCast((byte1 & 0x3F) -% 32); // -32 .. 31
+                    const drdg: i8 = @intCast((byte2 & 0xF0) -% 8); // -8 .. 7
+                    const dbdg: i8 = @intCast((byte2 & 0x0F) -% 8); // -8 .. 7
+                    px.g = prev.g +% dg;
+                    px.r = prev.r +% drdg +% dg;
+                    px.b = prev.b +% dbdg +% dg;
+                },
+            }
+        }
+        prev = px;
+        table[hashRGBA(px)] = px;
+        rgbas.set(j, px) catch unreachable;
+        j += 1;
+    }
+    return rgbas;
+}
 
 fn encodeRGB(w: *std.Io.Writer, rgbs: RGBS) !void {
     var px: RGB = .{};
