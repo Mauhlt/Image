@@ -55,6 +55,11 @@ pub fn get(self: GRAYS, i: usize) !GRAY {
     return .{ .g = self.ptr[i] };
 }
 
+pub fn set(self: GRAYS, i: usize, gray: GRAY) void {
+    if (i >= self.len) return error.OutOfBounds;
+    self.ptr[i] = gray;
+}
+
 pub fn slice(
     self: GRAYS,
     gpa: std.mem.Allocator,
