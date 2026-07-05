@@ -12,27 +12,7 @@ const RGBA = @import("../../Colors/rgba.zig");
 const RGBAS = @import("../../Colors/rgbas.zig");
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
-const isSigSame = @import("../Misc.zig").isSigSame;
-
 const Header = @import("header.zig");
-
-// Basics
-pub const BitsPerPixel = enum(u8) {
-    monochrome = 1,
-    bit_4_pallet = 4,
-    bit_8_pallet = 8,
-    rgb_16 = 16,
-    rgb_24 = 24,
-    rgba = 32,
-};
-
-pub const Compression = enum(u32) {
-    none = 0,
-    rle8 = 1,
-    rle4 = 2,
-};
-
-pub const SIG: []const u8 = "BM";
 
 // https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
