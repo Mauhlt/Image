@@ -134,7 +134,7 @@ test "BMP" {
 
     // write file
     const filepath2 = "src/Data/Write/BasicArt.bmp";
-    try img.write(io, gpa, filepath2);
+    try img.write(io, filepath2);
 
     // open file 2
     var img2 = try read(.{

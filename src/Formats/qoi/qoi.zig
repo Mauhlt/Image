@@ -36,11 +36,11 @@ inline fn hashRGBA(rgba: RGBA) u6 {
     return @truncate(rgba.r *% 3 +% rgba.g *% 5 +% rgba.b *% 7 +% rgba.a *% 11);
 }
 
-pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
+pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     const fmt = blk: {
         var buf: [8]u8 = undefined;
-        const fmt_str = try std.fmt.bufPrint(&buf, "{}_{}\n", .{
+        const fmt_str = try std.fmt.bufPrint(&buf, "{s}_{s}\n", .{
             switch (hdr.channel) {
                 .rgb => "r8g8b8",
                 .rgba => "r8g8b8a8",
@@ -54,9 +54,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
         break :blk fmt;
     };
     const n_pixels = hdr.width * hdr.height;
-    const pixels = switch (hdr.channel) {
-        .rgb => try decodeRGB(gpa, n_pixels),
-        .rgba => try decodeRGBA(gpa, n_pixels),
+    const pixels: Pixels = switch (hdr.channel) {
+        .rgb => .{ .rgb = try decodeRGB(gpa, n_pixels, data[@sizeOf(Header)..]) },
+        .rgba => .{ .rgba = try decodeRGBA(gpa, n_pixels, data[@sizeOf(Header)..]) },
     };
     if (std.mem.eql(u8, data[data.len - END_MARKER.len .. data.len], END_MARKER[0..END_MARKER.len])) //
         return error.InvalidEndMarker;
@@ -68,12 +68,13 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
     };
 }
 
-pub fn encode(w: *std.Io.Writer, img: *const Image) !void {
-    const hdr: Header = try .fromImage(img);
+pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
+    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
     switch (img.pixels) {
         .rgb => |rgbs| try encodeRGB(w, rgbs),
         .rgba => |rgbas| try encodeRGBA(w, rgbas),
+        else => unreachable,
     }
     for (END_MARKER) |em| try w.writeByte(em);
     try w.flush();
@@ -495,7 +496,7 @@ test "First 64 Matches" {
         };
         const rgbs: RGBS = try .init(allo, &data1, .rgb);
         defer rgbs.deinit(allo);
-        const n_matches = try first64RGBMatchesAt(0);
+        const n_matches = try first64RGBMatchesAt(rgbs, 0, rgbs.get(0) catch unreachable);
         try std.testing.expectEqual(63, n_matches);
     }
 
@@ -558,7 +559,7 @@ test "First 64 Matches" {
         };
         const rgbs: RGBS = try .init(allo, &data1, .rgb);
         defer rgbs.deinit(allo);
-        const n_matches = try first64RGBMatchesAt(0);
+        const n_matches = try first64RGBMatchesAt(rgbs, 0, try rgbs.get(0));
         try std.testing.expectEqual(n_matches, 47);
     }
 
@@ -637,9 +638,9 @@ test "First 64 Matches" {
             255, 100, 0, 255, //
             255, 100, 10, 255, //
         };
-        const rgbas = try .init(allo, &data1, .rgba);
+        const rgbas: RGBAS = try .init(allo, &data1, .rgba);
         defer rgbas.deinit(allo);
-        const n_matches = try first64RGBAMatchesAt(0);
+        const n_matches = try first64RGBAMatchesAt(rgbas, 0, try rgbas.get(0));
         try std.testing.expectEqual(63, n_matches);
     }
 
@@ -702,7 +703,7 @@ test "First 64 Matches" {
         };
         const rgbas: RGBAS = try .init(allo, &data1, .rgba);
         defer rgbas.deinit(allo);
-        const n_matches = try first64RGBAMatchesAt(0);
+        const n_matches = try first64RGBAMatchesAt(rgbas, 0, try rgbas.get(0));
         try std.testing.expectEqual(n_matches, 47);
     }
 }

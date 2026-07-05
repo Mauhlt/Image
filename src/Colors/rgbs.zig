@@ -11,7 +11,7 @@ const RGBS = @This();
 const Order = RGB.Order;
 
 ptr: [*]u8,
-len: usize,
+len: usize, // # of pixels
 
 pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
     if (len == 0) return error.InvalidDataLen;
@@ -76,9 +76,19 @@ pub fn get(self: RGBS, i: usize) !RGB {
     return rgb;
 }
 
-pub fn set(self: RGBS, i: usize, rgb: RGB) !void {}
+pub fn set(self: RGBS, i: usize, rgb: RGB) !void {
+    if (i >= self.len) return error.OutOfBounds;
+    self.ptr[i] = rgb.r;
+    self.ptr[self.len + i] = rgb.g;
+    self.ptr[self.len * 2 + i] = rgb.b;
+}
 
-pub fn setMany(self: RGBS, i: usize, len: usize, rgb: RGB) !void {}
+pub fn setMany(self: RGBS, i: usize, len: usize, rgb: RGB) !void {
+    if (i + len >= self.len) return error.OutOfBounds;
+    @memset(self.ptr[i..][0..len], rgb.r);
+    @memset(self.ptr[self.len + i ..][0..len], rgb.g);
+    @memset(self.ptr[2 * self.len + i ..][0..len], rgb.b);
+}
 
 pub fn slice(
     self: RGBS,
