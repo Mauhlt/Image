@@ -88,7 +88,7 @@ pub fn set(self: RGBAS, i: usize, rgba: RGBA) !void {
 }
 
 pub fn setMany(self: RGBAS, i: usize, len: usize, rgba: RGBA) !void {
-    if (i + len >= self.len) return error.OutOfBounds;
+    if (i + len > self.len) return error.OutOfBounds;
     @memset(self.ptr[i..][0..len], rgba.r);
     @memset(self.ptr[self.len + i ..][0..len], rgba.g);
     @memset(self.ptr[2 * self.len + i ..][0..len], rgba.b);

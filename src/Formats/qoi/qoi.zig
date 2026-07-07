@@ -234,7 +234,7 @@ fn encodeRGB(w: *std.Io.Writer, rgbs: RGBS) !void {
 
         const n = first64RGBMatchesAt(rgbs, i, prev);
         if (n > 1) {
-            const run = @min(n, 63) - 1;
+            const run = @min(n, 62) - 1;
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
             // std.debug.print("run ", .{});

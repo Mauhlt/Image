@@ -60,6 +60,11 @@ pub fn set(self: GRAYS, i: usize, gray: GRAY) void {
     self.ptr[i] = gray;
 }
 
+pub fn setMany(self: GRAYS, i: usize, len: usize, gray: GRAY) !void {
+    if (i + len > self.len) return error.OutOfBounds;
+    @memset(self.ptr[i..][0..len], gray.g);
+}
+
 pub fn slice(
     self: GRAYS,
     gpa: std.mem.Allocator,
