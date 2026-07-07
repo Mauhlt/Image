@@ -200,12 +200,13 @@ test "QOI Basic" {
     const filepath = "src/Data/Read/BasicDecode.qoi";
     try img.write(io, filepath);
 
-    // var img2 = try read(.{
-    //     .io = io,
-    //     .gpa = gpa,
-    //     .filepath = filepath,
-    // });
-    // defer img2.deinit(gpa);
+    var img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath,
+    });
+    defer img2.deinit(gpa);
+    try img2.printPixels();
 }
 
 test "QOI" {
