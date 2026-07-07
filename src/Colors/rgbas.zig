@@ -74,8 +74,8 @@ pub fn get(self: RGBAS, i: usize) !RGBA {
     return .{
         .r = self.ptr[i],
         .g = self.ptr[self.len + i],
-        .b = self.ptr[self.len * 2 + i],
-        .a = self.ptr[self.len * 3 + i],
+        .b = self.ptr[2 * self.len + i],
+        .a = self.ptr[3 * self.len + i],
     };
 }
 

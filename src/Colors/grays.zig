@@ -123,7 +123,7 @@ test "GRAYS" {
     const allo = std.testing.allocator;
 
     { // Init Empty
-        const empties: GRAYS = try .initEmpty(allo, data.len);
+        var empties: GRAYS = try .initEmpty(allo, data.len);
         defer empties.deinit(allo);
         try std.testing.expectEqual(empties.len, data.len);
 

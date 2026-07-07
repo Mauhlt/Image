@@ -11,16 +11,12 @@ const RGBS = @This();
 const Order = RGB.Order;
 
 ptr: [*]u8,
-len: usize, // # of pixels
+len: usize,
 
 pub fn initEmpty(gpa: std.mem.Allocator, len: usize) !RGBS {
     if (len == 0) return error.InvalidDataLen;
     const rgbs = try gpa.alloc(u8, len * @sizeOf(RGB));
-    errdefer gpa.free(rgbs);
-    return .{
-        .ptr = rgbs.ptr,
-        .len = len,
-    };
+    return .{ .ptr = rgbs.ptr, .len = len };
 }
 
 pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
@@ -38,22 +34,17 @@ pub fn init(gpa: std.mem.Allocator, data: []const u8, order: Order) !RGBS {
         j += @sizeOf(RGB);
     }) {
         const rgb: RGB = .initOrder(data[j..][0..@sizeOf(RGB)], order);
-        inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-            rgbs.ptr[i + len * k] = @field(rgb, field_name);
-        }
+        rgbs.ptr[i] = rgb.r;
+        rgbs.ptr[len + i] = rgb.g;
+        rgbs.ptr[2 * len + i] = rgb.b;
     }
-    return .{
-        .ptr = rgbs.ptr,
-        .len = len,
-    };
+
+    return .{ .ptr = rgbs.ptr, .len = len };
 }
 
 pub fn dupe(self: RGBS, gpa: std.mem.Allocator) !RGBS {
     const rgbs = try gpa.dupe(u8, self.ptr[0 .. self.len * @sizeOf(RGB)]);
-    return .{
-        .ptr = rgbs.ptr,
-        .len = self.len,
-    };
+    return .{ .ptr = rgbs.ptr, .len = self.len };
 }
 
 pub fn deinit(self: RGBS, gpa: std.mem.Allocator) void {
@@ -68,19 +59,19 @@ pub fn replace(self: RGBS, i: usize, rgb: RGB) !void {
 }
 
 pub fn get(self: RGBS, i: usize) !RGB {
-    if (i > self.len) return error.OutOfBounds;
-    var rgb: RGB = undefined;
-    inline for (comptime std.meta.fieldNames(RGB), 0..) |field_name, k| {
-        @field(rgb, field_name) = self.ptr[i + k * self.len];
-    }
-    return rgb;
+    if (i >= self.len) return error.OutOfBounds;
+    return .{
+        .r = self.ptr[i],
+        .g = self.ptr[self.len + i],
+        .b = self.ptr[2 * self.len + i],
+    };
 }
 
 pub fn set(self: RGBS, i: usize, rgb: RGB) !void {
     if (i >= self.len) return error.OutOfBounds;
     self.ptr[i] = rgb.r;
     self.ptr[self.len + i] = rgb.g;
-    self.ptr[self.len * 2 + i] = rgb.b;
+    self.ptr[2 * self.len + i] = rgb.b;
 }
 
 pub fn setMany(self: RGBS, i: usize, len: usize, rgb: RGB) !void {
