@@ -75,7 +75,7 @@ pub fn set(self: RGBS, i: usize, rgb: RGB) !void {
 }
 
 pub fn setMany(self: RGBS, i: usize, len: usize, rgb: RGB) !void {
-    if (i + len >= self.len) return error.OutOfBounds;
+    if (i + len > self.len) return error.OutOfBounds;
     @memset(self.ptr[i..][0..len], rgb.r);
     @memset(self.ptr[self.len + i ..][0..len], rgb.g);
     @memset(self.ptr[2 * self.len + i ..][0..len], rgb.b);
