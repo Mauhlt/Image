@@ -137,51 +137,51 @@ pub fn write(
     };
 }
 
-// test "BMP" {
-//     const gpa = std.testing.allocator;
-//     var threaded: std.Io.Threaded = .init(gpa, .{});
-//     const io = threaded.io();
-//
-//     const filepath1 = "src/Data/Read/BasicArt.bmp";
-//
-//     // now this works with both cwd + dir
-//     var img = try read(.{
-//         .gpa = gpa,
-//         .io = io,
-//         .filepath = filepath1,
-//         .path_type = .cwd,
-//     });
-//     defer img.deinit(gpa);
-//     // std.debug.print("{f}", .{img});
-//
-//     // write file
-//     const filepath2 = "src/Data/Write/BasicArt.bmp";
-//     try img.write(io, filepath2);
-//
-//     // open file 2
-//     var img2 = try read(.{
-//         .io = io,
-//         .gpa = gpa,
-//         .filepath = filepath2,
-//         .path_type = .cwd,
-//     });
-//     defer img2.deinit(gpa);
-//     // std.debug.print("{f}", .{img2});
-//
-//     // check that both files match
-//     const tag = std.meta.activeTag(img.pixels);
-//     std.debug.assert(tag == std.meta.activeTag(img2.pixels));
-//     const pixels1 = img.pixels.rgb;
-//     const pixels2 = img2.pixels.rgb;
-//     const len = pixels1.len;
-//     for (0..len) |i| {
-//         const rgb1 = try pixels1.get(i);
-//         const rgb2 = try pixels2.get(i);
-//         try std.testing.expectEqualDeep(rgb1, rgb2);
-//     }
-// }
+test "BMP" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
 
-test "QOI Basic" {
+    const filepath1 = "src/Data/Read/BasicArt.bmp";
+
+    // now this works with both cwd + dir
+    var img = try read(.{
+        .gpa = gpa,
+        .io = io,
+        .filepath = filepath1,
+        .path_type = .cwd,
+    });
+    defer img.deinit(gpa);
+    // std.debug.print("{f}", .{img});
+
+    // write file
+    const filepath2 = "src/Data/Write/BasicArt.bmp";
+    try img.write(io, filepath2);
+
+    // open file 2
+    var img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath2,
+        .path_type = .cwd,
+    });
+    defer img2.deinit(gpa);
+    // std.debug.print("{f}", .{img2});
+
+    // check that both files match
+    const tag = std.meta.activeTag(img.pixels);
+    std.debug.assert(tag == std.meta.activeTag(img2.pixels));
+    const pixels1 = img.pixels.rgb;
+    const pixels2 = img2.pixels.rgb;
+    const len = pixels1.len;
+    for (0..len) |i| {
+        const rgb1 = try pixels1.get(i);
+        const rgb2 = try pixels2.get(i);
+        try std.testing.expectEqualDeep(rgb1, rgb2);
+    }
+}
+
+test "QOI" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
@@ -266,6 +266,7 @@ test "QOI Basic" {
         }
     }
 
+    // TODO: Need to fix how i read/write bmp data as it is causing issues
     // real data
     const filepath3 = "src/Data/Read/BasicArt.bmp";
     const img5 = try read(.{
