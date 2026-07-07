@@ -43,21 +43,20 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
     try w.print("Width: {}\n", .{self.width});
     try w.print("Height: {}\n", .{self.height});
     switch (self.pixels) {
-        inline else => |data, tag| {
-            const n_fields_per_pixel = switch (tag) {
-                .gray => 1,
-                .rgb => 3,
-                .rgba => 4,
-            };
-            try w.print("# of Pixels: {}\n", .{data.len / n_fields_per_pixel});
-        },
+        inline else => |data| try w.print("# of Pixels: {}\n", .{data.len}),
     }
     try w.print("Format: {t}\n", .{self.fmt});
 }
 
 pub fn printPixels(self: *const @This()) !void {
     switch (self.pixels) {
-        .gray => {},
+        .gray => |grays| {
+            const len = grays.len;
+            for (0..len) |i| {
+                const gray = grays.get(i) catch unreachable;
+                std.debug.print("{}\n", .{gray});
+            }
+        },
         .rgb => |rgbs| {
             const len = rgbs.len;
             for (0..len) |i| {
@@ -65,7 +64,13 @@ pub fn printPixels(self: *const @This()) !void {
                 std.debug.print("{}\n", .{rgb});
             }
         },
-        .rgba => {},
+        .rgba => |rgbas| {
+            const len = rgbas.len;
+            for (0..len) |i| {
+                const rgba = rgbas.get(i) catch unreachable;
+                std.debug.print("{}\n", .{rgba});
+            }
+        },
     }
 }
 
@@ -99,7 +104,6 @@ pub fn read(args: ReadArgs) !@This() {
 
     const data = try readData(args.io, args.gpa, file);
     defer args.gpa.free(data);
-    std.debug.print("Data Length: {}\n", .{data.len});
 
     const ext_str = std.fs.path.extension(args.filepath)[1..];
     const ext = std.meta.stringToEnum(ImageTag, ext_str) orelse
@@ -182,22 +186,23 @@ test "QOI Basic" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
+    // Tests RGB
     // Expected (6 Total): rgb, run, diff, luma, index, rgb
-    const data: []u8 = @ptrCast(@constCast(&[_]u8{
+    const rgbs: []u8 = @ptrCast(@constCast(&[_]u8{
         255, 255, 255, 253, 17, 253, 30, // rs
         255, 255, 255, 253, 10, 253, 30, // gs
         10, 10, 10, 11, 16, 11, 30, // bs
     }));
     const img: @This() = .{
-        .width = 5,
+        .width = rgbs.len / 3,
         .height = 1,
-        .pixels = Pixels{ .rgb = .{ .ptr = data.ptr, .len = data.len / 3 } },
+        .pixels = Pixels{ .rgb = .{ .ptr = rgbs.ptr, .len = rgbs.len / 3 } },
         .fmt = .r8g8b8_srgb,
     };
-    std.debug.print("{f}\n", .{img});
-    try img.printPixels();
+    // std.debug.print("{f}\n", .{img});
+    // try img.printPixels();
 
-    const filepath = "src/Data/Read/BasicDecode.qoi";
+    const filepath = "src/Data/Read/BasicDecodeRGB.qoi";
     try img.write(io, filepath);
 
     var img2 = try read(.{
@@ -206,7 +211,60 @@ test "QOI Basic" {
         .filepath = filepath,
     });
     defer img2.deinit(gpa);
-    try img2.printPixels();
+    // std.debug.print("{f}\n", .{img2});
+    // try img2.printPixels();
+    switch (img.pixels) {
+        inline else => |pixels1, tag| {
+            const pixels2 = @field(img2.pixels, @tagName(tag));
+            const len = pixels1.len;
+            for (0..len) |i| {
+                const px1 = pixels1.get(i);
+                const px2 = pixels2.get(i);
+                try std.testing.expectEqualDeep(px1, px2);
+            }
+        }
+    }
+
+    // Test RGBA
+    // Expected (6 Total): rgba, run, diff, luma, index, rgb, rgba
+    const rgbas: []u8 = @ptrCast(@constCast(&[_]u8{
+        255, 255, 255, 253, 17, 253, 30, 170, // rs
+        255, 255, 255, 253, 10, 253, 30, 170, // gs
+        10, 10, 10, 11, 16, 11, 30, 170, // bs
+        0,  0,  0,  0,  0,  0,  0,  170,
+    }));
+    const img3: @This() = .{
+        .width = rgbas.len / 4,
+        .height = 1,
+        .pixels = Pixels{ .rgba = .{ .ptr = rgbas.ptr, .len = rgbas.len / 4 } },
+        .fmt = .r8g8b8a8_srgb,
+    };
+    // std.debug.print("{f}\n", .{img3});
+    // try img3.printPixels();
+
+    const filepath2 = "src/Data/Read/BasicDecodeRGBA.qoi";
+    try img3.write(io, filepath2);
+
+    var img4 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = filepath2,
+    });
+    defer img4.deinit(gpa);
+    // std.debug.print("{f}\n", .{img4});
+    // try img4.printPixels();
+
+    switch (img3.pixels) {
+        inline else => |pixels1, tag| {
+            const pixels2 = @field(img4.pixels, @tagName(tag));
+            const len = pixels1.len;
+            for (0..len) |i| {
+                const px1 = pixels1.get(i);
+                const px2 = pixels2.get(i);
+                try std.testing.expectEqualDeep(px1, px2);
+            }
+        }
+    }
 }
 
 test "QOI" {
