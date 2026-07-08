@@ -111,7 +111,7 @@ pub fn slice(
     if (pos.end > self.len) return error.OutOfBounds;
 
     const len = pos.end - pos.start;
-    const rgbas = try allo.dupe(RGBAS, len);
+    const rgbas = try allo.alloc(RGBA, len);
     errdefer allo.free(rgbas);
     for (0..len) |i| rgbas[i] = try self.get(pos.start + i);
     return rgbas;
