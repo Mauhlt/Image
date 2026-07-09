@@ -5,8 +5,8 @@
     .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
     .dependencies = .{
         .Vulkan = .{
-            .url = "git+https://github.com/Mauhlt/Vulkan.git#3d1280055167abe33cd6959d26e8d1cfd2d57647",
-            .hash = "Vulkan-0.0.0-9v7hoSVzEQDPzdP81mnDUpONNDt4n_eKYU9fP0EvY944",
+            .url = "git+https://github.com/Mauhlt/Vulkan.git#eb9dad69a342098734790950a2d051aa0d4ee3ce",
+            .hash = "Vulkan-0.0.0-9v7hoUdzEQBSNZ_cAVxFjA2UJqjFWqq7TJjAYBpjkvfP",
         },
     },
     .paths = .{
