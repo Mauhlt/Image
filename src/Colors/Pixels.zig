@@ -150,18 +150,18 @@ pub const Pixels = union(PixelOrder) {
 
     pub fn toGRAYS(self: @This(), gpa: std.mem.Allocator) !@This() {
         switch (self) {
-            .grays => return self.dupe(gpa),
+            .grays => unreachable,
             .rgbs => |rgbs| {
                 const pxs: @This() = try .initEmpty(gpa, .grays, rgbs.len);
                 for (0..rgbs.len) |i| {
-                    pxs.grays[i] = rgbs[i].pixel.toGRAY16();
+                    pxs.grays[i] = rgbs[i].toGRAY16();
                 }
                 return pxs;
             },
             .rgbas => |rgbas| {
                 const pxs: @This() = try .initEmpty(gpa, .grays, rgbas.len);
                 for (0..rgbas.len) |i| {
-                    pxs.grays[i] = rgbas[i].pixel.toGRAY16();
+                    pxs.grays[i] = rgbas[i].toGRAY16();
                 }
                 return pxs;
             },
@@ -173,15 +173,15 @@ pub const Pixels = union(PixelOrder) {
             .grays => |grays| {
                 const pxs: @This() = try .initEmpty(gpa, .rgbs, grays.len);
                 for (0..grays.len) |i| {
-                    pxs.rgbs[i] = grays[i].pixel.toRGB();
+                    pxs.rgbs[i] = grays[i].toRGB();
                 }
                 return pxs;
             },
-            .rgbs => return self.dupe(gpa),
+            .rgbs => unreachable,
             .rgbas => |rgbas| {
                 const pxs: @This() = try .initEmpty(gpa, .rgbs, rgbas.len);
                 for (0..rgbas.len) |i| {
-                    pxs.rgbs[i] = rgbas[i].pixel.toRGB();
+                    pxs.rgbs[i] = rgbas[i].toRGB();
                 }
                 return pxs;
             },
@@ -193,18 +193,18 @@ pub const Pixels = union(PixelOrder) {
             .grays => |grays| {
                 const pxs: @This() = try .initEmpty(gpa, .rgbas, grays.len);
                 for (0..grays.len) |i| {
-                    pxs.rgbas[i] = grays[i].pixel.toRGBA();
+                    pxs.rgbas[i] = grays[i].toRGBA();
                 }
                 return pxs;
             },
             .rgbs => |rgbs| {
                 const pxs: @This() = try .initEmpty(gpa, .rgbas, rgbs.len);
                 for (0..rgbs.len) |i| {
-                    pxs.rgbas[i] = rgbs[i].pixel.toRGBA();
+                    pxs.rgbas[i] = rgbs[i].toRGBA();
                 }
                 return pxs;
             },
-            .rgbas => return self.dupe(gpa),
+            .rgbas => unreachable,
         }
     }
 };
@@ -255,28 +255,30 @@ test "Pixels" {
     defer base_pxs.deinit(gpa);
 
     { // grays
-        const gray_pxs = try base_pxs.toGRAYS(gpa);
+        const gray_pxs = try base_pxs.dupe(gpa);
         defer gray_pxs.deinit(gpa);
         // grays -> rgbs
         const rgb_pxs = try gray_pxs.toRGBS(gpa);
         defer rgb_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgb_act = rgb_pxs.rgbs[i].pixel.toU32();
-            const rgb_exp = @as(u32, data[i]) << 24 | //
-                @as(u32, data[i]) << 16 | //
-                @as(u32, data[i]) << 8 | //
-                0x0000_00FF;
+            const rgb_act: u32 = @bitCast(rgb_pxs.rgbs[i]);
+            const rgb_exp: u32 = @bitCast(RGB{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            });
             try std.testing.expectEqual(rgb_exp, rgb_act);
         }
         // grays -> rgbas
         const rgba_pxs = try base_pxs.toRGBAS(gpa);
         defer rgba_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgba_act = rgba_pxs.rgbas[i].pixel.toU32();
-            const rgba_exp: u32 = @as(u32, data[i]) << 24 | //
-                @as(u32, data[i]) << 16 | //
-                @as(u32, data[i]) << 8 | //
-                0xFF;
+            const rgba_act: u32 = @bitCast(rgba_pxs.rgbas[i]);
+            const rgba_exp: u32 = @bitCast(RGBA{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            });
             try std.testing.expectEqual(rgba_exp, rgba_act);
         }
     }
@@ -288,7 +290,7 @@ test "Pixels" {
         const gray_pxs = try rgb_pxs.toGRAYS(gpa);
         defer gray_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const gray_act = gray_pxs.grays[i].pixel.toU32();
+            const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
             const gray_exp: u8 = data[i];
             try std.testing.expectEqualDeep(gray_exp, gray_act);
         }
@@ -296,12 +298,12 @@ test "Pixels" {
         const rgba_pxs = try rgb_pxs.toRGBAS(gpa);
         defer rgba_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgba_act = rgba_pxs.rgbas[i].pixel.toU32();
-            const rgba_exp: u32 = @as(u32, data[i]) << 24 | //
-                @as(u32, data[i]) << 16 | //
-                @as(u32, data[i]) << 8 | //
-                0xFF;
-            try std.testing.expectEqual(rgba_exp, rgba_act);
+            try std.testing.expect( //
+                rgba_pxs.rgbas[i].eql(RGBA{
+                    .red = data[i],
+                    .green = data[i],
+                    .blue = data[i],
+                }));
         }
     }
 
@@ -312,7 +314,7 @@ test "Pixels" {
         const gray_pxs = try rgba_pxs.toGRAYS(gpa);
         defer gray_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const gray_act = gray_pxs.grays[i].pixel.toU32();
+            const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
             const gray_exp = data[i];
             try std.testing.expectEqual(gray_exp, gray_act);
         }
@@ -320,12 +322,11 @@ test "Pixels" {
         const rgb_pxs = try rgba_pxs.toRGBS(gpa);
         defer rgb_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgb_act = rgb_pxs.rgbs[i].pixel.toU32();
-            const rgb_exp = @as(u32, data[i]) << 24 | //
-                @as(u32, data[i]) << 16 | //
-                @as(u32, data[i]) << 8 | //
-                0xFF;
-            try std.testing.expectEqualDeep(rgb_exp, rgb_act);
+            try std.testing.expect(rgb_pxs.rgbs[i].eql(RGB{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            }));
         }
     }
 }
