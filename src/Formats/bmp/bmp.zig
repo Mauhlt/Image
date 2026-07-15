@@ -30,32 +30,65 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         if (end - start != hdr.compressed_image_size) //
             return error.IncorrectCompressedImageSize;
     }
-    // Unpads each row into packed buffer - reorders rows so image row 0 = top
-    // this is a memory cost - is there a more efficient way?
-    const pixels_bytes = try gpa.alloc(u8, @as(usize, row_bytes) * hdr.height);
-    defer gpa.free(pixels_bytes);
-    for (0..hdr.height) |dst_row| {
-        const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
-        const src_start = start + src_row * stride;
-        const src = data[src_start..][0..row_bytes];
-        const dst = pixels_bytes[dst_row * row_bytes ..][0..row_bytes];
-        @memcpy(dst, src);
-    }
+    const n_pixels = hdr.width * hdr.height;
+    // // Unpads each row into packed buffer - reorders rows so image row 0 = top
+    // // this is a memory cost - is there a more efficient way?
+    // const pixels_bytes = try gpa.alloc(u8, @as(usize, row_bytes) * hdr.height);
+    // defer gpa.free(pixels_bytes);
+    // for (0..hdr.height) |dst_row| {
+    //     const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
+    //     const src_start = start + src_row * stride;
+    //     const src = data[src_start..][0..row_bytes];
+    //     const dst = pixels_bytes[dst_row * row_bytes ..][0..row_bytes];
+    //     @memcpy(dst, src);
+    // }
 
     var pixels: Pixels = undefined;
     var fmt: Format = undefined;
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => return error.UnsupportedBPP,
         .monochrome => {
-            pixels = try .init(gpa, pixels_bytes, .g, .grays);
+            pixels = try .initEmpty(gpa, n_pixels, .grays);
+            for (0..hdr.height) |dst_row| {
+                const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
+                const src = data[start + src_row * stride ..][0..row_bytes];
+                const dst = pixels.grays[dst_row * hdr.width ..][0..hdr.width];
+                for (src, dst) |b, *px| px.* = .{ .gray = b };
+            }
             fmt = .r8_srgb;
         },
         .rgb_24 => {
-            pixels = try .init(gpa, pixels_bytes, .bgr, .rgbs);
+            pixels = try .initEmpty(gpa, n_pixels, .rgbs);
+            for (0..hdr.height) |dst_row| {
+                const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
+                const src = data[start + src_row * stride ..][0..row_bytes];
+                const dst = pixels.rgbs[dst_row * hdr.width ..][0..hdr.width];
+                for (0..hdr.width) |col| {
+                    dst[col] = .{
+                        .blue = src[col * 3],
+                        .green = src[col * 3 + 1],
+                        .red = src[col * 3 + 2],
+                    };
+                }
+            }
             fmt = .r8g8b8_srgb;
         },
         .rgba => {
-            pixels = try .init(gpa, pixels_bytes, .bgra, .rgbas);
+            pixels = try .initEmpty(gpa, n_pixels, .rgbas);
+            for (0..hdr.height) |dst_row| {
+                const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
+                const src = data[start + src_row * stride ..][0..row_bytes];
+                const dst = pixels.rgbas[dst_row * hdr.width ..][0..hdr.width];
+                for (0..hdr.width) |col| {
+                    dst[col] = .{
+                        .blue = src[col * 4],
+                        .green = src[col * 4 + 1],
+                        .red = src[col * 4 + 2],
+                        .alpha = src[col * 4 + 3],
+                    };
+                }
+            }
+            // pixels = try .init(gpa, pixels_bytes, .bgra, .rgbas);
             fmt = .r8g8b8a8_srgb;
         },
     }
