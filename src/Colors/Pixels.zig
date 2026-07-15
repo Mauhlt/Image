@@ -261,8 +261,8 @@ test "Pixels" {
         const rgb_pxs = try gray_pxs.toRGBS(gpa);
         defer rgb_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgb_act: u32 = @bitCast(rgb_pxs.rgbs[i]);
-            const rgb_exp: u32 = @bitCast(RGB{
+            const rgb_act: u24 = @bitCast(rgb_pxs.rgbs[i]);
+            const rgb_exp: u24 = @bitCast(RGB{
                 .red = data[i],
                 .green = data[i],
                 .blue = data[i],
