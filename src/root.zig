@@ -298,36 +298,36 @@ test "QOI" {
     defer img6.deinit(gpa);
     // std.debug.print("{f}\n", .{img2});
 
-    // std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img6.pixels));
-    // const pixels1 = img5.pixels.rgbs;
-    // const pixels2 = img6.pixels.rgbs;
-    // const len = pixels1.len;
-    // for (0..len) |i| {
-    //     const px1 = pixels1[i];
-    //     const px2 = pixels2[i];
-    //     std.testing.expectEqualDeep(px1, px2) catch |err| {
-    //         std.debug.print("{}: {} - {}\n", .{ i, px1, px2 });
-    //         return err;
-    //     };
-    // }
+    std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img6.pixels));
+    const pixels1 = img5.pixels.rgbs;
+    const pixels2 = img6.pixels.rgbs;
+    const len = pixels1.len;
+    for (0..len) |i| {
+        const px1 = pixels1[i];
+        const px2 = pixels2[i];
+        std.testing.expectEqualDeep(px1, px2) catch |err| {
+            std.debug.print("{}: {} - {}\n", .{ i, px1, px2 });
+            return err;
+        };
+    }
 
-    // // write qoi file
-    // const filepath5 = "src/Data/Write/BasicArt.qoi";
-    // try img6.write(io, filepath5);
-    //
-    // // read qoi file again
-    // const filepath6 = "src/Data/Write/BasicArt.qoi";
-    // var img7 = try read(.{ .io = io, .gpa = gpa, .filepath = filepath6 });
-    // defer img7.deinit(gpa);
-    //
-    // // check acc
-    // std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img7.pixels));
-    // const pixels3 = img7.pixels.rgbs;
-    // for (0..len) |i| {
-    //     const px1 = pixels1[i];
-    //     const px2 = pixels3[i];
-    //     try std.testing.expectEqualDeep(px1, px2);
-    // }
+    // write qoi file
+    const filepath5 = "src/Data/Write/BasicArt.qoi";
+    try img6.write(io, filepath5);
+
+    // read qoi file again
+    const filepath6 = "src/Data/Write/BasicArt.qoi";
+    var img7 = try read(.{ .io = io, .gpa = gpa, .filepath = filepath6 });
+    defer img7.deinit(gpa);
+
+    // check acc
+    std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img7.pixels));
+    const pixels3 = img7.pixels.rgbs;
+    for (0..len) |i| {
+        const px1 = pixels1[i];
+        const px2 = pixels3[i];
+        try std.testing.expectEqualDeep(px1, px2);
+    }
 }
 
 test "PPM" {}
