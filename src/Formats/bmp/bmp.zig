@@ -7,42 +7,55 @@ const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const Header = @import("header.zig");
 
-// https://www.ece.ualberta.ca/~elliott/ee552/studentAppNotes/2003_w/misc/bmp_file_format/bmp_file_format.htm
+// pads every row to 4-byte boundary - rounds to next multiple of 4
+fn strideOf(row_bytes: u32) u32 {
+    return (row_bytes + 3) & ~@as(u32, 3);
+}
+
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
-    // defer hdr.deinit(gpa);
-    // std.debug.print("{f}", .{hdr});
-    // std.debug.assert(hdr.depth == 1);
     const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
         .monochrome => 1,
         .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => 3,
         .rgba => 4,
     };
-    const exp_n_pixels = hdr.width * hdr.height;
     const start = hdr.data_offset;
-    const end = start + hdr.compressed_image_size;
-    // std.debug.print(
-    //     "Start: {}\nEnd: {}\nData Len: {}\n",
-    //     .{ start, end, data.len },
-    // );
-    std.debug.assert(end <= data.len and start <= data.len);
-    const pixels_slice = data[start..end];
-    const n_pixels = pixels_slice.len / bpp;
-    std.debug.assert(n_pixels == exp_n_pixels);
+    // rows padded to 4 bytes - stride >= unpadded pixel width whenever hdr.width * bpp isnt multiple of 4
+    const row_bytes = hdr.width * bpp;
+    const stride = strideOf(row_bytes);
+    // computes end based from stride * height
+    const end = start + stride * hdr.height;
+    std.debug.assert(end <= data.len);
+    if (hdr.compressed_image_size > 0) {
+        if (end - start != hdr.compressed_image_size) //
+            return error.IncorrectCompressedImageSize;
+    }
+    // Unpads each row into packed buffer - reorders rows so image row 0 = top
+    // this is a memory cost - is there a more efficient way?
+    const pixels_bytes = try gpa.alloc(u8, @as(usize, row_bytes) * hdr.height);
+    defer gpa.free(pixels_bytes);
+    for (0..hdr.height) |dst_row| {
+        const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
+        const src_start = start + src_row * stride;
+        const src = data[src_start..][0..row_bytes];
+        const dst = pixels_bytes[dst_row * row_bytes ..][0..row_bytes];
+        @memcpy(dst, src);
+    }
+
     var pixels: Pixels = undefined;
     var fmt: Format = undefined;
     switch (hdr.bits_per_pixel) {
-        .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
+        .bit_4_pallet, .bit_8_pallet, .rgb_16 => return error.UnsupportedBPP,
         .monochrome => {
-            pixels = try .init(gpa, pixels_slice, .g, .grays);
+            pixels = try .init(gpa, pixels_bytes, .g, .grays);
             fmt = .r8_srgb;
         },
         .rgb_24 => {
-            pixels = try .init(gpa, pixels_slice, .bgr, .rgbs);
+            pixels = try .init(gpa, pixels_bytes, .bgr, .rgbs);
             fmt = .r8g8b8_srgb;
         },
         .rgba => {
-            pixels = try .init(gpa, pixels_slice, .bgra, .rgbas);
+            pixels = try .init(gpa, pixels_bytes, .bgra, .rgbas);
             fmt = .r8g8b8a8_srgb;
         },
     }
@@ -57,28 +70,48 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
     const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
     try hdr.encode(w);
+    // row pads - each row must be padded to 4 byte stride on disk
+    // row order - hdr.is_top_down false - file's first row must be image's last row
     switch (img.pixels) {
         .grays => |grays| {
-            for (0..grays.len) |i| {
-                const gray = grays[i];
-                try w.writeByte(gray.gray);
+            const row_bytes = img.width * 1;
+            const pad = strideOf(row_bytes) - row_bytes;
+            for (0..img.height) |file_row| {
+                const img_row = img.height - file_row - 1;
+                for (0..img.width) |col| {
+                    const gray = grays[img_row * img.width + col];
+                    try w.writeByte(gray.gray);
+                }
+                for (0..pad) |_| try w.writeByte(0);
             }
         },
         .rgbs => |rgbs| {
-            for (0..rgbs.len) |i| {
-                const rgb = rgbs[i];
-                try w.writeByte(rgb.blue);
-                try w.writeByte(rgb.green);
-                try w.writeByte(rgb.red);
+            const row_bytes = img.width * 3;
+            const pad = strideOf(row_bytes) - row_bytes;
+            for (0..img.height) |file_row| {
+                const img_row = img.height - file_row - 1;
+                for (0..img.width) |col| {
+                    const rgb = rgbs[img_row * img.width + col];
+                    try w.writeByte(rgb.blue);
+                    try w.writeByte(rgb.green);
+                    try w.writeByte(rgb.red);
+                }
+                for (0..pad) |_| try w.writeByte(0);
             }
         },
         .rgbas => |rgbas| {
-            for (0..rgbas.len) |i| {
-                const rgba = rgbas[i];
-                try w.writeByte(rgba.blue);
-                try w.writeByte(rgba.green);
-                try w.writeByte(rgba.red);
-                try w.writeByte(rgba.alpha);
+            const row_bytes = img.width * 4;
+            const pad = strideOf(row_bytes) - row_bytes;
+            for (0..img.height) |file_row| {
+                const img_row = img.height - file_row - 1;
+                for (0..img.width) |col| {
+                    const rgba = rgbas[img_row * img.width + col];
+                    try w.writeByte(rgba.blue);
+                    try w.writeByte(rgba.green);
+                    try w.writeByte(rgba.red);
+                    try w.writeByte(rgba.alpha);
+                }
+                for (0..pad) |_| try w.writeByte(0);
             }
         },
     }
