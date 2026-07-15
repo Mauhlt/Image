@@ -10,6 +10,7 @@ const Error = @import("../error.zig");
 // dir misc
 const BitsPerPixel = @import("misc.zig").BitsPerPixel;
 const Compression = @import("misc.zig").Compression;
+const strideOf = @import("misc.zig").strideOf;
 const SIG = @import("misc.zig").SIG;
 
 file_size: u32,
@@ -27,20 +28,26 @@ n_colors_used: u32,
 important_colors: u32,
 color_table: Pixels = undefined,
 
+fn possibleColorsFor(bpp: BitsPerPixel) u32 {
+    const bits = @intFromEnum(bpp);
+    return if (bits >= 24) 0 else @as(u32, 1) << @truncate(bits);
+}
+
 pub fn fromImage(img: *const Image) !@This() {
-    const len, const overflow = @mulWithOverflow(img.width, img.height);
     const bpp: u32 = switch (img.fmt) {
-        // .r8_uint => 1,
-        // .r4g4b4a4_sint => 2,
+        .r8_srgb => 1,
         .r8g8b8_srgb => 3,
         .r8g8b8a8_srgb => 4,
         else => return Error.Decode.InvalidFormat,
     };
-    if (overflow == 1) return Error.Decode.InvalidDimensions;
+    const n_pixels, const overflow = @mulWithOverflow(img.width, img.height);
+    if (overflow > 0) return Error.Decode.InvalidDimensions;
     // hdr
     var hdr: @This() = undefined;
     hdr.data_offset = 54;
-    hdr.file_size = hdr.data_offset + len * bpp;
+    const row_bytes = img.width * bpp;
+    const stride = strideOf(row_bytes);
+    hdr.file_size = hdr.data_offset + stride * img.height;
     // dib
     hdr.dib_hdr_size = 40;
     // img properties
@@ -48,10 +55,15 @@ pub fn fromImage(img: *const Image) !@This() {
     hdr.height = img.height;
     hdr.depth = 1;
     hdr.is_top_down = false;
-    hdr.bits_per_pixel = .rgb_24;
+    hdr.bits_per_pixel = switch (bpp) {
+        1 => .monochrome,
+        3 => .rgb_24,
+        4 => .rgba,
+        else => unreachable,
+    };
     hdr.compression = .none;
-    hdr.compressed_image_size = len * 3;
-    hdr.n_possible_colors = @as(u32, 1) << @truncate(@intFromEnum(hdr.bits_per_pixel));
+    hdr.compressed_image_size = stride * img.height;
+    hdr.n_possible_colors = possibleColorsFor(hdr.bits_per_pixel);
     hdr.n_colors_used = 0;
     hdr.important_colors = 0;
     // return
@@ -71,7 +83,6 @@ pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
     // img props
     _, const overflow = @mulWithOverflow(self.width, self.height);
     if (overflow > 0) return Error.Encode.InvalidDimensions;
-    // try w.writeInt(u32, self.compressed_image_size, .little);
     try w.writeInt(u32, self.width, .little); // 22
     try w.writeInt(u32, self.height, .little); // 26
     std.debug.assert(self.depth <= 1);
@@ -82,7 +93,6 @@ pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
     const compression: u32 = @intFromEnum(self.compression);
     try w.writeInt(u32, compression, .little); // 34
     try w.writeInt(u32, self.compressed_image_size, .little); // 38
-    // TODO: FIXME
     try w.writeInt(u32, 0, .little); // 42
     try w.writeInt(u32, 0, .little); // 46
     try w.writeInt(u32, 0, .little); // 50
@@ -124,7 +134,7 @@ pub fn decode(data: []const u8) !@This() {
     const compressed_image_size = //
         std.mem.readInt(u32, data[34..][0..4], .little);
     switch (bits_per_pixel) {
-        .rgb_24 => if (compression != .none)
+        .monochrome, .rgb_24, .rgba => if (compression != .none)
             return Error.Decode.InvalidCompression,
         else => unreachable,
     }
@@ -138,19 +148,12 @@ pub fn decode(data: []const u8) !@This() {
     if (important_colors > n_colors_used) {
         return Error.Decode.InvalidImportantColors;
     }
-    switch (bits_per_pixel) {
-        .monochrome => {}, // gray
-        .bit_4_pallet, .bit_8_pallet, .rgb_16 => {}, // rgb
-        .rgb_24 => {}, // rgb
-        .rgba => {}, // rgba
-    }
     return .{
         .file_size = file_size,
         .data_offset = data_offset,
         .dib_hdr_size = dib_hdr_size,
         .width = width,
         .height = height,
-        // .depth = if (n_planes == 0) 1 else n_planes,
         .is_top_down = is_top_down,
         .bits_per_pixel = bits_per_pixel,
         .n_possible_colors = n_possible_colors,
@@ -158,7 +161,6 @@ pub fn decode(data: []const u8) !@This() {
         .compressed_image_size = compressed_image_size,
         .n_colors_used = n_colors_used,
         .important_colors = important_colors,
-        // .color_table = color_table,
     };
 }
 

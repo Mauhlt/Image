@@ -14,3 +14,8 @@ pub const Compression = enum(u32) {
 };
 
 pub const SIG: []const u8 = "BM";
+
+/// pads every row to next 4-byte boundary
+pub fn strideOf(row_bytes: u32) u32 {
+    return (row_bytes + 3) & ~@as(u32, 3);
+}

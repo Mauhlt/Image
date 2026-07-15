@@ -6,11 +6,7 @@ const Image = @import("../../root.zig");
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const Header = @import("header.zig");
-
-// pads every row to 4-byte boundary - rounds to next multiple of 4
-fn strideOf(row_bytes: u32) u32 {
-    return (row_bytes + 3) & ~@as(u32, 3);
-}
+const strideOf = @import("misc.zig").strideOf;
 
 /// SIMD
 const PIXELS_PER_CHUNK = 16;
@@ -21,7 +17,7 @@ const rgb_swap_mask: @Vector(RGB_CHUNK_BYTES, i32) = blk: {
     for (0..PIXELS_PER_CHUNK) |p| {
         m[p * 3 + 0] = p * 3 + 2;
         m[p * 3 + 1] = p * 3 + 1;
-        m[p * 3 + 2] = p * 3 + 2;
+        m[p * 3 + 2] = p * 3 + 0;
     }
     break :blk m;
 };
@@ -98,44 +94,32 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data);
     const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
         .monochrome => 1,
-        .bit_4_pallet, .bit_8_pallet, .rgb_16, .rgb_24 => 3,
+        .rgb_24 => 3,
         .rgba => 4,
+        else => return error.UnsupportedBPP,
     };
     const start = hdr.data_offset;
-    // rows padded to 4 bytes - stride >= unpadded pixel width whenever hdr.width * bpp isnt multiple of 4
     const row_bytes = hdr.width * bpp;
     const stride = strideOf(row_bytes);
-    // computes end based from stride * height
-    const end = start + stride * hdr.height;
-    std.debug.assert(end <= data.len);
+    const end = start + stride * hdr.height; // end - start can equal hdr.compressed_image_size
+    if (end > data.len) return error.InvalidDataOffset;
     if (hdr.compressed_image_size > 0) {
         if (end - start != hdr.compressed_image_size) //
-            return error.IncorrectCompressedImageSize;
+            return error.InvalidDataOffset;
     }
     const n_pixels = hdr.width * hdr.height;
-    // // Unpads each row into packed buffer - reorders rows so image row 0 = top
-    // // this is a memory cost - is there a more efficient way?
-    // const pixels_bytes = try gpa.alloc(u8, @as(usize, row_bytes) * hdr.height);
-    // defer gpa.free(pixels_bytes);
-    // for (0..hdr.height) |dst_row| {
-    //     const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
-    //     const src_start = start + src_row * stride;
-    //     const src = data[src_start..][0..row_bytes];
-    //     const dst = pixels_bytes[dst_row * row_bytes ..][0..row_bytes];
-    //     @memcpy(dst, src);
-    // }
 
     var pixels: Pixels = undefined;
     var fmt: Format = undefined;
     switch (hdr.bits_per_pixel) {
-        .bit_4_pallet, .bit_8_pallet, .rgb_16 => return error.UnsupportedBPP,
+        .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
             pixels = try .initEmpty(gpa, .grays, n_pixels);
             for (0..hdr.height) |dst_row| {
                 const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
                 const src = data[start + src_row * stride ..][0..row_bytes];
                 const dst = pixels.grays[dst_row * hdr.width ..][0..hdr.width];
-                for (src, dst) |b, *px| px.* = .{ .gray = b };
+                for (src, dst) |g, *px| px.* = .{ .gray = g };
             }
             fmt = .r8_srgb;
         },
@@ -147,9 +131,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                 const dst = pixels.rgbs[dst_row * hdr.width ..][0..hdr.width];
                 for (0..hdr.width) |col| {
                     dst[col] = .{
-                        .blue = src[col * 3],
-                        .green = src[col * 3 + 1],
                         .red = src[col * 3 + 2],
+                        .green = src[col * 3 + 1],
+                        .blue = src[col * 3],
                     };
                 }
             }
@@ -163,14 +147,13 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                 const dst = pixels.rgbas[dst_row * hdr.width ..][0..hdr.width];
                 for (0..hdr.width) |col| {
                     dst[col] = .{
-                        .blue = src[col * 4],
-                        .green = src[col * 4 + 1],
                         .red = src[col * 4 + 2],
+                        .green = src[col * 4 + 1],
+                        .blue = src[col * 4],
                         .alpha = src[col * 4 + 3],
                     };
                 }
             }
-            // pixels = try .init(gpa, pixels_bytes, .bgra, .rgbas);
             fmt = .r8g8b8a8_srgb;
         },
     }
@@ -196,16 +179,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
                 try w.writeAll(std.mem.sliceAsBytes(row));
                 try w.writeAll(zeros[0..pad]);
             }
-            // const row_bytes = img.width * 1;
-            // const pad = strideOf(row_bytes) - row_bytes;
-            // for (0..img.height) |file_row| {
-            //     const img_row = img.height - file_row - 1;
-            //     for (0..img.width) |col| {
-            //         const gray = grays[img_row * img.width + col];
-            //         try w.writeByte(gray.gray);
-            //     }
-            //     for (0..pad) |_| try w.writeByte(0);
-            // }
         },
         .rgbs => |rgbs| {
             const row_bytes = img.width * 3;
@@ -214,21 +187,14 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
             for (0..img.height) |file_row| {
                 const img_row = img.height - file_row - 1;
                 const row = rgbs[img_row * img.width ..][0..img.width];
-                try writeRgbRowSwapped(w, std.mem.sliceAsBytes(row), img.width);
+                for (row) |px| {
+                    try w.writeByte(px.blue);
+                    try w.writeByte(px.green);
+                    try w.writeByte(px.red);
+                }
+                // try writeRgbRowSwapped(w, std.mem.sliceAsBytes(row), img.width);
                 try w.writeAll(zeros[0..pad]);
             }
-            // const row_bytes = img.width * 3;
-            // const pad = strideOf(row_bytes) - row_bytes;
-            // for (0..img.height) |file_row| {
-            //     const img_row = img.height - file_row - 1;
-            //     for (0..img.width) |col| {
-            //         const rgb = rgbs[img_row * img.width + col];
-            //         try w.writeByte(rgb.blue);
-            //         try w.writeByte(rgb.green);
-            //         try w.writeByte(rgb.red);
-            //     }
-            //     for (0..pad) |_| try w.writeByte(0);
-            // }
         },
         .rgbas => |rgbas| {
             const row_bytes = img.width * 4;
@@ -238,21 +204,8 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
                 const img_row = img.height - file_row - 1;
                 const row = rgbas[img_row * img.width ..][0..img.width];
                 try writeRgbaRowSwapped(w, std.mem.sliceAsBytes(row), img.width);
-                try w.writeALl(zeros[0..pad]);
+                try w.writeAll(zeros[0..pad]);
             }
-            // const row_bytes = img.width * 4;
-            // const pad = strideOf(row_bytes) - row_bytes;
-            // for (0..img.height) |file_row| {
-            //     const img_row = img.height - file_row - 1;
-            //     for (0..img.width) |col| {
-            //         const rgba = rgbas[img_row * img.width + col];
-            //         try w.writeByte(rgba.blue);
-            //         try w.writeByte(rgba.green);
-            //         try w.writeByte(rgba.red);
-            //         try w.writeByte(rgba.alpha);
-            //     }
-            //     for (0..pad) |_| try w.writeByte(0);
-            // }
         },
     }
     try w.flush();
