@@ -5,7 +5,7 @@ const Pixels = @import("Colors/Pixels.zig").Pixels;
 /// Write data to buffer first -> decode buffer -> see if that works
 const BMP = @import("Formats/bmp/bmp.zig");
 // const PNG = @import("Formats/PNG.zig");
-const QOI = @import("Formats/qoi/qoi.zig");
+// const QOI = @import("Formats/qoi/qoi.zig");
 
 // misc
 const ImageTag = @import("misc.zig").ImageTag;
@@ -103,7 +103,7 @@ pub fn read(args: ReadArgs) !@This() {
 
     return switch (ext) {
         .bmp => try BMP.decode(args.gpa, data),
-        .qoi => try QOI.decode(args.gpa, data),
+        // .qoi => try QOI.decode(args.gpa, data),
         else => unreachable,
     };
 }
@@ -123,7 +123,7 @@ pub fn write(
     const image_tag = try tagFromExt(filepath);
     return switch (image_tag) {
         .bmp => BMP.encode(img, io_writer, null),
-        .qoi => QOI.encode(img, io_writer),
+        // .qoi => QOI.encode(img, io_writer),
         else => unreachable,
     };
 }

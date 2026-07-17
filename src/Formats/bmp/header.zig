@@ -40,7 +40,7 @@ pub fn fromImage(img: *const Image) !@This() {
         .r8g8b8a8_srgb => 4,
         else => return Error.Decode.InvalidFormat,
     };
-    const n_pixels, const overflow = @mulWithOverflow(img.width, img.height);
+    _, const overflow = @mulWithOverflow(img.width, img.height);
     if (overflow > 0) return Error.Decode.InvalidDimensions;
     // hdr
     var hdr: @This() = undefined;
