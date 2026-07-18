@@ -102,13 +102,13 @@ pub const Pixels = union(PixelOrder) {
     rgbas: []RGBA,
     bgras: []BGRA,
 
-    fn childType(self: @This()) type {
+    fn childType(self: Pixels) type {
         return switch (self) {
             inline else => |data| @typeInfo(@TypeOf(data)).pointer.child,
         };
     }
 
-    fn length(self: @This()) usize {
+    fn length(self: Pixels) usize {
         return switch (self) {
             inline else => |data| data.len,
         };
@@ -121,17 +121,18 @@ pub const Pixels = union(PixelOrder) {
         comptime pixel_order: PixelOrder,
         gpa: std.mem.Allocator,
         data: []const u8,
-    ) !@This() {
+    ) !Pixels {
         if (data.len == 0) return error.InvalidDataLength;
         try pixel_order.modCheck(data);
-        const n_bytes_per_pixel = pixel_order.alignOf(data);
+        const n_bytes_per_pixel = pixel_order.alignOf();
         const len = data.len / n_bytes_per_pixel;
         var pixels = @unionInit(Pixels, @tagName(pixel_order), undefined);
-        const T = pixels.childType();
+        const T = @FieldType(Pixels, @tagName(pixel_order));
+        // const T = pixels.childType();
         switch (pixel_order) {
             inline else => {
                 const slice = try gpa.alloc(T, len);
-                @memcpy(slice, @as([]const T, @ptrCast(data)));
+                @memcpy(slice, @as(T, @ptrCast(data)));
                 @field(pixels, @tagName(pixel_order)) = slice;
             },
         }
@@ -246,62 +247,62 @@ test "Pixels" {
     // const da: DataOrder = .g;
     const data = [_]u8{ 100, 25, 75, 175, 225 };
 
-    const base_pxs: Pixels = try .init(gpa, &data, .grays);
+    const base_pxs: Pixels = try .init(.grays, gpa, &data);
     defer base_pxs.deinit(gpa);
 
-    // { // grays
-    //     const gray_pxs = try base_pxs.dupe(gpa);
-    //     defer gray_pxs.deinit(gpa);
-    //     // grays -> rgbs
-    //     const rgb_pxs = try gray_pxs.toRgbs(gpa);
-    //     defer rgb_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const rgb_act: u24 = @bitCast(rgb_pxs.rgbs[i]);
-    //         const rgb_exp: u24 = @bitCast(RGB{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         });
-    //         try std.testing.expectEqual(rgb_exp, rgb_act);
-    //     }
-    //     // grays -> rgbas
-    //     const rgba_pxs = try base_pxs.toRgbas(gpa);
-    //     defer rgba_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const rgba_act: u32 = @bitCast(rgba_pxs.rgbas[i]);
-    //         const rgba_exp: u32 = @bitCast(RGBA{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         });
-    //         try std.testing.expectEqual(rgba_exp, rgba_act);
-    //     }
-    // }
-    //
-    // { // rgbs
-    //     const rgb_pxs = try base_pxs.toRgbs(gpa);
-    //     defer rgb_pxs.deinit(gpa);
-    //     // rgbs -> grays
-    //     const gray_pxs = try rgb_pxs.toGrays(gpa);
-    //     defer gray_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
-    //         const gray_exp: u8 = data[i];
-    //         try std.testing.expectEqualDeep(gray_exp, gray_act);
-    //     }
-    //     // rgbs -> rgbas
-    //     const rgba_pxs = try rgb_pxs.toRGBAS(gpa);
-    //     defer rgba_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         try std.testing.expect( //
-    //             rgba_pxs.rgbas[i].eql(RGBA{
-    //                 .red = data[i],
-    //                 .green = data[i],
-    //                 .blue = data[i],
-    //             }));
-    //     }
-    // }
-    //
+    { // grays
+        const gray_pxs = try base_pxs.dupe(gpa);
+        defer gray_pxs.deinit(gpa);
+        // grays -> rgbs
+        const rgb_pxs = try gray_pxs.convertTo(.rgbs, gpa);
+        defer rgb_pxs.deinit(gpa);
+        for (0..data.len) |i| {
+            const rgb_act: u24 = @bitCast(rgb_pxs.rgbs[i]);
+            const rgb_exp: u24 = @bitCast(RGB{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            });
+            try std.testing.expectEqual(rgb_exp, rgb_act);
+        }
+        // grays -> rgbas
+        const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
+        defer rgba_pxs.deinit(gpa);
+        for (0..data.len) |i| {
+            const rgba_act: u32 = @bitCast(rgba_pxs.rgbas[i]);
+            const rgba_exp: u32 = @bitCast(RGBA{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            });
+            try std.testing.expectEqual(rgba_exp, rgba_act);
+        }
+    }
+
+    { // rgbs
+        const rgb_pxs = try base_pxs.convertTo(.rgbs, gpa);
+        defer rgb_pxs.deinit(gpa);
+        // rgbs -> grays
+        const gray_pxs = try rgb_pxs.toGrays(gpa);
+        defer gray_pxs.deinit(gpa);
+        for (0..data.len) |i| {
+            const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
+            const gray_exp: u8 = data[i];
+            try std.testing.expectEqualDeep(gray_exp, gray_act);
+        }
+        // rgbs -> rgbas
+        const rgba_pxs = try rgb_pxs.convertTo(.rgbas, gpa);
+        defer rgba_pxs.deinit(gpa);
+        for (0..data.len) |i| {
+            try std.testing.expect( //
+                rgba_pxs.rgbas[i].eql(RGBA{
+                    .red = data[i],
+                    .green = data[i],
+                    .blue = data[i],
+                }));
+        }
+    }
+
     // { // rgbas
     //     const rgba_pxs = try base_pxs.toRGBAS(gpa);
     //     defer rgba_pxs.deinit(gpa);
