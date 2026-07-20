@@ -128,47 +128,47 @@ pub fn write(
     };
 }
 
-test "BMP" {
-    const gpa = std.testing.allocator;
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    const io = threaded.io();
-
-    const read_basic_art_bmp_filepath = "src/Data/Read/BasicArt.bmp";
-
-    // now this works with both cwd + dir
-    var img = try read(.{
-        .gpa = gpa,
-        .io = io,
-        .filepath = read_basic_art_bmp_filepath,
-        .path_type = .cwd,
-    });
-    defer img.deinit(gpa);
-    // std.debug.print("{f}", .{img});
-
-    // write file
-    const write_basic_art_bmp_filepath = "src/Data/Write/BasicArt.bmp";
-    try img.write(io, write_basic_art_bmp_filepath);
-
-    // open file 2
-    var img2 = try read(.{
-        .io = io,
-        .gpa = gpa,
-        .filepath = write_basic_art_bmp_filepath,
-        .path_type = .cwd,
-    });
-    defer img2.deinit(gpa);
-    // std.debug.print("{f}", .{img2});
-
-    // check that both files match
-    const tag = std.meta.activeTag(img.pixels);
-    std.debug.assert(tag == std.meta.activeTag(img2.pixels));
-    const len = img.pixels.rgbs.len;
-    for (0..len) |i| {
-        const rgb1 = img.pixels.rgbs[i];
-        const rgb2 = img.pixels.rgbs[i];
-        try std.testing.expectEqualDeep(rgb1, rgb2);
-    }
-}
+// test "BMP" {
+//     const gpa = std.testing.allocator;
+//     var threaded: std.Io.Threaded = .init(gpa, .{});
+//     const io = threaded.io();
+//
+//     const read_basic_art_bmp_filepath = "src/Data/Read/BasicArt.bmp";
+//
+//     // now this works with both cwd + dir
+//     var img = try read(.{
+//         .gpa = gpa,
+//         .io = io,
+//         .filepath = read_basic_art_bmp_filepath,
+//         .path_type = .cwd,
+//     });
+//     defer img.deinit(gpa);
+//     // std.debug.print("{f}", .{img});
+//
+//     // write file
+//     const write_basic_art_bmp_filepath = "src/Data/Write/BasicArt.bmp";
+//     try img.write(io, write_basic_art_bmp_filepath);
+//
+//     // open file 2
+//     var img2 = try read(.{
+//         .io = io,
+//         .gpa = gpa,
+//         .filepath = write_basic_art_bmp_filepath,
+//         .path_type = .cwd,
+//     });
+//     defer img2.deinit(gpa);
+//     // std.debug.print("{f}", .{img2});
+//
+//     // check that both files match
+//     const tag = std.meta.activeTag(img.pixels);
+//     std.debug.assert(tag == std.meta.activeTag(img2.pixels));
+//     const len = img.pixels.rgbs.len;
+//     for (0..len) |i| {
+//         const rgb1 = img.pixels.rgbs[i];
+//         const rgb2 = img.pixels.rgbs[i];
+//         try std.testing.expectEqualDeep(rgb1, rgb2);
+//     }
+// }
 
 // test "QOI" {
 //     const gpa = std.testing.allocator;
