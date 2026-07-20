@@ -10,14 +10,14 @@ const BGR = @import("pixel_format.zig").BGR;
 const RGBA = @import("pixel_format.zig").RGBA;
 const BGRA = @import("pixel_format.zig").BGRA;
 
-const PixelOrder = enum(u8) {
+const PixelTag = enum(u8) {
     grays,
     rgbs,
     bgrs,
     rgbas,
     bgras,
 
-    fn modCheck(self: PixelOrder, data: []const u8) !void {
+    fn modCheck(self: PixelTag, data: []const u8) !void {
         return switch (self) {
             .grays => {},
             .rgbs, .bgrs => if (@mod(data.len, 3) != 0) error.InvalidDataLength else {},
@@ -25,7 +25,7 @@ const PixelOrder = enum(u8) {
         };
     }
 
-    fn alignOf(self: PixelOrder) usize {
+    fn alignOf(self: PixelTag) usize {
         return switch (self) {
             .grays => 1,
             .rgbs, .bgrs => 3,
@@ -95,18 +95,19 @@ const DataOrder: type = MergeEnums(&.{
     RgbaOrder,
 }) catch unreachable;
 
-pub const Pixels = union(PixelOrder) {
+pub const Pixels = union(PixelTag) {
     grays: []GRAY,
     rgbs: []RGB,
     bgrs: []BGR,
     rgbas: []RGBA,
     bgras: []BGRA,
 
-    fn childType(self: Pixels) type {
-        return switch (self) {
-            inline else => |data| @typeInfo(@TypeOf(data)).pointer.child,
-        };
-    }
+    // fn childType(self: Pixels) type {
+    //     return @FieldType(Pixels, @tagName(std.meta.activeTag(self)));
+    //     // return switch (self) {
+    //     //     inline else => |data| @typeInfo(@TypeOf(data)).pointer.child,
+    //     // };
+    // }
 
     fn length(self: Pixels) usize {
         return switch (self) {
@@ -118,50 +119,41 @@ pub const Pixels = union(PixelOrder) {
     ///     - correct alignment (u24 vs u32)
     ///     - correct order (rgb vs bgr)
     pub fn init(
-        comptime pixel_order: PixelOrder,
+        comptime pixel_tag: PixelTag,
         gpa: std.mem.Allocator,
         data: []const u8,
     ) !Pixels {
         if (data.len == 0) return error.InvalidDataLength;
-        try pixel_order.modCheck(data);
-        const n_bytes_per_pixel = pixel_order.alignOf();
-        const len = data.len / n_bytes_per_pixel;
-        var pixels = @unionInit(Pixels, @tagName(pixel_order), undefined);
-        const T = @FieldType(Pixels, @tagName(pixel_order));
-        // const T = pixels.childType();
-        switch (pixel_order) {
-            inline else => {
-                const slice = try gpa.alloc(T, len);
-                @memcpy(slice, @as(T, @ptrCast(data)));
-                @field(pixels, @tagName(pixel_order)) = slice;
-            },
-        }
+        try pixel_tag.modCheck(data);
+        const T = @FieldType(Pixels, @tagName(pixel_tag));
+        const slice: T = @ptrCast(try gpa.dupe(u8, data));
+        const pixels = @unionInit(Pixels, @tagName(pixel_tag), slice);
         return pixels;
     }
 
-    pub fn initOrder(
-        gpa: std.mem.Allocator,
-        data: []const u8,
-        data_order: DataOrder,
-        pixel_order: PixelOrder,
-    ) !@This() {
-        if (data.len == 0) return error.InvalidDataLength;
-        try pixel_order.modCheck(data);
-        const n_bytes_per_pixel = pixel_order.alignOf();
-        const len = data.len / n_bytes_per_pixel;
-        var pixels = @unionInit(Pixels, @tagName(pixel_order), undefined);
-        const T = pixels.childType();
-        switch (pixel_order) {
-            inline else => {
-                const slice = try gpa.alloc(T, len);
-                for (0..len) |i| slice[i] = .initOrder(
-                    data[i * n_bytes_per_pixel ..][0..n_bytes_per_pixel],
-                    @enumFromInt(@intFromEnum(data_order)),
-                );
-            },
-        }
-        return pixels;
-    }
+    // pub fn initOrder(
+    //     gpa: std.mem.Allocator,
+    //     data: []const u8,
+    //     data_order: DataOrder,
+    //     pixel_order: PixelTag,
+    // ) !@This() {
+    //     if (data.len == 0) return error.InvalidDataLength;
+    //     try pixel_order.modCheck(data);
+    //     const n_bytes_per_pixel = pixel_order.alignOf();
+    //     const len = data.len / n_bytes_per_pixel;
+    //     var pixels = @unionInit(Pixels, @tagName(pixel_order), undefined);
+    //     // const T = pixels.childType();
+    //     switch (pixel_order) {
+    //         inline else => {
+    //             const slice = try gpa.alloc(T, len);
+    //             for (0..len) |i| slice[i] = .initOrder(
+    //                 data[i * n_bytes_per_pixel ..][0..n_bytes_per_pixel],
+    //                 @enumFromInt(@intFromEnum(data_order)),
+    //             );
+    //         },
+    //     }
+    //     return pixels;
+    // }
 
     pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
         switch (self) {
@@ -170,10 +162,9 @@ pub const Pixels = union(PixelOrder) {
     }
 
     pub fn dupe(self: @This(), gpa: std.mem.Allocator) !@This() {
-        const T = self.childType();
         switch (self) {
             inline else => |data, tag| {
-                const slice = try gpa.dupe(T, data);
+                const slice = try gpa.dupe(@TypeOf(data[0]), data);
                 return @unionInit(Pixels, @tagName(tag), slice);
             },
         }
@@ -181,27 +172,26 @@ pub const Pixels = union(PixelOrder) {
 
     pub fn convertTo(
         self: @This(),
-        comptime other_order: PixelOrder,
+        comptime other_tag: PixelTag,
         gpa: std.mem.Allocator,
     ) !@This() {
-        return switch (self) {
-            inline else => |src_slice| conv: {
-                const Dst_Type = std.meta.Child(@FieldType(Pixels, other_order));
-                if (Dst_Type == @FieldType(Pixels, @tagName(other_order))) break :conv self.dupe(gpa);
-                const dst = try gpa.alloc(Dst_Type, src_slice.len);
-                errdefer gpa.free(dst);
-                for (src_slice, dst) |src, *d| {
-                    d.* = switch (other_order) {
-                        .grays => src.toGray16(),
-                        .rgbs => src.toRgb(),
-                        .bgrs => src.toBgr(),
-                        .rgbas => src.toRgbas(),
-                        .bgras => src.toBgras(),
-                    };
-                }
-                break :conv @unionInit(Pixels, @tagName(other_order), dst);
-            },
-        };
+        const len = self.length();
+        switch (self) {
+            inline else => |src, tag| {
+                if (tag == other_tag) return self.dupe(gpa);
+                const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(other_tag)));
+                const method = comptime switch (other_tag) {
+                    .grays => "toGray16",
+                    .rgbs => "toRgb",
+                    .rgbas => "toRgba",
+                    .bgrs => "toBgr",
+                    .bgras => "toBgras",
+                };
+                const dst = try gpa.alloc(DstElem, len);
+                for (src, dst) |s, *d| d.* = @field(@TypeOf(s), method)(s);
+                return @unionInit(Pixels, @tagName(other_tag), dst);
+            }
+        }
     }
 };
 
@@ -283,7 +273,7 @@ test "Pixels" {
         const rgb_pxs = try base_pxs.convertTo(.rgbs, gpa);
         defer rgb_pxs.deinit(gpa);
         // rgbs -> grays
-        const gray_pxs = try rgb_pxs.toGrays(gpa);
+        const gray_pxs = try rgb_pxs.convertTo(.grays, gpa);
         defer gray_pxs.deinit(gpa);
         for (0..data.len) |i| {
             const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
@@ -303,26 +293,26 @@ test "Pixels" {
         }
     }
 
-    // { // rgbas
-    //     const rgba_pxs = try base_pxs.toRGBAS(gpa);
-    //     defer rgba_pxs.deinit(gpa);
-    //     // rgbas -> grays
-    //     const gray_pxs = try rgba_pxs.toGRAYS(gpa);
-    //     defer gray_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
-    //         const gray_exp = data[i];
-    //         try std.testing.expectEqual(gray_exp, gray_act);
-    //     }
-    //     // rgbas -> rgbs
-    //     const rgb_pxs = try rgba_pxs.toRGBS(gpa);
-    //     defer rgb_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         try std.testing.expect(rgb_pxs.rgbs[i].eql(RGB{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         }));
-    //     }
-    // }
+    { // rgbas
+        const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
+        defer rgba_pxs.deinit(gpa);
+        // rgbas -> grays
+        const gray_pxs = try rgba_pxs.convertTo(.grays, gpa);
+        defer gray_pxs.deinit(gpa);
+        for (0..data.len) |i| {
+            const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
+            const gray_exp = data[i];
+            try std.testing.expectEqual(gray_exp, gray_act);
+        }
+        // rgbas -> rgbs
+        const rgb_pxs = try rgba_pxs.convertTo(.rgbs, gpa);
+        defer rgb_pxs.deinit(gpa);
+        for (0..data.len) |i| {
+            try std.testing.expect(rgb_pxs.rgbs[i].eql(RGB{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            }));
+        }
+    }
 }

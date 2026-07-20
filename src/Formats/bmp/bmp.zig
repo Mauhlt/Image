@@ -129,7 +129,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             fmt = .r8_srgb;
         },
         .rgb_24 => {
-            const slice = gpa.alloc(BGR, n_pixels);
+            const slice = try gpa.alloc(BGR, n_pixels);
             for (0..hdr.height) |dst_row| {
                 const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
                 const src = data[start + src_row * stride ..][0..row_bytes];
@@ -185,6 +185,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
+        .bgrs => {},
         .rgbas => |rgbas| {
             const row_bytes = img.width * 4;
             const pad = strideOf(row_bytes) - row_bytes;
@@ -196,6 +197,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
+        .bgras => {},
     }
     try w.flush();
 }
