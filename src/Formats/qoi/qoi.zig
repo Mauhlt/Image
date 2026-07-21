@@ -29,12 +29,20 @@ pub const BitTags = enum(u2) {
     run = 3,
 };
 
-inline fn hash(comptime T: type, data: T) u6 {
-    var sol: u8 = 0;
-    inline for (comptime std.meta.fieldNames(T), 0..) |field_name, i| {
-        sol +%= @field(data, field_name) *% (@as(u8, @truncate(i)) *% 2 +% 3);
-    }
-    return @truncate(sol);
+fn hashRGB(rgb: RGB) u8 {
+    return (rgb.red *% 3 +% //
+        rgb.green *% 5 +% //
+        rgb.blue *% 7 +% //
+        @as(u8, 255) *% 11) & //
+        @as(u8, 63);
+}
+
+fn hashRGBA(rgba: RGBA) u8 {
+    return (rgba.red *% 3 +% //
+        rgba.green *% 5 +% //
+        rgba.blue *% 7 +% //
+        rgba.alpha *% 11) & //
+        @as(u8, 63);
 }
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
@@ -146,7 +154,7 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
             }
         }
         prev = px;
-        table[hash(RGB, px)] = px;
+        table[hashRGB(px)] = px;
         if (j > n_pixels) return error.PixelOutOfBound;
         rgb_pxs.rgbs[j] = px;
         j += 1;
@@ -227,7 +235,7 @@ fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
             }
         }
         prev = px;
-        table[hash(RGBA, px)] = px;
+        table[hashRGBA(px)] = px;
         if (j > n_pixels) return error.PixelOutOfBound;
         rgba_pxs.rgbas[j] = px;
         j += 1;
@@ -267,7 +275,7 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
             continue;
         }
 
-        const index = hash(RGB, px);
+        const index = hashRGB(px);
         if (table[index].eql(px)) {
             const byte = (@as(u8, @intFromEnum(BitTags.index)) << 6) | index;
             try w.writeByte(byte);
@@ -340,7 +348,7 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             continue;
         }
 
-        const index = hash(RGBA, px);
+        const index = hashRGBA(px);
         if (table[index].eql(px)) {
             const byte = @as(u8, @intFromEnum(BitTags.index)) << 6 | index;
             try w.writeByte(byte);
