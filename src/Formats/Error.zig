@@ -15,6 +15,7 @@ pub const Decode = error{
     InvalidRLEData,
     InvalidTGAEnum,
     DataOutOfBounds,
+    MismatchInNumberOfPixels,
     UnsupportedBitsPerPixel,
     UnsupportedCompression,
     UnsupportedType,
