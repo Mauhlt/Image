@@ -131,6 +131,8 @@ pub const Pixels = union(PixelTag) {
         return pixels;
     }
 
+    // Assumes data is:
+    //   - correct alignment (u24 vs u32)
     pub fn initOrder(
         gpa: std.mem.Allocator,
         data: []const u8,

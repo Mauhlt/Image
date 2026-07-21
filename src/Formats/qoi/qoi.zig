@@ -12,7 +12,6 @@ const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 const SIG = @import("misc.zig").SIG;
 
 const findFirstMatches = @import("matches.zig").findFirstMatches;
-const findFirstMatchesSIMD = @import("matches.zig").findFirstMatchesSIMD;
 
 const HASH_TABLE_SIZE = 64;
 pub const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
@@ -87,7 +86,10 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 }
 
 fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
-    var rgb_pxs: Pixels = try .initEmpty(gpa, .rgbs, n_pixels);
+    if (data.len == 0) return error.InvalidDataLength;
+    if (@mod(data.len, 3) != 0) return error.InvalidDataLength;
+    const rgb_pxs: Pixels = .{ .rgbs = try gpa.alloc(RGB, data.len / 3) };
+    // var rgb_pxs: Pixels = try .initEmpty(gpa, .rgbs, n_pixels);
     errdefer rgb_pxs.deinit(gpa);
     var prev: RGB = .{
         .red = 0,
@@ -160,7 +162,9 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
 }
 
 fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
-    const rgba_pxs: Pixels = try .initEmpty(gpa, .rgbas, n_pixels);
+    if (data.len == 0) return error.InvalidDataLength;
+    if (@mod(data.len, 4) != 0) return error.InvalidDataLength;
+    const rgba_pxs: Pixels = .{ .rgbas = try gpa.alloc(RGBA, n_pixels) };
     errdefer rgba_pxs.deinit(gpa);
     var prev: RGBA = .{
         .red = 0,
@@ -260,10 +264,7 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
     while (i < len) : (i += 1) {
         px = rgbs[i];
         defer prev = px;
-        const n = if (i + 64 < rgbs.len)
-            findFirstMatchesSIMD(RGB, rgbs[i..][0..64], prev)
-        else
-            findFirstMatches(RGB, rgbs[i..], prev);
+        const n = findFirstMatches(RGB, rgbs[i..][0..64]);
         if (n > 1) {
             const run = @min(n, 62) - 1; // 1..62
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
@@ -342,10 +343,7 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
         px = rgbas[i];
         defer prev = px;
 
-        const n = if (i + 64 < rgbas.len)
-            findFirstMatchesSIMD(RGBA, rgbas[i..][0..64], prev)
-        else
-            findFirstMatches(RGBA, rgbas[i..], prev);
+        const n = findFirstMatches(RGBA, rgbas[i..][0..64]);
         if (n > 1) {
             // std.debug.print("run ", .{});
             const run = @min(n, 62) - 1;
