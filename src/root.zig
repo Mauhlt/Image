@@ -168,8 +168,7 @@ test "QOI" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
-    {
-        // Tests RGB
+    { // RGB
         // Expected (6 Total): rgb, run, diff, luma, index, rgb
         const data = [_]u8{
             255, 255, 10, // rgb
@@ -183,7 +182,8 @@ test "QOI" {
 
         const rgb_pxs: Pixels = try .init(.rgbs, gpa, &data);
         defer rgb_pxs.deinit(gpa);
-        const img: @This() = .{
+
+        const img1: @This() = .{
             .width = @truncate(rgb_pxs.rgbs.len),
             .height = 1,
             .pixels = rgb_pxs,
@@ -193,138 +193,123 @@ test "QOI" {
         // try img.printPixels();
 
         const read_basic_decode_rgb_qoi_filepath = "src/Data/Read/BasicDecodeRGB.qoi";
-        try img.write(io, read_basic_decode_rgb_qoi_filepath);
+        try img1.write(io, read_basic_decode_rgb_qoi_filepath);
 
-        // var img2 = try read(.{
-        //     .io = io,
-        //     .gpa = gpa,
-        //     .filepath = read_basic_decode_rgb_qoi_filepath,
-        // });
-        // defer img2.deinit(gpa);
+        var img2 = try read(.{
+            .io = io,
+            .gpa = gpa,
+            .filepath = read_basic_decode_rgb_qoi_filepath,
+        });
+        defer img2.deinit(gpa);
         // std.debug.print("{f}\n", .{img2});
         // try img2.printPixels();
 
         // std.debug.print("Pixels\n", .{});
-        // for (img.pixels.rgbs, img2.pixels.rgbs) |px1, px2| {
-        //     std.debug.print("{} {}\n", .{ px1, px2 });
-        // }
-
-        // switch (img.pixels) {
-        //     inline else => |pixels1, tag| {
-        //         const pixels2 = @field(img2.pixels, @tagName(tag));
-        //         const len = pixels1.len;
-        //         for (0..len) |i| {
-        //             const px1 = pixels1[i];
-        //             const px2 = pixels2[i];
-        //             try std.testing.expectEqualDeep(px1, px2);
-        //         }
-        //     }
-        // }
+        try std.testing.expect(std.meta.activeTag(img1.pixels) == std.meta.activeTag(img2.pixels));
+        for (img1.pixels.rgbs, img2.pixels.rgbs) |px1, px2| {
+            // std.debug.print("{} {}\n", .{ px1, px2 });
+            try std.testing.expectEqualDeep(px1, px2);
+        }
     }
 
-    // {
-    //     // Test RGBA
-    //     // Expected (6 Total): rgba, run, diff, luma, index, rgb, rgba
-    //     const data = [_]u8{
-    //         255, 255, 10, 0, //
-    //         255, 255, 10, 0, // run
-    //         255, 255, 10, 0, // run
-    //         253, 253, 16, 0, // diff
-    //         17, 10, 11, 0, // luma
-    //         253, 253, 30, 0, // luma
-    //         30, 30, 30, 0, // rgb
-    //         170, 170, 170, 170, // rgba
-    //     };
-    //     const rgba_pxs: Pixels = try .init(.rgbas, gpa, &data);
-    //     defer rgba_pxs.deinit(gpa);
-    //
-    //     const img3: @This() = .{
-    //         .width = @truncate(rgba_pxs.rgbas.len),
-    //         .height = 1,
-    //         .pixels = rgba_pxs,
-    //         .fmt = .r8g8b8a8_srgb,
-    //     };
-    //     // std.debug.print("{f}\n", .{img3});
-    //     // try img3.printPixels();
-    //
-    //     const read_basic_decode_rgba_qoi_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
-    //     try img3.write(io, read_basic_decode_rgba_qoi_filepath);
-    //
-    //     var img4 = try read(.{
-    //         .io = io,
-    //         .gpa = gpa,
-    //         .filepath = read_basic_decode_rgba_qoi_filepath,
-    //     });
-    //     defer img4.deinit(gpa);
-    //     // std.debug.print("{f}\n", .{img4});
-    //     // try img4.printPixels();
-    //
-    //     switch (img3.pixels) {
-    //         inline else => |pixels1, tag| {
-    //             const pixels2 = @field(img4.pixels, @tagName(tag));
-    //             const len = pixels1.len;
-    //             for (0..len) |i| {
-    //                 const px1 = pixels1[i];
-    //                 const px2 = pixels2[i];
-    //                 try std.testing.expectEqualDeep(px1, px2);
-    //             }
-    //         }
-    //     }
-    // }
+    { // RGBA
+        // Expected (6 Total): rgba, run, diff, luma, index, rgb, rgba
+        const data = [_]u8{
+            255, 255, 10, 0, // rgba
+            255, 255, 10, 0, //
+            255, 255, 10, 0, // run 1
+            253, 253, 8, 0, // diff
+            17, 10, 17, 0, // luma
+            255, 255, 10, 0, // index
+            30, 30, 30, 0, // rgb
+            170, 170, 170, 170, // rgba
+        };
+        const rgba_pxs: Pixels = try .init(.rgbas, gpa, &data);
+        defer rgba_pxs.deinit(gpa);
 
-    // const read_basic_art_bmp_filepath = "src/Data/Read/BasicArt.bmp";
-    // const img5 = try read(.{
-    //     .io = io,
-    //     .gpa = gpa,
-    //     .filepath = read_basic_art_bmp_filepath,
-    // });
-    // defer img5.deinit(gpa);
-    // std.debug.print("{f}\n", .{img5});
-    //
-    // // write qoi file
-    // const read_basic_art_qoi_filepath = "src/Data/Read/BasicArt.qoi";
-    // try img5.write(io, read_basic_art_qoi_filepath);
-    //
-    // // read qoi file
-    // var img6 = try read(.{
-    //     .io = io,
-    //     .gpa = gpa,
-    //     .filepath = read_basic_art_qoi_filepath,
-    // });
-    // defer img6.deinit(gpa);
-    // // std.debug.print("{f}\n", .{img2});
-    //
-    // std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img6.pixels));
-    // const pixels1 = img5.pixels.rgbs;
-    // const pixels2 = img6.pixels.rgbs;
-    // const len = pixels1.len;
-    // for (0..len) |i| {
-    //     const px1 = pixels1[i];
-    //     const px2 = pixels2[i];
-    //     std.testing.expectEqualDeep(px1, px2) catch |err| {
-    //         std.debug.print("{}: {} - {}\n", .{ i, px1, px2 });
-    //         return err;
-    //     };
-    // }
-    //
-    // // write qoi file
-    // const write_basic_art_qoi_filepath = "src/Data/Write/BasicArt.qoi";
-    // try img6.write(io, write_basic_art_qoi_filepath);
-    //
-    // // read qoi file again
-    // var img7 = try read(
-    //     .{ .io = io, .gpa = gpa, .filepath = write_basic_art_qoi_filepath },
-    // );
-    // defer img7.deinit(gpa);
-    //
-    // // check acc
-    // std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img7.pixels));
-    // const pixels3 = img7.pixels.rgbs;
-    // for (0..len) |i| {
-    //     const px1 = pixels1[i];
-    //     const px2 = pixels3[i];
-    //     try std.testing.expectEqualDeep(px1, px2);
-    // }
+        const img1: @This() = .{
+            .width = @truncate(rgba_pxs.rgbas.len),
+            .height = 1,
+            .pixels = rgba_pxs,
+            .fmt = .r8g8b8a8_srgb,
+        };
+        // std.debug.print("{f}\n", .{img3});
+        // try img3.printPixels();
+
+        const read_basic_decode_rgba_qoi_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
+        try img1.write(io, read_basic_decode_rgba_qoi_filepath);
+
+        var img2 = try read(.{
+            .io = io,
+            .gpa = gpa,
+            .filepath = read_basic_decode_rgba_qoi_filepath,
+        });
+        defer img2.deinit(gpa);
+        // std.debug.print("{f}\n", .{img4});
+        // try img4.printPixels();
+
+        try std.testing.expect(std.meta.activeTag(img1.pixels) == std.meta.activeTag(img2.pixels));
+        for (img1.pixels.rgbas, img2.pixels.rgbas) |px1, px2| {
+            // std.debug.print("{} {}\n", .{ px1, px2 });
+            try std.testing.expectEqualDeep(px1, px2);
+        }
+    }
+
+    { // real data
+        const read_basic_art_bmp_filepath = "src/Data/Read/BasicArt.bmp";
+        const img1 = try read(.{
+            .io = io,
+            .gpa = gpa,
+            .filepath = read_basic_art_bmp_filepath,
+        });
+        defer img1.deinit(gpa);
+        // std.debug.print("{f}\n", .{img1});
+
+        // write qoi file
+        const read_basic_art_qoi_filepath = "src/Data/Read/BasicArt.qoi";
+        var img2 = img1;
+        img2.pixels = try img1.pixels.convertTo(.rgbs, gpa);
+        defer img2.deinit(gpa);
+        try img2.write(io, read_basic_art_qoi_filepath);
+
+        // read qoi file
+        var img3 = try read(.{
+            .io = io,
+            .gpa = gpa,
+            .filepath = read_basic_art_qoi_filepath,
+        });
+        defer img3.deinit(gpa);
+        // std.debug.print("{f}\n", .{img2});
+
+        try std.testing.expectEqual(
+            std.meta.activeTag(img2.pixels),
+            std.meta.activeTag(img3.pixels),
+        );
+        for (img2.pixels.rgbs, img3.pixels.rgbs) |px1, px2| {
+            // std.debug.print("{} {}\n", .{ px1, px2 });
+            try std.testing.expectEqualDeep(px1, px2);
+        }
+
+        // write qoi file
+        const write_basic_art_qoi_filepath = "src/Data/Write/BasicArt.qoi";
+        try img3.write(io, write_basic_art_qoi_filepath);
+
+        // read qoi file again
+        var img4 = try read(
+            .{ .io = io, .gpa = gpa, .filepath = write_basic_art_qoi_filepath },
+        );
+        defer img4.deinit(gpa);
+
+        // check acc
+        try std.testing.expectEqual(
+            std.meta.activeTag(img2.pixels),
+            std.meta.activeTag(img4.pixels),
+        );
+        for (img2.pixels.rgbs, img4.pixels.rgbs) |px1, px2| {
+            // std.debug.print("{} {}\n", .{ px1, px2 });
+            try std.testing.expectEqualDeep(px1, px2);
+        }
+    }
 }
 
 test "PPM" {}

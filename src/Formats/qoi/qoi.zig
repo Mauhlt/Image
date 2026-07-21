@@ -51,9 +51,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
     const n_pixels, const overflow = @mulWithOverflow(hdr.width, hdr.height);
     if (overflow > 0) return error.ImageDimensionOverflow;
-    std.debug.print("Data {}: {any}\n", .{ data.len, data });
     const pixels_slice = data[14 .. data.len - END_MARKER.len];
-    std.debug.print("Pixels Slice {}: {any}\n", .{ pixels_slice.len, pixels_slice });
     const pixels: Pixels = switch (hdr.channel) {
         .rgb => try decodeRgb(gpa, n_pixels, pixels_slice),
         .rgba => try decodeRgba(gpa, n_pixels, pixels_slice),
@@ -76,7 +74,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     switch (img.pixels) {
         .rgbs => |rgbs| try encodeRgb(w, rgbs),
         .rgbas => |rgbas| try encodeRgba(w, rgbas),
-        else => unreachable,
+        else => return error.UnsupportedColorspace,
     }
     try w.writeAll(END_MARKER[0..END_MARKER.len]);
     try w.flush();
@@ -84,11 +82,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 
 fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
     if (data.len == 0) return error.InvalidDataLength;
-    if (@mod(data.len, 3) != 0) {
-        std.debug.print("{}: {}\n", .{ data.len, @mod(data.len, 3) });
-        return error.InvalidDataLength;
-    }
-    const rgb_pxs: Pixels = .{ .rgbs = try gpa.alloc(RGB, data.len / 3) };
+    const rgb_pxs: Pixels = .{ .rgbs = try gpa.alloc(RGB, n_pixels) };
     // var rgb_pxs: Pixels = try .initEmpty(gpa, .rgbs, n_pixels);
     errdefer rgb_pxs.deinit(gpa);
     var prev: RGB = .{
@@ -163,10 +157,6 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
 
 fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
     if (data.len == 0) return error.InvalidDataLength;
-    if (@mod(data.len, 4) != 0) {
-        std.debug.print("{}: {}\n", .{ data.len, @mod(data.len, 4) });
-        return error.InvalidDataLength;
-    }
     const rgba_pxs: Pixels = .{ .rgbas = try gpa.alloc(RGBA, n_pixels) };
     errdefer rgba_pxs.deinit(gpa);
     var prev: RGBA = .{
@@ -273,9 +263,6 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
             const run = @min(n, 62) - 1; // 1..62
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
-            if (@import("builtin").mode == .Debug) {
-                std.debug.print("run:{} ", .{run});
-            }
             i += run;
             continue;
         }
@@ -284,42 +271,33 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         if (table[index].eql(px)) {
             const byte = (@as(u8, @intFromEnum(BitTags.index)) << 6) | index;
             try w.writeByte(byte);
-            if (@import("builtin").mode == .Debug) {
-                std.debug.print("index:{} ", .{index});
-            }
             continue;
         }
         table[index] = px;
 
         const drgb: RGB = .{
-            .red = px.red -% prev.red,
-            .green = px.green -% prev.green,
-            .blue = px.blue -% prev.blue,
+            .red = px.red -% prev.red +% 2,
+            .green = px.green -% prev.green +% 2,
+            .blue = px.blue -% prev.blue +% 2,
         };
-        if ((drgb.red +% 2) < 4 and (drgb.green +% 2) < 4 and (drgb.blue +% 2) < 4) {
+        if ((drgb.red < 4) and (drgb.green < 4) and (drgb.blue < 4)) {
             const byte = (@as(u8, @intFromEnum(BitTags.diff)) << 6) | //
-                ((drgb.red +% 2) & 0x03) << 4 | //
-                ((drgb.green +% 2) & 0x03) << 2 | //
-                ((drgb.blue +% 2) & 0x03);
+                (drgb.red & 0x03) << 4 | //
+                (drgb.green & 0x03) << 2 | //
+                (drgb.blue & 0x03);
             try w.writeByte(byte);
-            if (@import("builtin").mode == .Debug) {
-                std.debug.print("diff ", .{});
-            }
+
             continue;
         }
 
-        const dg2 = drgb.green +% 32;
+        const dg2 = drgb.green +% 30;
         const drdg = drgb.red -% drgb.green +% 8;
         const dbdg = drgb.blue -% drgb.green +% 8;
-        std.debug.print("\n{} {} {}\n", .{ drdg, dg2, dbdg });
         if (dg2 < 64 and drdg < 16 and dbdg < 16) {
             const byte1 = (@as(u8, @intFromEnum(BitTags.luma)) << 6) | dg2;
             const byte2 = (drdg << 4) | dbdg;
             try w.writeByte(byte1);
             try w.writeByte(byte2);
-            if (@import("builtin").mode == .Debug) {
-                std.debug.print("luma ", .{});
-            }
             continue;
         }
 
@@ -328,12 +306,6 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         try w.writeByte(px.red);
         try w.writeByte(px.green);
         try w.writeByte(px.blue);
-        if (@import("builtin").mode == .Debug) {
-            std.debug.print("rgb ", .{});
-        }
-    }
-    if (@import("builtin").mode == .Debug) {
-        std.debug.print("\n", .{});
     }
 }
 
@@ -354,7 +326,6 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
         .blue = 0,
     }} ** HASH_TABLE_SIZE;
     var i: usize = 0;
-    // std.debug.print("Encode RGBA: ", .{});
 
     while (i < rgbas.len) : (i += 1) {
         px = rgbas[i];
@@ -362,7 +333,6 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
 
         const n = findFirst64Matches(RGBA, rgbas[i..], prev);
         if (n > 1) {
-            // std.debug.print("run ", .{});
             const run = @min(n, 62) - 1;
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
@@ -372,7 +342,6 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
 
         const index = hash(RGBA, px);
         if (table[index].eql(px)) {
-            // std.debug.print("index ", .{});
             const byte = @as(u8, @intFromEnum(BitTags.index)) << 6 | index;
             try w.writeByte(byte);
             continue;
@@ -385,7 +354,6 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             const db = px.blue -% prev.blue;
 
             if ((dr +% 2) < 4 and (dg +% 2) < 4 and (db +% 2) < 4) {
-                // std.debug.print("diff ", .{});
                 const byte = @as(u8, //
                     @intFromEnum(BitTags.diff)) << 6 | //
                     (((dr +% 2) & 0x03) << 4) | //
@@ -399,23 +367,19 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             const drdg = dr -% dg +% 8;
             const dbdg = db -% dg +% 8;
             if (dg2 < 64 and drdg < 16 and dbdg < 16) {
-                // std.debug.print("luma ", .{});
                 const byte1 = (@as(u8, @intFromEnum(BitTags.luma)) << 6) | dg2;
                 const byte2 = (drdg << 4) | dbdg;
                 try w.writeByte(byte1);
                 try w.writeByte(byte2);
-                // std.debug.print("luma ", .{});
                 continue;
             }
 
-            // std.debug.print("rgb ", .{});
             const byte1 = @intFromEnum(ByteTags.rgb);
             try w.writeByte(byte1);
             try w.writeByte(px.red);
             try w.writeByte(px.green);
             try w.writeByte(px.blue);
         } else {
-            // std.debug.print("rgba ", .{});
             const byte1 = @intFromEnum(ByteTags.rgba);
             try w.writeByte(byte1);
             try w.writeByte(px.red);
