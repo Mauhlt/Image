@@ -24,10 +24,9 @@ pub fn readData(
     io: std.Io,
     gpa: std.mem.Allocator,
     file: std.Io.File,
-) ![]u8 {
+) ![]const u8 {
     const len = try file.length(io);
     const data = try gpa.alloc(u8, len);
-    errdefer gpa.free(data);
     const n_bytes = try file.readPositionalAll(io, data, 0);
     if (n_bytes != len) return error.FailedToReadFile;
     return data;

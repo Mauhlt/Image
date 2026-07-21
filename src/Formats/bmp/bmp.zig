@@ -185,7 +185,17 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
-        .bgrs => {},
+        .bgrs => |bgrs| {
+            const row_bytes = img.width * 3;
+            const pad = strideOf(row_bytes) - row_bytes;
+            const zeros = [_]u8{0} ** 4;
+            for (0..img.height) |file_row| {
+                const img_row = img.height - file_row - 1;
+                const row = bgrs[img_row * img.width ..][0..img.width];
+                try w.writeAll(std.mem.sliceAsBytes(row));
+                try w.writeAll(zeros[0..pad]);
+            }
+        },
         .rgbas => |rgbas| {
             const row_bytes = img.width * 4;
             const pad = strideOf(row_bytes) - row_bytes;
@@ -197,7 +207,17 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
-        .bgras => {},
+        .bgras => |bgras| {
+            const row_bytes = img.width * 4;
+            const pad = strideOf(row_bytes) - row_bytes;
+            const zeros = [_]u8{0} ** 4;
+            for (0..img.height) |file_row| {
+                const img_row = img.height - file_row - 1;
+                const row = bgras[img_row * img.width ..][0..img.width];
+                try w.writeAll(std.mem.sliceAsBytes(row));
+                try w.writeAll(zeros[0..pad]);
+            }
+        },
     }
     try w.flush();
 }

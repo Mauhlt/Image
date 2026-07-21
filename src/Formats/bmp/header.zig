@@ -101,11 +101,17 @@ pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    // bmp
     try isSigSame(data[0..2], SIG);
     const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
-    if (data.len != file_size)
+    if (data.len != file_size) {
+        if (@import("builtin").mode == .Debug) {
+            std.debug.print(
+                "\nBMP Header:\nFile Size: {}\nData Length: {}\n",
+                .{ file_size, data.len },
+            );
+        }
         return Error.Decode.InvalidDataLength;
+    }
     const data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
     // dib
     const dib_hdr_size = std.mem.readInt(u32, data[14..][0..4], .little);

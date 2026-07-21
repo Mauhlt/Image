@@ -89,7 +89,7 @@ fn MergeEnums(comptime types: []const type) !type {
     }
 }
 
-const DataOrder: type = MergeEnums(&.{
+const DataTag: type = MergeEnums(&.{
     GrayOrder,
     RgbOrder,
     RgbaOrder,
@@ -131,29 +131,29 @@ pub const Pixels = union(PixelTag) {
         return pixels;
     }
 
-    // pub fn initOrder(
-    //     gpa: std.mem.Allocator,
-    //     data: []const u8,
-    //     data_order: DataOrder,
-    //     pixel_order: PixelTag,
-    // ) !@This() {
-    //     if (data.len == 0) return error.InvalidDataLength;
-    //     try pixel_order.modCheck(data);
-    //     const n_bytes_per_pixel = pixel_order.alignOf();
-    //     const len = data.len / n_bytes_per_pixel;
-    //     var pixels = @unionInit(Pixels, @tagName(pixel_order), undefined);
-    //     // const T = pixels.childType();
-    //     switch (pixel_order) {
-    //         inline else => {
-    //             const slice = try gpa.alloc(T, len);
-    //             for (0..len) |i| slice[i] = .initOrder(
-    //                 data[i * n_bytes_per_pixel ..][0..n_bytes_per_pixel],
-    //                 @enumFromInt(@intFromEnum(data_order)),
-    //             );
-    //         },
-    //     }
-    //     return pixels;
-    // }
+    pub fn initOrder(
+        gpa: std.mem.Allocator,
+        data: []const u8,
+        data_order: DataTag,
+        pixel_order: PixelTag,
+    ) !@This() {
+        if (data.len == 0) return error.InvalidDataLength;
+        try pixel_order.modCheck(data);
+        const n_bytes_per_pixel = pixel_order.alignOf();
+        const len = data.len / n_bytes_per_pixel;
+        switch (pixel_order) {
+            inline else => {
+                const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(pixel_order)));
+                const slice = try gpa.alloc(DstElem, len);
+                for (0..len) |i| {
+                    slice[i] = .initOrder(
+                        data[i * n_bytes_per_pixel ..][0..n_bytes_per_pixel],
+                        @enumFromInt(@intFromEnum(data_order)),
+                    );
+                }
+            },
+        }
+    }
 
     pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
         switch (self) {
@@ -197,7 +197,7 @@ pub const Pixels = union(PixelTag) {
 
 test "Pixels" {
     @setEvalBranchQuota(10_000);
-    const da_fields = std.meta.fields(DataOrder);
+    const da_fields = std.meta.fields(DataTag);
     const g_fields = std.meta.fields(GrayOrder);
     inline for (g_fields) |field1| {
         var found_match: bool = false;
@@ -234,7 +234,7 @@ test "Pixels" {
 
     // pixels
     const gpa = std.testing.allocator;
-    // const da: DataOrder = .g;
+    // const da: DataTag = .g;
     const data = [_]u8{ 100, 25, 75, 175, 225 };
 
     const base_pxs: Pixels = try .init(.grays, gpa, &data);
