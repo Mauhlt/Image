@@ -159,8 +159,8 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
 }
 
-pub fn encode(img: *const Image, w: *std.Io.Writer, maybe_hdr: ?Header) !void {
-    const hdr: Header = if (maybe_hdr) |hdr| hdr else try .fromImage(img);
+pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
+    const hdr: Header = try .fromImage(img);
     try hdr.encode(w);
     switch (img.pixels) {
         .grays => |grays| {

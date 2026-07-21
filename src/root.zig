@@ -49,18 +49,9 @@ pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
 
 pub fn printPixels(self: *const @This()) !void {
     switch (self.pixels) {
-        .grays => |grays| {
-            const len = grays.len;
-            for (0..len) |i| std.debug.print("{}\n", .{grays[i]});
-        },
-        .rgbs => |rgbs| {
-            const len = rgbs.len;
-            for (0..len) |i| std.debug.print("{}\n", .{rgbs[i]});
-        },
-        .rgbas => |rgbas| {
-            const len = rgbas.len;
-            for (0..len) |i| std.debug.print("{}\n", .{rgbas[i]});
-        },
+        inline else => |data| {
+            for (data) |datum| std.debug.print("{}\n", .{datum});
+        }
     }
 }
 
@@ -125,7 +116,7 @@ pub fn write(
 
     const image_tag = try tagFromExt(filepath);
     return switch (image_tag) {
-        .bmp => BMP.encode(img, io_writer, null),
+        .bmp => BMP.encode(img, io_writer),
         .qoi => QOI.encode(img, io_writer),
         else => unreachable,
     };
@@ -173,163 +164,168 @@ test "BMP" {
     }
 }
 
-// test "QOI" {
-//     const gpa = std.testing.allocator;
-//     var threaded: std.Io.Threaded = .init(gpa, .{});
-//     const io = threaded.io();
-//     {
-//         // Tests RGB
-//         // Expected (6 Total): rgb, run, diff, luma, index, rgb
-//         const data = [_]u8{
-//             255, 255, 10, //
-//             255, 255, 10, //
-//             255, 255, 10, //
-//             253, 253, 16, //
-//             17, 10, 11, //
-//             253, 253, 30, //
-//             30, 30, 30, //
-//         };
-//         const rgb_pxs: Pixels = try .init(.rgbs, gpa, &data);
-//         defer rgb_pxs.deinit(gpa);
-//         const img: @This() = .{
-//             .width = @truncate(rgb_pxs.rgbs.len),
-//             .height = 1,
-//             .pixels = rgb_pxs,
-//             .fmt = .r8g8b8_srgb,
-//         };
-//         // std.debug.print("{f}\n", .{img});
-//         // try img.printPixels();
-//         const read_basic_decode_rgb_qoi_filepath = "src/Data/Read/BasicDecodeRGB.qoi";
-//         try img.write(io, read_basic_decode_rgb_qoi_filepath);
-//         var img2 = try read(.{
-//             .io = io,
-//             .gpa = gpa,
-//             .filepath = read_basic_decode_rgb_qoi_filepath,
-//         });
-//         defer img2.deinit(gpa);
-//         // std.debug.print("{f}\n", .{img2});
-//         // try img2.printPixels();
-//         // std.debug.print("Pixels\n", .{});
-//         // for (img.pixels.rgbs, img2.pixels.rgbs) |px1, px2| {
-//         //     std.debug.print("{} {}\n", .{ px1, px2 });
-//         // }
-//         switch (img.pixels) {
-//             inline else => |pixels1, tag| {
-//                 const pixels2 = @field(img2.pixels, @tagName(tag));
-//                 const len = pixels1.len;
-//                 for (0..len) |i| {
-//                     const px1 = pixels1[i];
-//                     const px2 = pixels2[i];
-//                     try std.testing.expectEqualDeep(px1, px2);
-//                 }
-//             }
-//         }
-//     }
-//
-//     {
-//         // Test RGBA
-//         // Expected (6 Total): rgba, run, diff, luma, index, rgb, rgba
-//         const data = [_]u8{
-//             255, 255, 10, 0, //
-//             255, 255, 10, 0, //
-//             255, 255, 10, 0, //
-//             253, 253, 16, 0, //
-//             17, 10, 11, 0, //
-//             253, 253, 30, 0, //
-//             30, 30, 30, 0, //
-//             170, 170, 170, 170, //
-//         };
-//         const rgba_pxs: Pixels = try .init(.rgbas, gpa, &data);
-//         defer rgba_pxs.deinit(gpa);
-//
-//         const img3: @This() = .{
-//             .width = @truncate(rgba_pxs.rgbas.len),
-//             .height = 1,
-//             .pixels = rgba_pxs,
-//             .fmt = .r8g8b8a8_srgb,
-//         };
-//         // std.debug.print("{f}\n", .{img3});
-//         // try img3.printPixels();
-//
-//         const read_basic_decode_rgba_qoi_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
-//         try img3.write(io, read_basic_decode_rgba_qoi_filepath);
-//
-//         var img4 = try read(.{
-//             .io = io,
-//             .gpa = gpa,
-//             .filepath = read_basic_decode_rgba_qoi_filepath,
-//         });
-//         defer img4.deinit(gpa);
-//         // std.debug.print("{f}\n", .{img4});
-//         // try img4.printPixels();
-//
-//         switch (img3.pixels) {
-//             inline else => |pixels1, tag| {
-//                 const pixels2 = @field(img4.pixels, @tagName(tag));
-//                 const len = pixels1.len;
-//                 for (0..len) |i| {
-//                     const px1 = pixels1[i];
-//                     const px2 = pixels2[i];
-//                     try std.testing.expectEqualDeep(px1, px2);
-//                 }
-//             }
-//         }
-//     }
+test "QOI" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+    {
+        // Tests RGB
+        // Expected (6 Total): rgb, run, diff, luma, index, rgb
+        const data = [_]u8{
+            255, 255, 10, // rgb
+            255, 255, 10, //
+            255, 255, 10, // run (1)
+            253, 253, 8, // diff
+            17, 10, 17, // luma
+            255, 255, 10, // index
+            30, 30, 30, // rgb
+        };
 
-// const read_basic_art_bmp_filepath = "src/Data/Read/BasicArt.bmp";
-// const img5 = try read(.{
-//     .io = io,
-//     .gpa = gpa,
-//     .filepath = read_basic_art_bmp_filepath,
-// });
-// defer img5.deinit(gpa);
-// std.debug.print("{f}\n", .{img5});
-//
-// // write qoi file
-// const read_basic_art_qoi_filepath = "src/Data/Read/BasicArt.qoi";
-// try img5.write(io, read_basic_art_qoi_filepath);
-//
-// // read qoi file
-// var img6 = try read(.{
-//     .io = io,
-//     .gpa = gpa,
-//     .filepath = read_basic_art_qoi_filepath,
-// });
-// defer img6.deinit(gpa);
-// // std.debug.print("{f}\n", .{img2});
-//
-// std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img6.pixels));
-// const pixels1 = img5.pixels.rgbs;
-// const pixels2 = img6.pixels.rgbs;
-// const len = pixels1.len;
-// for (0..len) |i| {
-//     const px1 = pixels1[i];
-//     const px2 = pixels2[i];
-//     std.testing.expectEqualDeep(px1, px2) catch |err| {
-//         std.debug.print("{}: {} - {}\n", .{ i, px1, px2 });
-//         return err;
-//     };
-// }
-//
-// // write qoi file
-// const write_basic_art_qoi_filepath = "src/Data/Write/BasicArt.qoi";
-// try img6.write(io, write_basic_art_qoi_filepath);
-//
-// // read qoi file again
-// var img7 = try read(
-//     .{ .io = io, .gpa = gpa, .filepath = write_basic_art_qoi_filepath },
-// );
-// defer img7.deinit(gpa);
-//
-// // check acc
-// std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img7.pixels));
-// const pixels3 = img7.pixels.rgbs;
-// for (0..len) |i| {
-//     const px1 = pixels1[i];
-//     const px2 = pixels3[i];
-//     try std.testing.expectEqualDeep(px1, px2);
-// }
-// }
+        const rgb_pxs: Pixels = try .init(.rgbs, gpa, &data);
+        defer rgb_pxs.deinit(gpa);
+        const img: @This() = .{
+            .width = @truncate(rgb_pxs.rgbs.len),
+            .height = 1,
+            .pixels = rgb_pxs,
+            .fmt = .r8g8b8_srgb,
+        };
+        // std.debug.print("{f}\n", .{img});
+        // try img.printPixels();
+
+        const read_basic_decode_rgb_qoi_filepath = "src/Data/Read/BasicDecodeRGB.qoi";
+        try img.write(io, read_basic_decode_rgb_qoi_filepath);
+
+        // var img2 = try read(.{
+        //     .io = io,
+        //     .gpa = gpa,
+        //     .filepath = read_basic_decode_rgb_qoi_filepath,
+        // });
+        // defer img2.deinit(gpa);
+        // std.debug.print("{f}\n", .{img2});
+        // try img2.printPixels();
+
+        // std.debug.print("Pixels\n", .{});
+        // for (img.pixels.rgbs, img2.pixels.rgbs) |px1, px2| {
+        //     std.debug.print("{} {}\n", .{ px1, px2 });
+        // }
+
+        // switch (img.pixels) {
+        //     inline else => |pixels1, tag| {
+        //         const pixels2 = @field(img2.pixels, @tagName(tag));
+        //         const len = pixels1.len;
+        //         for (0..len) |i| {
+        //             const px1 = pixels1[i];
+        //             const px2 = pixels2[i];
+        //             try std.testing.expectEqualDeep(px1, px2);
+        //         }
+        //     }
+        // }
+    }
+
+    // {
+    //     // Test RGBA
+    //     // Expected (6 Total): rgba, run, diff, luma, index, rgb, rgba
+    //     const data = [_]u8{
+    //         255, 255, 10, 0, //
+    //         255, 255, 10, 0, // run
+    //         255, 255, 10, 0, // run
+    //         253, 253, 16, 0, // diff
+    //         17, 10, 11, 0, // luma
+    //         253, 253, 30, 0, // luma
+    //         30, 30, 30, 0, // rgb
+    //         170, 170, 170, 170, // rgba
+    //     };
+    //     const rgba_pxs: Pixels = try .init(.rgbas, gpa, &data);
+    //     defer rgba_pxs.deinit(gpa);
+    //
+    //     const img3: @This() = .{
+    //         .width = @truncate(rgba_pxs.rgbas.len),
+    //         .height = 1,
+    //         .pixels = rgba_pxs,
+    //         .fmt = .r8g8b8a8_srgb,
+    //     };
+    //     // std.debug.print("{f}\n", .{img3});
+    //     // try img3.printPixels();
+    //
+    //     const read_basic_decode_rgba_qoi_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
+    //     try img3.write(io, read_basic_decode_rgba_qoi_filepath);
+    //
+    //     var img4 = try read(.{
+    //         .io = io,
+    //         .gpa = gpa,
+    //         .filepath = read_basic_decode_rgba_qoi_filepath,
+    //     });
+    //     defer img4.deinit(gpa);
+    //     // std.debug.print("{f}\n", .{img4});
+    //     // try img4.printPixels();
+    //
+    //     switch (img3.pixels) {
+    //         inline else => |pixels1, tag| {
+    //             const pixels2 = @field(img4.pixels, @tagName(tag));
+    //             const len = pixels1.len;
+    //             for (0..len) |i| {
+    //                 const px1 = pixels1[i];
+    //                 const px2 = pixels2[i];
+    //                 try std.testing.expectEqualDeep(px1, px2);
+    //             }
+    //         }
+    //     }
+    // }
+
+    // const read_basic_art_bmp_filepath = "src/Data/Read/BasicArt.bmp";
+    // const img5 = try read(.{
+    //     .io = io,
+    //     .gpa = gpa,
+    //     .filepath = read_basic_art_bmp_filepath,
+    // });
+    // defer img5.deinit(gpa);
+    // std.debug.print("{f}\n", .{img5});
+    //
+    // // write qoi file
+    // const read_basic_art_qoi_filepath = "src/Data/Read/BasicArt.qoi";
+    // try img5.write(io, read_basic_art_qoi_filepath);
+    //
+    // // read qoi file
+    // var img6 = try read(.{
+    //     .io = io,
+    //     .gpa = gpa,
+    //     .filepath = read_basic_art_qoi_filepath,
+    // });
+    // defer img6.deinit(gpa);
+    // // std.debug.print("{f}\n", .{img2});
+    //
+    // std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img6.pixels));
+    // const pixels1 = img5.pixels.rgbs;
+    // const pixels2 = img6.pixels.rgbs;
+    // const len = pixels1.len;
+    // for (0..len) |i| {
+    //     const px1 = pixels1[i];
+    //     const px2 = pixels2[i];
+    //     std.testing.expectEqualDeep(px1, px2) catch |err| {
+    //         std.debug.print("{}: {} - {}\n", .{ i, px1, px2 });
+    //         return err;
+    //     };
+    // }
+    //
+    // // write qoi file
+    // const write_basic_art_qoi_filepath = "src/Data/Write/BasicArt.qoi";
+    // try img6.write(io, write_basic_art_qoi_filepath);
+    //
+    // // read qoi file again
+    // var img7 = try read(
+    //     .{ .io = io, .gpa = gpa, .filepath = write_basic_art_qoi_filepath },
+    // );
+    // defer img7.deinit(gpa);
+    //
+    // // check acc
+    // std.debug.assert(std.meta.activeTag(img5.pixels) == std.meta.activeTag(img7.pixels));
+    // const pixels3 = img7.pixels.rgbs;
+    // for (0..len) |i| {
+    //     const px1 = pixels1[i];
+    //     const px2 = pixels3[i];
+    //     try std.testing.expectEqualDeep(px1, px2);
+    // }
+}
 
 test "PPM" {}
 

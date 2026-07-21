@@ -11,7 +11,7 @@ const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const SIG = @import("misc.zig").SIG;
 
-const findFirstMatches = @import("matches.zig").findFirstMatches;
+const findFirst64Matches = @import("matches.zig").findFirst64Matches;
 
 const HASH_TABLE_SIZE = 64;
 pub const END_MARKER = [8]u8{ 0, 0, 0, 0, 0, 0, 0, 1 };
@@ -29,17 +29,12 @@ pub const BitTags = enum(u2) {
     run = 3,
 };
 
-inline fn hashRGB(rgb: RGB) u6 {
-    return @truncate(rgb.red *% 3 +% //
-        rgb.green *% 5 +% //
-        rgb.blue *% 7);
-}
-
-inline fn hashRGBA(rgba: RGBA) u6 {
-    return @truncate(rgba.red *% 3 +% //
-        rgba.green *% 5 +% //
-        rgba.blue *% 7 +% //
-        rgba.alpha *% 11);
+inline fn hash(comptime T: type, data: T) u6 {
+    var sol: u8 = 0;
+    inline for (comptime std.meta.fieldNames(T), 0..) |field_name, i| {
+        sol +%= @field(data, field_name) *% (@as(u8, @truncate(i)) *% 2 +% 3);
+    }
+    return @truncate(sol);
 }
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
@@ -56,7 +51,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
     const n_pixels, const overflow = @mulWithOverflow(hdr.width, hdr.height);
     if (overflow > 0) return error.ImageDimensionOverflow;
+    std.debug.print("Data {}: {any}\n", .{ data.len, data });
     const pixels_slice = data[14 .. data.len - END_MARKER.len];
+    std.debug.print("Pixels Slice {}: {any}\n", .{ pixels_slice.len, pixels_slice });
     const pixels: Pixels = switch (hdr.channel) {
         .rgb => try decodeRgb(gpa, n_pixels, pixels_slice),
         .rgba => try decodeRgba(gpa, n_pixels, pixels_slice),
@@ -87,7 +84,10 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 
 fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
     if (data.len == 0) return error.InvalidDataLength;
-    if (@mod(data.len, 3) != 0) return error.InvalidDataLength;
+    if (@mod(data.len, 3) != 0) {
+        std.debug.print("{}: {}\n", .{ data.len, @mod(data.len, 3) });
+        return error.InvalidDataLength;
+    }
     const rgb_pxs: Pixels = .{ .rgbs = try gpa.alloc(RGB, data.len / 3) };
     // var rgb_pxs: Pixels = try .initEmpty(gpa, .rgbs, n_pixels);
     errdefer rgb_pxs.deinit(gpa);
@@ -152,7 +152,7 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
             }
         }
         prev = px;
-        table[hashRGB(px)] = px;
+        table[hash(RGB, px)] = px;
         if (j > n_pixels) return error.PixelOutOfBound;
         rgb_pxs.rgbs[j] = px;
         j += 1;
@@ -163,7 +163,10 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
 
 fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
     if (data.len == 0) return error.InvalidDataLength;
-    if (@mod(data.len, 4) != 0) return error.InvalidDataLength;
+    if (@mod(data.len, 4) != 0) {
+        std.debug.print("{}: {}\n", .{ data.len, @mod(data.len, 4) });
+        return error.InvalidDataLength;
+    }
     const rgba_pxs: Pixels = .{ .rgbas = try gpa.alloc(RGBA, n_pixels) };
     errdefer rgba_pxs.deinit(gpa);
     var prev: RGBA = .{
@@ -234,7 +237,7 @@ fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
             }
         }
         prev = px;
-        table[hashRGBA(px)] = px;
+        table[hash(RGBA, px)] = px;
         if (j > n_pixels) return error.PixelOutOfBound;
         rgba_pxs.rgbas[j] = px;
         j += 1;
@@ -259,26 +262,31 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         .green = 0,
         .blue = 0,
     }} ** HASH_TABLE_SIZE;
+
     var i: usize = 0;
     const len = rgbs.len;
     while (i < len) : (i += 1) {
         px = rgbs[i];
         defer prev = px;
-        const n = findFirstMatches(RGB, rgbs[i..][0..64]);
+        const n = findFirst64Matches(RGB, rgbs[i..], prev);
         if (n > 1) {
             const run = @min(n, 62) - 1; // 1..62
             const byte = (@as(u8, @intFromEnum(BitTags.run)) << 6) | run;
             try w.writeByte(byte);
-            // std.debug.print("run ", .{});
+            if (@import("builtin").mode == .Debug) {
+                std.debug.print("run:{} ", .{run});
+            }
             i += run;
             continue;
         }
 
-        const index = hashRGB(px);
+        const index = hash(RGB, px);
         if (table[index].eql(px)) {
             const byte = (@as(u8, @intFromEnum(BitTags.index)) << 6) | index;
             try w.writeByte(byte);
-            // std.debug.print("index ", .{});
+            if (@import("builtin").mode == .Debug) {
+                std.debug.print("index:{} ", .{index});
+            }
             continue;
         }
         table[index] = px;
@@ -294,19 +302,24 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
                 ((drgb.green +% 2) & 0x03) << 2 | //
                 ((drgb.blue +% 2) & 0x03);
             try w.writeByte(byte);
-            // std.debug.print("diff ", .{});
+            if (@import("builtin").mode == .Debug) {
+                std.debug.print("diff ", .{});
+            }
             continue;
         }
 
         const dg2 = drgb.green +% 32;
         const drdg = drgb.red -% drgb.green +% 8;
         const dbdg = drgb.blue -% drgb.green +% 8;
+        std.debug.print("\n{} {} {}\n", .{ drdg, dg2, dbdg });
         if (dg2 < 64 and drdg < 16 and dbdg < 16) {
             const byte1 = (@as(u8, @intFromEnum(BitTags.luma)) << 6) | dg2;
             const byte2 = (drdg << 4) | dbdg;
             try w.writeByte(byte1);
             try w.writeByte(byte2);
-            // std.debug.print("luma ", .{});
+            if (@import("builtin").mode == .Debug) {
+                std.debug.print("luma ", .{});
+            }
             continue;
         }
 
@@ -315,9 +328,13 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         try w.writeByte(px.red);
         try w.writeByte(px.green);
         try w.writeByte(px.blue);
-        // std.debug.print("rgb ", .{});
+        if (@import("builtin").mode == .Debug) {
+            std.debug.print("rgb ", .{});
+        }
     }
-    // std.debug.print("\n", .{});
+    if (@import("builtin").mode == .Debug) {
+        std.debug.print("\n", .{});
+    }
 }
 
 fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
@@ -343,7 +360,7 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
         px = rgbas[i];
         defer prev = px;
 
-        const n = findFirstMatches(RGBA, rgbas[i..][0..64]);
+        const n = findFirst64Matches(RGBA, rgbas[i..], prev);
         if (n > 1) {
             // std.debug.print("run ", .{});
             const run = @min(n, 62) - 1;
@@ -353,7 +370,7 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             continue;
         }
 
-        const index = hashRGBA(px);
+        const index = hash(RGBA, px);
         if (table[index].eql(px)) {
             // std.debug.print("index ", .{});
             const byte = @as(u8, @intFromEnum(BitTags.index)) << 6 | index;
