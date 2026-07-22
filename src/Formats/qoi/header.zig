@@ -1,7 +1,6 @@
 const std = @import("std");
 const Image = @import("../../root.zig"); // TODO: fix this
 const Error = @import("../error.zig");
-const isSigSame = @import("../misc.zig").isSigSame;
 
 // Misc
 const Channel = @import("misc.zig").Channel;
@@ -35,9 +34,10 @@ pub fn fromImage(img: *const Image) !@This() {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    if (data.len < @sizeOf(@This())) return error.InvalidDataLength;
+    if (data.len < @sizeOf(@This())) return Error.Decode.InvalidDataLength;
     var i: usize = 0;
-    try isSigSame(SIG, data[i..][0..SIG.len]);
+    if (!std.mem.startsWith(u8, data[i..], SIG)) //
+        return Error.Decode.UnexpectedSignature;
     i = SIG.len;
     const width = std.mem.readInt(u32, data[i..][0..4], .big);
     i += @sizeOf(u32);
