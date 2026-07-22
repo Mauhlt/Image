@@ -3,8 +3,6 @@ const std = @import("std");
 const Image = @import("../../root.zig");
 // Colors
 const Pixels = @import("../../Colors/Pixels.zig");
-// Main misc
-const isSigSame = @import("../misc.zig").isSigSame;
 // Errors
 const Error = @import("../error.zig");
 // dir misc
@@ -101,7 +99,8 @@ pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    try isSigSame(data[0..2], SIG);
+    if (!std.mem.startsWith(u8, data[0..], SIG)) //
+        return Error.Decode.UnexpectedSignature;
     const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
     if (data.len != file_size) {
         if (@import("builtin").mode == .Debug) {
