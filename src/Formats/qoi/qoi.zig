@@ -114,7 +114,7 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
         const byte1 = data[i];
         switch (@as(ByteTags, @enumFromInt(byte1))) {
             .rgb => {
-                if (i + 3 >= data.len) Error.Decode.DataOutOfBounds;
+                if (i + 3 >= data.len) return Error.Decode.DataOutOfBounds;
                 px.red = data[i + 1];
                 px.green = data[i + 2];
                 px.blue = data[i + 3];

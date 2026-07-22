@@ -2,40 +2,16 @@ const std = @import("std");
 const isSigSame = @import("../misc.zig").isSigSame;
 const Error = @import("../error.zig").Decode;
 
+const ChunkHeader = @import("chunk_header.zig");
+const ChunkTypeEnums = @import("chunk_header.zig").Type;
+const ColorType = @import("header.zig").ColorType;
 const Image = @import("../../root.zig");
-const GRAY = @import("../../Colors/gray.zig");
-const GRAYS = @import("../../Colors/grays.zig");
-const RGB = @import("../../Colors/rgb.zig");
-const RGBS = @import("../../Colors/rgbs.zig");
-const RGBA = @import("../..//Colors/rgba.zig");
-const RGBAS = @import("../../Colors/rgbas.zig");
 const Pixels = @import("../../Colors/Pixels.zig");
 
+const SIG = "\x89PNG\r\n\x1a\n";
+
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !void { // !Image {
-    _ = gpa;
-    var i: usize = 0;
-    const SIG = &.{ 137, 80, 78, 71, 13, 10, 26, 10 };
-    try isSigSame(SIG, data[0..SIG.len]);
-    i += SIG.len;
-
-    while (true) {
-        const chunk: ChunkHeader = try .decode(data[i..]);
-        std.debug.print("{f}\n", .{chunk});
-        i += @sizeOf(@TypeOf(chunk.len)) + @sizeOf(ChunkTypeEnums);
-        i += chunk.len;
-        i += 4; // crc = 4 bytes
-        if (chunk.type == .IEND) break;
-    }
-
-    // return Image{
-    //     .extent = .{
-    //         .width = hdr.width,
-    //         .height = hdr.height,
-    //         .depth = 1,
-    //     },
-    //     .pixel_format = .r8g8b8a8_srgb,
-    //     .pixels = undefined,
-    // };
+    if (std.mem.eql(u8, data[0..SIG.len], SIG)) {}
 }
 
 pub fn encode(
@@ -50,72 +26,46 @@ pub fn encode(
     try self.body.write(w);
 }
 
-const ColorType = enum(u8) {
-    gray = 0,
-    true = 1,
-    index = 3,
-    gray_alpha = 4,
-    true_alpha = 6,
-};
+fn chunkCrc(chunk_type: []const u8, data: []const u8) u32 {
+    var h = std.hash.Crc32.init();
+    h.update(chunk_type);
+    h.update(data);
+    return h.final();
+}
 
-const Header = struct {
-    width: u32,
-    height: u32,
-    bit_depth: u8,
-    color_type: ColorType,
-    interlace: u8,
+fn paethPredictor(a: u8, b: u8, c: u8) u8 {
+    const ia: i32 = a;
+    const ib: i32 = b;
+    const ic: i32 = c;
+    const p = ia + ib - ic;
+    const pa = @abs(p - ia);
+    const pb = @abs(p - ib);
+    const pc = @abs(p - ic);
+    if (pa <= pb and pa <= pc) return a;
+    if (pb <= pc) return b;
+    return c;
+}
 
-    pub fn decode(gpa: std.mem.Allocator, data: []const u8) !@This() {
-        _ = data;
-        _ = gpa;
-
-        return .{
-            .width = 0,
-            .height = 0,
-            .bit_depth = 0,
-            .color_type = .true,
-            .interlace = 0,
-        };
+fn defilterRow(filter: u8, row: []u8, prev: []const u8, bpp: usize) !void {
+    switch (filter) {
+        0 => {}, // no change
+        1 => for (bpp..row.len) |i| {
+            row[i] = row[i] +% row[i - bpp];
+        },
+        2 => for (0..row.len) |i| {
+            row[i] = row[i] +% prev[i];
+        },
+        3 => for (0..row.len) |i| {
+            const a: u16 = if (i >= bpp) row[i - bpp] else 0;
+            const b: u16 = prev[i];
+            row[i] = row[i] +% @as(u8, @truncate((a + b) / 2));
+        },
+        4 => for (0..row.len) |i| {
+            const a: u8 = if (i >= bpp) row[i - bpp] else 0;
+            const b: u8 = prev[i];
+            const c: u8 = if (i >= bpp) prev[i - bpp] else 0;
+            row[i] = row[i] +% paethPredictor(a, b, c);
+        },
+        else => return error.InvalidFilterType,
     }
-
-    pub fn write(w: *std.Io.Writer) !void {
-        _ = w;
-    }
-
-    pub fn format(self: @This(), w: *std.Io.Writer) !void {
-        return w.print("{}\n", .{self});
-    }
-};
-
-const ChunkHeader = struct {
-    len: u32,
-    type: ChunkType,
-
-    pub fn decode(data: []const u8) !@This() {
-        const len: u32 = std.mem.readInt(u32, data[0..][0..4], .big);
-        const _type: ChunkTypeEnums = std.meta.stringToEnum(ChunkTypeEnums, data[4..][0..4]) orelse //
-            .unsupported;
-        return .{
-            .len = len,
-            .type = switch (_type) {
-                .unsupported => .{ .unsupported = data[4..][0..4] },
-                inline else => |tag| @unionInit(ChunkType, @tagName(tag), {}),
-            },
-        };
-    }
-
-    pub fn format(self: @This(), w: *std.Io.Writer) !void {
-        return switch (self.type) {
-            .unsupported => w.print("{s}?: {d}\n", .{ self.type.unsupported, self.len }),
-            else => w.print("{t}: {d}\n", .{ self.type, self.len }),
-        };
-    }
-};
-
-const ChunkType = union(enum(u32)) {
-    unsupported: []const u8,
-    IHDR,
-    IDAT,
-    IEND,
-};
-const ChunkTypeEnums = @typeInfo(ChunkType).@"union".tag_type.?;
+}

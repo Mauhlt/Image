@@ -3,6 +3,7 @@ const vk = @import("Vulkan");
 const Pixels = @import("Colors/Pixels.zig").Pixels;
 
 const BMP = @import("Formats/bmp/bmp.zig");
+const PPM = @import("Formats/ppm/ppm.zig");
 // const PNG = @import("Formats/PNG.zig");
 const QOI = @import("Formats/qoi/qoi.zig");
 
@@ -97,6 +98,7 @@ pub fn read(args: ReadArgs) !@This() {
 
     return switch (ext) {
         .bmp => try BMP.decode(args.gpa, data),
+        // .ppm => try PPM.decode(args.gpa, data),
         .qoi => try QOI.decode(args.gpa, data),
         else => unreachable,
     };

@@ -1,41 +1,35 @@
-// const std = @import("std");
-// const isSigSame = @import("../misc.zig").isSigSame;
-//
-// const GRAY = @import("../../Colors/gray.zig");
-// const GRAYS = @import("../../Colors/grays.zig");
-// const RGB = @import("../../Colors/rgb.zig");
-// const RGBS = @import("../../Colors/rgbs.zig");
-// const RGBA = @import("../../Colors/rgba.zig");
-// const RGBAS = @import("../../Colors/rgbas.zig");
-// const Pixels = @import("../../Colors/Pixels.zig");
-//
-// const SIG = "PM";
-// // https://netpbm.sourceforge.net/doc/ppm.html
-//
-// pub fn read(self: *@This(), r: *std.Io.Reader, gpa: std.mem.Allocator) !void {
-//     self.hdr = try .init(r, gpa);
-//     self.body = try .init(r, gpa, &self.hdr);
-// }
-//
-// pub fn write(self: *@This(), w: *std.Io.Writer) !void {
-//     try self.hdr.write(w);
-//     try self.body.write(w);
-// }
-//
-// const Header = struct {
-//     pub fn read(r: *std.Io.Reader, gpa: std.mem.Allocator) !@This() {
-//         _ = r;
-//         _ = gpa;
-//     }
-//
-//     pub fn write(self: *const @This(), w: *std.Io.Writer) !void {
-//         _ = self;
-//         _ = w;
-//     }
-// };
-//
-// const Body = struct {
-//     pub fn read() @This() {}
-//
-//     pub fn write() void {}
-// };
+const std = @import("std");
+const Header = @import("header.zig");
+const Image = @import("../../root.zig");
+const Error = @import("../error.zig");
+
+const RGB = @import("../../Colors/pixel_format.zig").RGB;
+const Pixels = @import("../../Colors/Pixels.zig");
+// https://netpbm.sourceforge.net/doc/ppm.html
+
+pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
+    const hdr: Header = try .decode(data);
+    const n_pixels = hdr.width * hdr.height;
+    var img: Image = undefined;
+    img.width = hdr.width;
+    img.height = hdr.height;
+    img.pixels.rgbs = try gpa.alloc(RGB, n_pixels);
+    if (hdr.max_value > 255) {
+        if (data.len - hdr.i_pos != n_pixels * 3) return Error.Decode.InvalidDimensions;
+        @memcpy(img.pixels.rgbs, data[hdr.i_pos..]);
+    } else {
+        if (data.len - hdr.i_pos != (n_pixels * 6)) return Error.Decode.InvalidDimensions;
+        @memcpy(img.pixels.rgbs16, data[hdr.i_pos..]);
+    }
+}
+
+pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
+    const hdr: Header = try .fromImage(img);
+    try hdr.encode(w);
+    switch (img.pixels) {
+        .rgbs => |rgbs| {
+            try w.writeAll(@as([]const u8, @ptrCast(rgbs)));
+        },
+        else => return Error.Encode.InvalidColorspace,
+    }
+}

@@ -1,5 +1,6 @@
 pub const Decode = error{
     ChunkIsNotHeader,
+    IndexOutOfBounds,
     InvalidBitsPerPixel,
     InvalidChunkType,
     InvalidCompression,
