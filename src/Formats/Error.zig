@@ -4,6 +4,7 @@ pub const Decode = error{
     InvalidBitsPerPixel,
     InvalidChunkType,
     InvalidCompression,
+    InvalidCrc,
     InvalidDataLength,
     InvalidEndMarker,
     InvalidFormat,

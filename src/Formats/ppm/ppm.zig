@@ -18,8 +18,9 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         if (data.len - hdr.i_pos != n_pixels * 3) return Error.Decode.InvalidDimensions;
         @memcpy(img.pixels.rgbs, data[hdr.i_pos..]);
     } else {
-        if (data.len - hdr.i_pos != (n_pixels * 6)) return Error.Decode.InvalidDimensions;
-        @memcpy(img.pixels.rgbs16, data[hdr.i_pos..]);
+        return Error.Decode.UnsupportedBitsPerPixel;
+        // if (data.len - hdr.i_pos != (n_pixels * 6)) return Error.Decode.InvalidDimensions;
+        // @memcpy(img.pixels.rgbs16, data[hdr.i_pos..]);
     }
 }
 
