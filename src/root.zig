@@ -99,6 +99,7 @@ pub fn read(args: ReadArgs) !@This() {
     return switch (ext) {
         .bmp => try BMP.decode(args.gpa, data),
         // .ppm => try PPM.decode(args.gpa, data),
+        // .png => try PNG.decode(args.gpa, data),
         .qoi => try QOI.decode(args.gpa, data),
         else => unreachable,
     };
