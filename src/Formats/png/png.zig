@@ -11,6 +11,12 @@ const Pixels = @import("../../Colors/Pixels.zig");
 
 const SIG = "\x89PNG\r\n\x1a\n";
 
+const ChunkTags = enum {
+    IHDR,
+    IDAT,
+    IEND,
+};
+
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (!std.mem.startsWith(u8, data[0..SIG.len], SIG)) //
         return Error.Decode.UnexpectedSignature;
@@ -37,7 +43,11 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         const computed_crc = chunkCrc(chunk_type, chunk_data);
         if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
 
-        if (std.mem.eql(u8, chunk_type, "IHDR")) {}
+        const tag = std.meta.stringToEnum(ChunkTags, chunk_type) orelse //
+            return error.InvalidChunktype;
+        switch (tag) {
+            .IHDR => {},
+        }
     }
 }
 

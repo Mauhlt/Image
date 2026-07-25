@@ -1,5 +1,7 @@
 const std = @import("std");
 
+const Position = @import("position.zig");
+
 const GrayOrder = @import("pixel_format.zig").GrayOrder;
 const RgbOrder = @import("pixel_format.zig").RgbOrder;
 const RgbaOrder = @import("pixel_format.zig").RgbaOrder;
@@ -193,6 +195,43 @@ pub const Pixels = union(PixelTag) {
                 for (src, dst) |s, *d| d.* = @field(@TypeOf(s), method)(s);
                 return @unionInit(Pixels, @tagName(other_tag), dst);
             }
+        }
+    }
+
+    pub fn crop(
+        self: @This(),
+        gpa: std.mem.Allocator,
+        box: [2]Position,
+    ) !@This() {
+        const min_row = @min(@min(box[0].row, box[1].row), self.height - 1);
+        const max_row = @min(@max(box[0].row, box[1].row), self.height - 1);
+
+        const min_col = @min(@min(box[0].col, box[1].col), self.width - 1);
+        const max_col = @min(@max(box[0].col, box[1].col), self.width - 1);
+
+        const height: u32 = @truncate(max_row - min_row);
+        const width: u32 = @truncate(max_col - min_col);
+        if (height == self.height and width == self.width) return self.dupe(gpa);
+
+        const n_pixels = width * height;
+
+        switch (self) {
+            inline else => |pixels| {
+                var new_pixels = try gpa.alloc(@TypeOf(pixels), n_pixels);
+                for (0..height) |i| {
+                    @memcpy(
+                        new_pixels[i * width ..][0..width],
+                        pixels[min_row + i * self.width][0..width],
+                    );
+                }
+                return .{
+                    .width = width,
+                    .height = height,
+                    .fmt = self.fmt,
+                    .pixels = new_pixels,
+                    .order = self.order,
+                };
+            },
         }
     }
 };
