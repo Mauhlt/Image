@@ -1,2 +1,2 @@
-start: usize = 0,
-end: usize = 0,
+row: usize = 0,
+col: usize = 0,
