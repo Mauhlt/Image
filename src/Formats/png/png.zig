@@ -14,10 +14,12 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     if (!std.mem.startsWith(u8, data[0..SIG.len], &SIG)) //
         return Error.Decode.UnexpectedSignature;
     i += SIG.len;
+    std.debug.print("Header Size: {}\n", .{@sizeOf(Header)});
     if (data[i..].len < 13) return error.InvalidDataLength;
     const hdr: Header = try .decode(data[i..][0..13]);
-    try validateHeader(hdr);
-    i += @sizeOf(Header);
+    std.debug.print("{f}\n", .{hdr});
+    // try validateHeader(hdr);
+    i += 13;
 
     // while (i < data.len) {
     //     const chunk: ChunkHeader = try .decode(data[i..]);

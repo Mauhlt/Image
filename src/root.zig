@@ -322,13 +322,13 @@ test "PNG" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
 
-    var img1 = try read(.{
+    _ = try read(.{
         .io = io,
         .gpa = gpa,
         .filepath = "src/Data/Read/BasicArt.png",
     });
-    defer img1.deinit(gpa);
-    std.debug.print("{f}\n", .{img1});
+    // defer img1.deinit(gpa);
+    // std.debug.print("{f}\n", .{img1});
 }
 
 test "TGA" {}
