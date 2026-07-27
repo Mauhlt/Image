@@ -4,7 +4,7 @@ const Pixels = @import("Colors/Pixels.zig").Pixels;
 
 const BMP = @import("Formats/bmp/bmp.zig");
 const PPM = @import("Formats/ppm/ppm.zig");
-// const PNG = @import("Formats/PNG.zig");
+const PNG = @import("Formats/png/png.zig");
 const QOI = @import("Formats/qoi/qoi.zig");
 
 // misc
@@ -98,8 +98,8 @@ pub fn read(args: ReadArgs) !@This() {
 
     return switch (ext) {
         .bmp => try BMP.decode(args.gpa, data),
-        // .ppm => try PPM.decode(args.gpa, data),
-        // .png => try PNG.decode(args.gpa, data),
+        .ppm => try PPM.decode(args.gpa, data),
+        .png => try PNG.decode(args.gpa, data),
         .qoi => try QOI.decode(args.gpa, data),
         else => unreachable,
     };
@@ -317,7 +317,19 @@ test "QOI" {
 
 test "PPM" {}
 
-test "PNG" {}
+test "PNG" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+
+    var img1 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = "src/Data/Read/BasicArt.png",
+    });
+    defer img1.deinit(gpa);
+    std.debug.print("{f}\n", .{img1});
+}
 
 test "TGA" {}
 
