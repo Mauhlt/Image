@@ -132,21 +132,39 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     return c;
 }
 
-fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: usize) !void {
+fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8) !void {
+    // always assume bits_per_pixel = 4
+    if (row.len != prev.len) return Error.Decode.InvalidDataLength;
+    const len = row.len;
     switch (filter_method) {
-        0 => {}, // no change
-        1 => for (bpp..row.len) |i| {
-            row[i] = row[i] +% row[i - bpp];
+        .none => {}, // no change
+        .sub => {
+            var i: usize = 0;
+            while (i + 64 < row.len) {
+                const V1 = row[i..][0..64];
+            }
+
+            for (bpp..row.len) |i| {
+                row[i] = row[i] +% row[i - bpp];
+            }
         },
-        2 => for (0..row.len) |i| {
-            row[i] = row[i] +% prev[i];
+        .up => {
+            var i: usize = 0;
+            while (i + 64 < n_pixels) {
+                const V1: @Vector(64, u8) = row[i..][0..64].*;
+                const V2: @Vector(64, u8) = prev[i..][0..64].*;
+                row[i..][0..64].* = V1 + V2;
+            }
+            while (i < n_pixels) {
+                row[i] +%= prev[i];
+            }
         },
-        3 => for (0..row.len) |i| {
+        .avg => for (0..row.len) |i| {
             const a: u16 = if (i >= bpp) row[i - bpp] else 0;
             const b: u16 = prev[i];
             row[i] = row[i] +% @as(u8, @truncate((a + b) / 2));
         },
-        4 => for (0..row.len) |i| {
+        .paeth => for (0..row.len) |i| {
             const a: u8 = if (i >= bpp) row[i - bpp] else 0;
             const b: u8 = prev[i];
             const c: u8 = if (i >= bpp) prev[i - bpp] else 0;
