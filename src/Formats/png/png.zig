@@ -9,34 +9,61 @@ const Pixels = @import("../../Colors/Pixels.zig");
 const SIG = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
-    _ = gpa;
     var i: usize = 0;
     if (!std.mem.startsWith(u8, data[0..SIG.len], &SIG)) //
         return Error.Decode.UnexpectedSignature;
     i += SIG.len;
-    std.debug.print("Header Size: {}\n", .{@sizeOf(Header)});
-    if (data[i..].len < 13) return error.InvalidDataLength;
-    const hdr: Header = try .decode(data[i..][0..13]);
-    std.debug.print("{f}\n", .{hdr});
-    // try validateHeader(hdr);
-    i += 13;
 
-    // while (i < data.len) {
-    //     const chunk: ChunkHeader = try .decode(data[i..]);
-    //     std.debug.print("{f}\n", .{chunk});
-    //     // var seen_idat: bool = false;
-    //     // switch (chunk.type) {
-    //     //     .IDAT => {
-    //     //         if (seen_idat) return error.UnhandledMultiIdat;
-    //     //         seen_idat = true;
-    //     //         const uncompressed_data = try decompress(gpa, hdr, data[i..]);
-    //     //         defer gpa.free(uncompressed_data);
-    //     //     },
-    //     //     else => {},
-    //     // }
-    //     i += chunk.len;
-    //     if (chunk.tag == .IEND) break;
-    // }
+    const hdr_chunk: ChunkHeader = try .decode(data[i..]);
+    if (hdr_chunk.tag != .IHDR) return error.InvalidTag;
+    const hdr: Header = try .decode(hdr_chunk.tag.IHDR);
+    i += skipChunk();
+    i += hdr_chunk.len;
+    try validateHeader(hdr);
+    i += skipCrc();
+
+    var chunk: ChunkHeader = undefined;
+    while (i < data.len) {
+        chunk = try .decode(data[i..]);
+        var seen_idat: bool = false;
+        switch (chunk.tag) {
+            .unsupported => {
+                std.debug.print("{f}\n", .{chunk});
+            },
+            .IDAT => {
+                if (seen_idat) return error.UnhandledMultiIDAT;
+                seen_idat = true;
+
+                var in: std.Io.Reader = .fixed(data[i..][0..chunk.len]);
+                var decompress_buf: [std.compresse.flate.max_window_len]u8 = undefined;
+                var decompressor = std.compress.flate.Decompress.init(&in, .zlib, &decompress_buf);
+
+                var out: std.Io.Writer.Allocating = .init(gpa);
+                defer out.deinit();
+
+                const bpp = switch (hdr.color_type) {
+                    .gray => 1,
+                    .rgb => 3,
+                    .rgba => 4,
+                    else => unreachable,
+                };
+
+                // FIXME: enuser decompressed data length == chunk header length
+                const scanline_size = bpp * hdr.width + 1;
+                for (0..hdr.height) |_| {
+                    _ = try decompressor.reader.take(scanline_size);
+                }
+            },
+            else => {},
+        }
+        i += skipChunk();
+        i += chunk.len;
+        i += skipCrc();
+
+        if (chunk.tag == .IEND) break;
+    }
+    if (chunk.tag != .IEND) return error.InvalidChunkType;
+
     return .{
         .width = 0,
         .height = 0,
@@ -61,23 +88,14 @@ pub fn encode(
     const raw_size = hdr.height * (1 + row_bytes);
     const raw = try gpa.alloc(u8, raw_size);
     defer gpa.free(raw);
+}
 
-    // is it better to keep the data as []const u8
-    // then based on the type of fn it is conduct a conversion?
-    // switch (img.pixels) {
-    //     .grays => |grays| {
-    //         for (0..hdr.height) |row| {
-    //             const raw_base = row * (1 + row_bytes);
-    //             raw[raw_base] = 0;
-    //             const src_base = row * row_bytes;
-    //             @memcpy(raw[raw_base + 1 .. raw_base + 1 + row_bytes], grays[src_base .. src_base + row_bytes]);
-    //         }
-    //     },
-    //     .rgbs => |rgbs| {},
-    //     .bgrs => |bgrs| {},
-    //     .rgbas => |rgbas| {},
-    //     .bgras => |bgras| {},
-    // }
+inline fn skipChunk() usize {
+    return 8;
+}
+
+inline fn skipCrc() usize {
+    return 4;
 }
 
 fn validateHeader(hdr: Header) !void {
@@ -90,31 +108,31 @@ fn validateHeader(hdr: Header) !void {
     if (hdr.interlace_method != .none) return Error.Decode.UnsupportedInterlaceMethod;
 }
 
-fn decompress(
-    gpa: std.mem.Allocator,
-    hdr: Header,
-    compressed: []const u8,
-) ![]u8 {
-    var in: std.Io.Reader = .fixed(compressed);
-    var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
-    var decompressor: std.compress.flate.Decompress = .init(&in, .zlib, &window_buf); // .zlib, .raw
+// fn decompress(
+//     gpa: std.mem.Allocator,
+//     hdr: Header,
+//     compressed: []const u8,
+// ) ![]u8 {
+//     var in: std.Io.Reader = .fixed(compressed);
+//     var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
+//     var decompressor: std.compress.flate.Decompress = .init(&in, .zlib, &window_buf); // .zlib, .raw
 
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
+// var out: std.Io.Writer.Allocating = .init(gpa);
+// defer out.deinit();
 
-    const scanline_size = hdr.width * switch (hdr.color_type) {
-        .gray => 1,
-        .rgb => 3,
-        .rgba => 4,
-        else => unreachable,
-    } + 1;
+// const scanline_size = hdr.width * switch (hdr.color_type) {
+//     .gray => 1,
+//     .rgb => 3,
+//     .rgba => 4,
+//     else => unreachable,
+// } + 1;
 
-    for (0..hdr.height) |_| {
-        _ = try decompressor.reader.take(scanline_size);
-        // _ = try decompressor.reader.streamRemaining(&out.writer);
-    }
-    return out.toOwnedSlice();
-}
+//     for (0..hdr.height) |_| {
+//         _ = try decompressor.reader.take(scanline_size);
+//         // _ = try decompressor.reader.streamRemaining(&out.writer);
+//     }
+//     return out.toOwnedSlice();
+// }
 
 fn chunkCrc(chunk_type: []const u8, data: []const u8) u32 {
     var h = std.hash.Crc32.init();
