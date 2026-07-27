@@ -16,12 +16,12 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     img.pixels.rgbs = try gpa.alloc(RGB, n_pixels);
     if (hdr.max_value > 255) {
         if (data.len - hdr.i_pos != n_pixels * 3) return Error.Decode.InvalidDimensions;
-        @memcpy(img.pixels.rgbs, data[hdr.i_pos..]);
+        @memcpy(img.pixels.rgbs, @as([]const RGB, @ptrCast(data[hdr.i_pos..])));
     } else {
         return Error.Decode.UnsupportedBitsPerPixel;
-        // if (data.len - hdr.i_pos != (n_pixels * 6)) return Error.Decode.InvalidDimensions;
-        // @memcpy(img.pixels.rgbs16, data[hdr.i_pos..]);
     }
+    img.fmt = .r8g8b8_srgb;
+    return img;
 }
 
 pub fn encode(img: *const Image, w: *std.Io.Writer) !void {

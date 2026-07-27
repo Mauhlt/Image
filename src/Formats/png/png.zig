@@ -1,54 +1,46 @@
 const std = @import("std");
-const isSigSame = @import("../misc.zig").isSigSame;
 const Error = @import("../error.zig");
 
 const ChunkHeader = @import("chunk_header.zig");
-const ChunkTypeEnums = @import("chunk_header.zig").Type;
 const Header = @import("header.zig");
-const ColorType = @import("header.zig").ColorType;
 const Image = @import("../../root.zig");
 const Pixels = @import("../../Colors/Pixels.zig");
 
-const SIG = "\x89PNG\r\n\x1a\n";
-
-const ChunkTags = enum {
-    IHDR,
-    IDAT,
-    IEND,
-};
+const SIG = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
-    if (!std.mem.startsWith(u8, data[0..SIG.len], SIG)) //
+    _ = gpa;
+    var i: usize = 0;
+    if (!std.mem.startsWith(u8, data[0..SIG.len], &SIG)) //
         return Error.Decode.UnexpectedSignature;
+    i += SIG.len;
+    if (data[i..].len < 13) return error.InvalidDataLength;
+    const hdr: Header = try .decode(data[i..][0..13]);
+    try validateHeader(hdr);
+    i += @sizeOf(Header);
 
-    var i: usize = SIG.len;
-    var header: ?Header = null;
-
-    var idat_buf: std.ArrayList(u8) = .empty;
-    defer idat_buf.deinit(gpa);
-
-    while (i < data.len) {
-        if (i + 12 > data.len) return Error.Decode.UnexpectedEndOfData;
-
-        const length = std.mem.readInt(u32, data[i..][0..4], .big);
-        const chunk_type = data[i + 4 ..][0..4];
-        i += 8;
-
-        if (i + length + 4 > data.len) return Error.Decode.UnexpectedEndOfData;
-
-        const chunk_data = data[i .. i + length];
-        const stored_crc = std.mem.readInt(u32, data[i + length ..][0..4], .big);
-        i += length + 4;
-
-        const computed_crc = chunkCrc(chunk_type, chunk_data);
-        if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
-
-        const tag = std.meta.stringToEnum(ChunkTags, chunk_type) orelse //
-            return error.InvalidChunktype;
-        switch (tag) {
-            .IHDR => {},
-        }
-    }
+    // while (i < data.len) {
+    //     const chunk: ChunkHeader = try .decode(data[i..]);
+    //     std.debug.print("{f}\n", .{chunk});
+    //     // var seen_idat: bool = false;
+    //     // switch (chunk.type) {
+    //     //     .IDAT => {
+    //     //         if (seen_idat) return error.UnhandledMultiIdat;
+    //     //         seen_idat = true;
+    //     //         const uncompressed_data = try decompress(gpa, hdr, data[i..]);
+    //     //         defer gpa.free(uncompressed_data);
+    //     //     },
+    //     //     else => {},
+    //     // }
+    //     i += chunk.len;
+    //     if (chunk.tag == .IEND) break;
+    // }
+    return .{
+        .width = 0,
+        .height = 0,
+        .pixels = undefined,
+        .fmt = .r8g8b8_srgb,
+    };
 }
 
 pub fn encode(
@@ -57,8 +49,11 @@ pub fn encode(
     w: *std.Io.Writer,
     img: *const Image,
 ) !void {
+    _ = self;
+    _ = w;
     const hdr: Header = try .fromImage(img);
     const n_pixels = hdr.width * hdr.height;
+    _ = n_pixels;
 
     const row_bytes = hdr.width * 4;
     const raw_size = hdr.height * (1 + row_bytes);
@@ -81,6 +76,42 @@ pub fn encode(
     //     .rgbas => |rgbas| {},
     //     .bgras => |bgras| {},
     // }
+}
+
+fn validateHeader(hdr: Header) !void {
+    if (hdr.bit_depth != .bit8) return Error.Decode.UnsupportedBitsPerPixel;
+    switch (hdr.color_type) {
+        .gray, .rgb, .rgba => {},
+        else => return Error.Decode.UnsupportedColorspace,
+    }
+    if (hdr.filter_method != .none) return Error.Decode.UnsupportedFilterMethod;
+    if (hdr.interlace_method != .none) return Error.Decode.UnsupportedInterlaceMethod;
+}
+
+fn decompress(
+    gpa: std.mem.Allocator,
+    hdr: Header,
+    compressed: []const u8,
+) ![]u8 {
+    var in: std.Io.Reader = .fixed(compressed);
+    var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
+    var decompressor: std.compress.flate.Decompress = .init(&in, .zlib, &window_buf); // .zlib, .raw
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    const scanline_size = hdr.width * switch (hdr.color_type) {
+        .gray => 1,
+        .rgb => 3,
+        .rgba => 4,
+        else => unreachable,
+    } + 1;
+
+    for (0..hdr.height) |_| {
+        _ = try decompressor.reader.take(scanline_size);
+        // _ = try decompressor.reader.streamRemaining(&out.writer);
+    }
+    return out.toOwnedSlice();
 }
 
 fn chunkCrc(chunk_type: []const u8, data: []const u8) u32 {
