@@ -104,13 +104,6 @@ pub const Pixels = union(PixelTag) {
     rgbas: []RGBA,
     bgras: []BGRA,
 
-    // fn childType(self: Pixels) type {
-    //     return @FieldType(Pixels, @tagName(std.meta.activeTag(self)));
-    //     // return switch (self) {
-    //     //     inline else => |data| @typeInfo(@TypeOf(data)).pointer.child,
-    //     // };
-    // }
-
     fn length(self: Pixels) usize {
         return switch (self) {
             inline else => |data| data.len,
