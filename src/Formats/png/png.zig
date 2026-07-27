@@ -25,14 +25,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     i += hdr_chunk.len;
     try validateHeader(hdr);
 
-    const bits_per_pixel: u32 = switch (hdr.color_type) {
-        .gray => 1,
-        .rgb => 3,
-        .rgba => 4,
-        else => unreachable,
-    };
-    const bytes_per_row = hdr.width * bits_per_pixel;
-
     var computed_crc: u32 = chunkCrc(hdr_chunk.tag, hdr_chunk.tag.IHDR);
     var stored_crc: u32 = try readCrc(data[i..]);
     if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
@@ -40,6 +32,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 
     var chunk: ChunkHeader = undefined;
     var seen_idat: bool = false;
+    var pixels: Pixels = undefined;
     while (i < data.len) {
         chunk = try .decode(data[i..]);
         i += ChunkHeader.CHUNK_SIZE;
@@ -55,7 +48,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
             .IDAT => {
                 if (seen_idat) return Error.Decode.UnhandledMultiIDAT;
                 seen_idat = true;
-                try processIdat(data[i..]);
+                pixels = try processIdat(gpa, &hdr, data[i..][0..chunk.len]);
             },
             .IEND => unreachable,
             else => {},
@@ -139,8 +132,8 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     return c;
 }
 
-fn defilterRow(filter: u8, row: []u8, prev: []const u8, bpp: usize) !void {
-    switch (filter) {
+fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: usize) !void {
+    switch (filter_method) {
         0 => {}, // no change
         1 => for (bpp..row.len) |i| {
             row[i] = row[i] +% row[i - bpp];
@@ -163,30 +156,60 @@ fn defilterRow(filter: u8, row: []u8, prev: []const u8, bpp: usize) !void {
     }
 }
 
-fn processIdat(data: []const u8) []u8 {
-    var in: std.Io.Reader = .fixed(data[i..][0..chunk.len]);
-    var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
-    var decompressor = std.compress.flate.Decompress.init(&in, .zlib, &decompress_buf);
+fn processIdat(
+    gpa: std.mem.Allocator,
+    hdr: *const Header,
+    data: []const u8,
+) !Pixels {
+    const bytes_per_row = hdr.width * hdr.color_type.bits_per_pixel();
+    const total_bytes = hdr.height * (1 + bytes_per_row);
 
-    var out: std.Io.Writer.Allocating = .init(gpa);
-    defer out.deinit();
+    // decompress
+    var idat_reader: std.Io.Reader = .fixed(data);
+    var decompress: std.compress.flate.Decompress = .init(&idat_reader, .zlib, &.{});
+    var base: std.Io.Writer.Allocating = try .initCapacity(gpa, total_bytes + 16);
+    errdefer base.deinit();
+    _ = decompress.reader.streamRemaining(&base.writer) catch |err| switch (err) {
+        error.WriteFailed => return Error.Decode.OutOfMemory,
+        error.ReadFailed => return Error.Decode.DecompressionFailed,
+    };
 
-    for (0..hdr.height) |_| {
-        const scanline_filter = std.enums.fromInt(
-            FilterMethod,
-            try decompressor.reader.takeByte(),
-        ) orelse //
-            return error.InvalidFilterMethod;
-        sw: switch (scanline_filter) {
-            .none => {
-                _ = try decompressor.reader.take(bytes_per_row);
-            },
-            // .sub => {},
-            // .up => {},
-            else => {
-                std.log.warn("Unimplemented filter: {t}", .{scanline_filter});
-                continue :sw .none;
-            },
+    // extract pixels
+    const raw = try base.toOwnedSlice();
+    defer gpa.free(raw);
+
+    const expected_size = hdr.height * (1 + bytes_per_row);
+    if (raw.len < expected_size) return Error.Decode.UnexpectedEndOfData;
+
+    const n_pixels, const overflow = @mulWithOverflow(hdr.width, hdr.height);
+    if (overflow == 1) return Error.Decode.Overflow;
+
+    const prev_row = try gpa.alloc(u8, bytes_per_row);
+    defer gpa.free(prev_row);
+    @memset(prev_row, 0);
+
+    const curr_row = try gpa.alloc(u8, bytes_per_row);
+    defer gpa.free(curr_row);
+
+    const T = @FieldType(Pixels, @tagName(.rgbas));
+    var rgbas = gpa.alloc(T, n_pixels);
+
+    for (0..hdr.height) |row| {
+        const i = row * (1 + bytes_per_row);
+        const filter_method = std.enums.fromInt(FilterMethod, raw[i]) orelse //
+            return error.UnsupportedFilterMethod;
+        @memcpy(curr_row, raw[i + 1 ..][0..bytes_per_row]);
+
+        try defilterRow(filter_method, curr_row, prev_row, hdr.color_type.bits_per_pixel());
+
+        const dst_base = row * hdr.width * hdr.color_type.bits_per_pixel();
+        switch (hdr.color_type) {
+            .gray => {},
+            .gray_alpha => {},
+            .rgb => {},
+            .rgba => @memcpy(rgbas[dst_base..][0 .. hdr.width * 4], curr_row),
+            .indexed => unreachable,
         }
     }
+    return .{ .rgbas = rgbas };
 }
