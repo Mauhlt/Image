@@ -17,10 +17,21 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr_chunk: ChunkHeader = try .decode(data[i..]);
     if (hdr_chunk.tag != .IHDR) return error.InvalidTag;
     const hdr: Header = try .decode(hdr_chunk.tag.IHDR);
+    try validateHeader(hdr);
+    const bits_per_pixel = switch (hdr.color_type) {
+        .gray => 1,
+        .rgb => 3,
+        .rgba => 4,
+        else => unreachable,
+    };
+    const bytes_per_row = hdr.width * bits_per_pixel; // assume each color is 8 bits per color type
+
     i += skipChunk();
     i += hdr_chunk.len;
-    try validateHeader(hdr);
     i += skipCrc();
+
+    var new_pixels: std.ArrayList(u8) = try .initCapacity(gpa, hdr.width * hdr.height);
+    errdefer new_pixels.deinit(gpa);
 
     var chunk: ChunkHeader = undefined;
     while (i < data.len) {
@@ -41,17 +52,10 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                 var out: std.Io.Writer.Allocating = .init(gpa);
                 defer out.deinit();
 
-                const bpp = switch (hdr.color_type) {
-                    .gray => 1,
-                    .rgb => 3,
-                    .rgba => 4,
-                    else => unreachable,
-                };
-
-                // FIXME: enuser decompressed data length == chunk header length
-                const scanline_size = bpp * hdr.width + 1;
                 for (0..hdr.height) |_| {
-                    _ = try decompressor.reader.take(scanline_size);
+                    const scanline_filter = try decompressor.reader.takeByte();
+                    _ = scanline_filter;
+                    _ = try decompressor.reader.readSliceAll(data[i * bytes_per_row][0..bytes_per_row]);
                 }
             },
             else => {},
