@@ -21,6 +21,7 @@ pub const Decode = error{
     MismatchInNumberOfPixels,
     Overflow,
     OutOfBounds,
+    UnhandledMultiIDAT,
     UnsupportedBitsPerPixel,
     UnsupportedColorspace,
     UnsupportedCompression,

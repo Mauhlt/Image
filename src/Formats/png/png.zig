@@ -33,11 +33,10 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     };
     const bytes_per_row = hdr.width * bits_per_pixel;
 
-    const computed_crc = chunkCrc(hdr_chunk.tag, hdr_chunk.len);
-    const stored_crc = try readCrc(data[i..]);
-
-    var idat_buf: std.ArrayList(u8) = .empty;
-    defer idat_buf.deinit(gpa);
+    var computed_crc: u32 = chunkCrc(hdr_chunk.tag, hdr_chunk.tag.IHDR);
+    var stored_crc: u32 = try readCrc(data[i..]);
+    if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
+    i += CRC_SIZE;
 
     var chunk: ChunkHeader = undefined;
     var seen_idat: bool = false;
@@ -45,49 +44,34 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         chunk = try .decode(data[i..]);
         i += ChunkHeader.CHUNK_SIZE;
 
+        if (chunk.tag == .IEND) break;
+
+        if (i + chunk.len > data.len) return Error.Decode.OutOfBounds;
         const chunk_data = data[i..][0..chunk.len];
         switch (chunk.tag) {
             .unsupported => {
                 std.debug.print("{f}\n", .{chunk});
             },
             .IDAT => {
-                if (seen_idat) return error.UnhandledMultiIDAT;
+                if (seen_idat) return Error.Decode.UnhandledMultiIDAT;
                 seen_idat = true;
-
-                var in: std.Io.Reader = .fixed(data[i..][0..chunk.len]);
-                var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
-                var decompressor = std.compress.flate.Decompress.init(&in, .zlib, &decompress_buf);
-
-                var out: std.Io.Writer.Allocating = .init(gpa);
-                defer out.deinit();
-
-                for (0..hdr.height) |_| {
-                    const scanline_filter = std.enums.fromInt(
-                        FilterMethod,
-                        try decompressor.reader.takeByte(),
-                    ) orelse //
-                        return error.InvalidFilterMethod;
-                    sw: switch (scanline_filter) {
-                        .none => {
-                            _ = try decompressor.reader.take(bytes_per_row);
-                        },
-                        // .sub => {},
-                        // .up => {},
-                        else => {
-                            std.log.warn("Unimplemented filter: {t}\n", .{scanline_filter});
-                            continue :sw .none;
-                        },
-                    }
-                }
+                try processIdat(data[i..]);
             },
+            .IEND => unreachable,
             else => {},
         }
         i += chunk.len;
 
-        const computed_crc = chunkCrc(chunk.tag, chunk_data);
-        const stored_crc = std.mem.readInt(u32, data[i..][0..4], .big);
-
-        if (chunk.tag == .IEND) break;
+        switch (chunk.tag) {
+            .unsupported => {},
+            .IEND => unreachable,
+            else => {
+                computed_crc = chunkCrc(chunk.tag, chunk_data);
+                stored_crc = try readCrc(data[i..]);
+                if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
+            },
+        }
+        i += CRC_SIZE;
     }
     if (seen_idat == false) return Error.Decode.MissingIDAT;
     if (chunk.tag != .IEND) return Error.Decode.MissingIEND;
@@ -130,38 +114,12 @@ fn validateHeader(hdr: Header) !void {
     if (hdr.interlace_method != .none) return Error.Decode.UnsupportedInterlaceMethod;
 }
 
-// fn decompress(
-//     gpa: std.mem.Allocator,
-//     hdr: Header,
-//     compressed: []const u8,
-// ) ![]u8 {
-//     var in: std.Io.Reader = .fixed(compressed);
-//     var window_buf: [std.compress.flate.max_window_len]u8 = undefined;
-//     var decompressor: std.compress.flate.Decompress = .init(&in, .zlib, &window_buf); // .zlib, .raw
-
-// var out: std.Io.Writer.Allocating = .init(gpa);
-// defer out.deinit();
-
-// const scanline_size = hdr.width * switch (hdr.color_type) {
-//     .gray => 1,
-//     .rgb => 3,
-//     .rgba => 4,
-//     else => unreachable,
-// } + 1;
-
-//     for (0..hdr.height) |_| {
-//         _ = try decompressor.reader.take(scanline_size);
-//         // _ = try decompressor.reader.streamRemaining(&out.writer);
-//     }
-//     return out.toOwnedSlice();
-// }
-
 fn readCrc(data: []const u8) !u32 {
     if (data.len < CRC_SIZE) return Error.Decode.OutOfBounds;
     return std.mem.readInt(u32, data[0..][0..4], .big);
 }
 
-fn chunkCrc(chunk_tag: ChunkHeader, data: []const u8) u32 {
+fn chunkCrc(chunk_tag: ChunkTag, data: []const u8) u32 {
     var h = std.hash.Crc32.init();
     h.update(@tagName(chunk_tag));
     h.update(data);
@@ -202,5 +160,33 @@ fn defilterRow(filter: u8, row: []u8, prev: []const u8, bpp: usize) !void {
             row[i] = row[i] +% paethPredictor(a, b, c);
         },
         else => return error.InvalidFilterType,
+    }
+}
+
+fn processIdat(data: []const u8) []u8 {
+    var in: std.Io.Reader = .fixed(data[i..][0..chunk.len]);
+    var decompress_buf: [std.compress.flate.max_window_len]u8 = undefined;
+    var decompressor = std.compress.flate.Decompress.init(&in, .zlib, &decompress_buf);
+
+    var out: std.Io.Writer.Allocating = .init(gpa);
+    defer out.deinit();
+
+    for (0..hdr.height) |_| {
+        const scanline_filter = std.enums.fromInt(
+            FilterMethod,
+            try decompressor.reader.takeByte(),
+        ) orelse //
+            return error.InvalidFilterMethod;
+        sw: switch (scanline_filter) {
+            .none => {
+                _ = try decompressor.reader.take(bytes_per_row);
+            },
+            // .sub => {},
+            // .up => {},
+            else => {
+                std.log.warn("Unimplemented filter: {t}", .{scanline_filter});
+                continue :sw .none;
+            },
+        }
     }
 }
