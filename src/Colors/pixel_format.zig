@@ -203,6 +203,7 @@ pub const GRAY_ALPHA = extern struct {
     pub fn toGray8(self: GRAY_ALPHA) GRAY {
         return .{ .gray = self.gray };
     }
+
     pub fn toGray16(self: GRAY_ALPHA) GRAY {
         return .{ .gray = self.gray };
     }
@@ -770,22 +771,22 @@ test "GRAY_ALPHA" {
     }, ga2);
 
     const lum = ga1.luminance();
-    try std.testing.expectEqual(134, lum);
+    try std.testing.expectEqual(10, lum);
 
     const lum_ntsc = ga1.luminanceNtsc();
-    try std.testing.expectEqual(135, lum_ntsc);
+    try std.testing.expectEqual(10, lum_ntsc);
 
     // gray
     const gray = ga1.toGray();
-    try std.testing.expectEqualDeep(GRAY{ .gray = 134 }, gray);
+    try std.testing.expectEqualDeep(GRAY{ .gray = 10 }, gray);
 
     // gray 8
     const gray8 = ga1.toGray8();
-    try std.testing.expectEqualDeep(GRAY{ .gray = 135 }, gray8);
+    try std.testing.expectEqualDeep(GRAY{ .gray = 10 }, gray8);
 
     // gray 16
     const gray16 = ga1.toGray16();
-    try std.testing.expectEqualDeep(GRAY{ .gray = 134 }, gray16);
+    try std.testing.expectEqualDeep(GRAY{ .gray = 10 }, gray16);
 
     // gray alpha
     const ga3 = ga1.toGrayAlpha();
@@ -805,9 +806,9 @@ test "GRAY_ALPHA" {
     // rgba
     const rgba = ga1.toRgba();
     try std.testing.expectEqualDeep(RGBA{
-        .red = ga1.red,
-        .green = ga1.green,
-        .blue = ga1.blue,
+        .red = ga1.gray,
+        .green = ga1.gray,
+        .blue = ga1.gray,
         .alpha = ga1.alpha,
     }, rgba);
 
@@ -903,16 +904,20 @@ test "RGB" {
 
     // bgr
     const bgr1 = rgb1.toBgr();
-    try std.testing.expect(rgb1.red == bgr1.red and //
-        rgb1.green == bgr1.green and //
-        rgb1.blue == bgr1.blue);
+    try std.testing.expectEqualDeep(BGR{
+        .blue = rgb1.blue,
+        .green = rgb1.green,
+        .red = rgb1.red,
+    }, bgr1);
 
     // bgra
     const bgra1 = rgb1.toBgra();
-    try std.testing.expect(rgb1.red == bgra1.red and //
-        rgb1.green == bgra1.green and //
-        rgb1.blue == bgra1.blue and //
-        0xFF == bgra1.red);
+    try std.testing.expectEqualDeep(BGRA{
+        .blue = rgb1.blue,
+        .green = rgb1.green,
+        .red = rgb1.red,
+        .alpha = 0xFF,
+    }, bgra1);
 
     // eql
     try std.testing.expect(rgb1.eql(rgb3));
@@ -1063,11 +1068,13 @@ test "RGBA" {
     try std.testing.expectEqualDeep(rgba1, rgba3);
 
     // bgra
-    const bgra = rgba1.toBgra();
-    try std.testing.expect(bgra.red == rgba1.red and //
-        bgra.green == rgba1.green and //
-        bgra.blue == rgba1.blue and //
-        bgra.alpha == rgba1.alpha);
+    const bgra1 = rgba1.toBgra();
+    try std.testing.expectEqualDeep(BGRA{
+        .blue = rgba1.blue,
+        .green = rgba1.green,
+        .red = rgba1.red,
+        .alpha = rgba1.alpha,
+    }, bgra1);
 
     // eql
     try std.testing.expect(rgba1.eql(rgba3));
