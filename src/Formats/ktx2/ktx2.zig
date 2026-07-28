@@ -1,14 +1,7 @@
 const std = @import("std");
 const Format = @import("Vulkan").Format;
 const Image = @import("../root.zig");
-
-const GRAY = @import("../Colors/gray.zig");
-const GRAYS = @import("../Colors/grays.zig");
-const RGB = @import("../Colors/rgb.zig");
-const RGBS = @import("../Colors/rgbs.zig");
-const RGBA = @import("../Colors/rgba.zig");
-const RGBAS = @import("../Colors/rgbas.zig");
-const Pixels = @import("../Colors/Pixels.zig");
+const Pixels = @import("../Colors/Pixels.zig").Pixels;
 
 const SIG = [12]u8{
     0xAB, 0x4B, 0x54, 0x58, 0x20, 0x32,
