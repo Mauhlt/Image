@@ -14,6 +14,7 @@ const BGRA = @import("pixel_format.zig").BGRA;
 
 const PixelTag = enum(u8) {
     grays,
+    gray_alphas,
     rgbs,
     bgrs,
     rgbas,
@@ -22,6 +23,7 @@ const PixelTag = enum(u8) {
     fn modCheck(self: PixelTag, data: []const u8) !void {
         return switch (self) {
             .grays => {},
+            .gray_alphas => {},
             .rgbs, .bgrs => if (@mod(data.len, 3) != 0) error.InvalidDataLength else {},
             .rgbas, .bgras => if (@mod(data.len, 4) != 0) error.InvalidDataLength else {},
         };
@@ -30,6 +32,7 @@ const PixelTag = enum(u8) {
     fn alignOf(self: PixelTag) usize {
         return switch (self) {
             .grays => 1,
+            .gray_alphas => 2,
             .rgbs, .bgrs => 3,
             .rgbas, .bgras => 4,
         };
@@ -93,12 +96,14 @@ fn MergeEnums(comptime types: []const type) !type {
 
 const DataTag: type = MergeEnums(&.{
     GrayOrder,
+    GrayAlphaOrder,
     RgbOrder,
     RgbaOrder,
 }) catch unreachable;
 
 pub const Pixels = union(PixelTag) {
     grays: []GRAY,
+    gray_alphas: []GRAY_ALPHA,
     rgbs: []RGB,
     bgrs: []BGR,
     rgbas: []RGBA,
