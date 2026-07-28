@@ -172,7 +172,7 @@ fn processIdat(
     hdr: *const Header,
     data: []const u8,
 ) !Pixels {
-    const bytes_per_row = hdr.width * hdr.color_type.bits_per_pixel();
+    const bytes_per_row = hdr.width * (try hdr.color_type.bits_per_pixel());
     const total_bytes = hdr.height * (1 + bytes_per_row);
 
     // decompress
@@ -208,28 +208,28 @@ fn processIdat(
         .rgba => Pixels{ .rgbas = try gpa.alloc(@FieldType(Pixels, .rgbas), n_pixels) },
         else => return error.UnsupportedColorspace,
     };
-    defer pixels.deinit(gpa);
+    errdefer pixels.deinit(gpa); // TODO: fix this
 
-    for (0..hdr.height) |row| {
-        const i = row * (1 + bytes_per_row);
-        const filter_method = std.enums.fromInt(FilterMethod, raw[i]) orelse //
-            return error.UnsupportedFilterMethod;
-        @memcpy(curr_row, raw[i + 1 ..][0..bytes_per_row]);
-
-        try defilterRow(filter_method, curr_row, prev_row, hdr.color_type.bits_per_pixel());
-
-        const dst_base = row * hdr.width * hdr.color_type.bits_per_pixel();
-        switch (hdr.color_type) {
-            .gray => for (0..hdr.width) |col| {
-                const v = row_buf[col];
-                const d = dst_base + col * 4;
-                pixels.grays[i] = v;
-            },
-            .gray_alpha => unreachable,
-            .rgb => {},
-            .rgba => @memcpy(rgbas[dst_base..][0 .. hdr.width * 4], curr_row),
-            .indexed => unreachable,
-        }
-    }
-    return .{ .rgbas = rgbas };
+    // for (0..hdr.height) |row| {
+    //     const i = row * (1 + bytes_per_row);
+    //     const filter_method = std.enums.fromInt(FilterMethod, raw[i]) orelse //
+    //         return error.UnsupportedFilterMethod;
+    //     @memcpy(curr_row, raw[i + 1 ..][0..bytes_per_row]);
+    //
+    //     try defilterRow(filter_method, curr_row, prev_row, hdr.color_type.bits_per_pixel());
+    //
+    //     const dst_base = row * hdr.width * hdr.color_type.bits_per_pixel();
+    //     switch (hdr.color_type) {
+    //         .gray => for (0..hdr.width) |col| {
+    //             // const v = row_buf[col];
+    //             // const d = dst_base + col * 4;
+    //             // pixels.grays[i] = v;
+    //         },
+    //         .gray_alpha => unreachable,
+    //         .rgb => {},
+    //         .rgba => @memcpy(rgbas[dst_base..][0 .. hdr.width * 4], curr_row),
+    //         .indexed => unreachable,
+    //     }
+    // }
+    return pixels;
 }

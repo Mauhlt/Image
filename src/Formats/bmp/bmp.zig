@@ -174,6 +174,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
+        .gray_alphas => return error.UnsupportedColorspace, // TODO: Check if this is supported
         .rgbs => |rgbs| {
             const row_bytes = img.width * 3;
             const pad = strideOf(row_bytes) - row_bytes;

@@ -128,6 +128,10 @@ pub const GRAY = extern struct {
         return self;
     }
 
+    pub fn toGrayAlpha(self: GRAY) GRAY_ALPHA {
+        return .{ .gray = self.gray };
+    }
+
     pub fn toRgb(self: GRAY) RGB {
         return .{
             .red = self.gray,
@@ -167,16 +171,16 @@ pub const GRAY = extern struct {
 
 pub const GRAY_ALPHA = extern struct {
     gray: u8,
-    alpha: u8,
+    alpha: u8 = 0xFF,
 
-    pub fn init(data: *const [2]u8) GRAY {
+    pub fn init(data: *const [2]u8) GRAY_ALPHA {
         return .{
             .gray = data[0],
             .alpha = data[1],
         };
     }
 
-    pub fn initOrder(data: u8, order: GrayOrder) GRAY {
+    pub fn initOrder(data: *const [2]u8, order: GrayAlphaOrder) GRAY_ALPHA {
         const idx = order.toGa();
         return .{
             .gray = data[idx.gray],
@@ -196,7 +200,7 @@ pub const GRAY_ALPHA = extern struct {
         return .{ .gray = self.gray };
     }
 
-    pub fn toGray8(self: GRAY) GRAY {
+    pub fn toGray8(self: GRAY_ALPHA) GRAY {
         return .{ .gray = self.gray };
     }
     pub fn toGray16(self: GRAY_ALPHA) GRAY {
@@ -207,7 +211,7 @@ pub const GRAY_ALPHA = extern struct {
         return self;
     }
 
-    pub fn toRgb(self: GRAY) RGB {
+    pub fn toRgb(self: GRAY_ALPHA) RGB {
         return .{
             .red = self.gray,
             .green = self.gray,
@@ -215,7 +219,7 @@ pub const GRAY_ALPHA = extern struct {
         };
     }
 
-    pub fn toBgr(self: GRAY) BGR {
+    pub fn toBgr(self: GRAY_ALPHA) BGR {
         return .{
             .blue = self.gray,
             .green = self.gray,
@@ -223,7 +227,7 @@ pub const GRAY_ALPHA = extern struct {
         };
     }
 
-    pub fn toRgba(self: GRAY) RGBA {
+    pub fn toRgba(self: GRAY_ALPHA) RGBA {
         return .{
             .red = self.gray,
             .green = self.gray,
@@ -232,7 +236,7 @@ pub const GRAY_ALPHA = extern struct {
         };
     }
 
-    pub fn toBgra(self: GRAY) BGRA {
+    pub fn toBgra(self: GRAY_ALPHA) BGRA {
         return .{
             .blue = self.gray,
             .green = self.gray,
@@ -241,7 +245,7 @@ pub const GRAY_ALPHA = extern struct {
         };
     }
 
-    pub fn eql(self: GRAY, other: GRAY) bool {
+    pub fn eql(self: GRAY_ALPHA, other: GRAY_ALPHA) bool {
         return @as(u16, @bitCast(self)) == @as(u16, @bitCast(other));
     }
 };
@@ -309,6 +313,10 @@ pub const RGB = extern struct {
                 7471 *% @as(u32, self.blue)) //
                 >> 16),
         };
+    }
+
+    pub fn toGrayAlpha(self: RGB) GRAY_ALPHA {
+        return self.toGray16().toGrayAlpha();
     }
 
     pub fn toRgb(self: RGB) RGB {
@@ -405,6 +413,10 @@ pub const BGR = extern struct {
                 38470 *% @as(u32, self.green) +% //
                 19595 *% @as(u32, self.red) >> 16),
         };
+    }
+
+    pub fn toGrayAlpha(self: BGR) GRAY_ALPHA {
+        return self.toGray16().toGrayAlpha();
     }
 
     pub fn toRgb(self: BGR) RGB {
@@ -507,6 +519,10 @@ pub const RGBA = extern struct {
                 7471 *% @as(u32, self.blue) //
             >> 16),
         };
+    }
+
+    pub fn toGrayAlpha(self: RGBA) GRAY_ALPHA {
+        return self.toGray16().toGrayAlpha();
     }
 
     pub fn toRgb(self: RGBA) RGB {
@@ -612,6 +628,10 @@ pub const BGRA = extern struct {
         };
     }
 
+    pub fn toGrayAlpha(self: BGRA) GRAY_ALPHA {
+        return self.toGray16().toGrayAlpha();
+    }
+
     pub fn toRgb(self: BGRA) RGB {
         return .{
             .red = self.red,
@@ -715,6 +735,38 @@ test "GRAY" {
 
     // eql
     try std.testing.expect(gray1.eql(gray2));
+}
+
+test "GRAY_ALPHA" {
+    // check order
+    inline for (comptime std.meta.fields(GrayAlphaOrder)) |order_field| {
+        const name = order_field.name;
+        const value = order_field.value;
+        const g: u8 = @truncate(std.mem.indexOfScalar(u8, name, 'g').?);
+        const a: u8 = @truncate(std.mem.indexOfScalar(u8, name, 'a').?);
+        const new_value = g << 1 | a;
+        try std.testing.expectEqual(value, new_value);
+    }
+
+    const data = [_]u8{ 10, 255 };
+
+    const ga1: GRAY_ALPHA = .init(&data);
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = 10,
+        .alpha = 255,
+    }, ga1);
+
+    const ga2: GRAY_ALPHA = .initOrder(&data, .ag);
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = 255,
+        .alpha = 10,
+    }, ga2);
+
+    const lum = ga1.luminance();
+    _ = lum;
+
+    const lum_ntsc = ga1.luminanceNtsc();
+    _ = lum_ntsc;
 }
 
 test "RGB" {

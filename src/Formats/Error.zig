@@ -1,5 +1,6 @@
 pub const Decode = error{
     ChunkIsNotHeader,
+    DecompressionFailed,
     InvalidBitsPerPixel,
     InvalidChunkType,
     InvalidCompression,
@@ -21,6 +22,7 @@ pub const Decode = error{
     MismatchInNumberOfPixels,
     Overflow,
     OutOfBounds,
+    OutOfMemory,
     UnhandledMultiIDAT,
     UnsupportedBitsPerPixel,
     UnsupportedColorspace,
