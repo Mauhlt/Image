@@ -332,6 +332,8 @@ test "PNG" {
     defer img1.deinit(gpa);
     std.debug.print("{f}\n", .{img1});
     // try img1.printPixels();
+
+    try img1.write(io, gpa, "src/Data/Write/BasicArt.png");
 }
 
 // test "KTX2" {

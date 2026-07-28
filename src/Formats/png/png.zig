@@ -89,7 +89,6 @@ pub fn encode(
     gpa: std.mem.Allocator,
 ) !void {
     const hdr: Header = try .fromImage(img);
-    const n_pixels = hdr.width * hdr.height;
 
     const row_bytes = hdr.width * (try hdr.color_type.bytes_per_pixel());
     const raw_size = hdr.height * (1 + row_bytes);
@@ -126,8 +125,6 @@ pub fn encode(
     const out_size = 8 + 25 + (12 + idat_data.len) + 12;
     const buf = try gpa.alloc(u8, out_size);
     errdefer gpa.free(buf);
-
-    // var w: usize = 0;
 
     // sig
     try w.writeAll(&SIG);
