@@ -1,4 +1,5 @@
 const std = @import("std");
+const Format = @import("Vulkan").Format;
 const Error = @import("../error.zig");
 
 const ChunkHeader = @import("chunk_header.zig");
@@ -6,7 +7,7 @@ const ChunkTag = @import("chunk_header.zig").ChunkTag;
 const Header = @import("header.zig");
 const FilterMethod = @import("header.zig").FilterMethod;
 const Image = @import("../../root.zig");
-const Pixels = @import("../../Colors/Pixels.zig");
+const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const SIG = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
 const CRC_SIZE = 4;
@@ -36,9 +37,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     while (i < data.len) {
         chunk = try .decode(data[i..]);
         i += ChunkHeader.CHUNK_SIZE;
-
         if (chunk.tag == .IEND) break;
-
         if (i + chunk.len > data.len) return Error.Decode.OutOfBounds;
         const chunk_data = data[i..][0..chunk.len];
         switch (chunk.tag) {
@@ -68,13 +67,18 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     }
     if (seen_idat == false) return Error.Decode.MissingIDAT;
     if (chunk.tag != .IEND) return Error.Decode.MissingIEND;
-
+    const fmt: Format = switch (pixels) {
+        .grays => .r8_srgb,
+        .gray_alphas => .r8g8_srgb,
+        .rgbs => .r8g8b8_srgb,
+        .rgbas => .r8g8b8a8_srgb,
+        else => unreachable,
+    };
     return .{
         .width = 0,
         .height = 0,
-        .pixels = undefined,
-        // .pixels = .{ .rgbs =  },
-        .fmt = .r8g8b8_srgb,
+        .pixels = pixels,
+        .fmt = fmt,
     };
 }
 
@@ -99,7 +103,7 @@ pub fn encode(
 fn validateHeader(hdr: Header) !void {
     if (hdr.bit_depth != .bit8) return Error.Decode.UnsupportedBitsPerPixel;
     switch (hdr.color_type) {
-        .gray, .rgb, .rgba => {},
+        .grays, .rgbs, .rgbas => {},
         else => return Error.Decode.UnsupportedColorspace,
     }
     if (hdr.filter_method != .none) return Error.Decode.UnsupportedFilterMethod;
@@ -202,13 +206,14 @@ fn processIdat(
     const curr_row = try gpa.alloc(u8, bytes_per_row);
     defer gpa.free(curr_row);
 
-    const pixels = switch (hdr.color_type) {
-        .gray => Pixels{ .grays = try gpa.alloc(@FieldType(Pixels, .grays), n_pixels) },
-        .rgb => Pixels{ .rgbs = try gpa.alloc(@FieldType(Pixels, .rgbs), n_pixels) },
-        .rgba => Pixels{ .rgbas = try gpa.alloc(@FieldType(Pixels, .rgbas), n_pixels) },
-        else => return error.UnsupportedColorspace,
+    const pixels: Pixels = switch (hdr.color_type) {
+        .indices => return Error.Decode.UnsupportedColorspace,
+        inline else => |tag| sw: {
+            const CHILD_TYPE = @typeInfo(@FieldType(Pixels, @tagName(tag))).pointer.child;
+            const slice = try gpa.alloc(CHILD_TYPE, n_pixels);
+            break :sw @unionInit(Pixels, @tagName(tag), slice);
+        },
     };
-    errdefer pixels.deinit(gpa); // TODO: fix this
 
     // for (0..hdr.height) |row| {
     //     const i = row * (1 + bytes_per_row);
@@ -231,5 +236,6 @@ fn processIdat(
     //         .indexed => unreachable,
     //     }
     // }
+
     return pixels;
 }
