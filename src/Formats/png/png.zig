@@ -216,26 +216,33 @@ fn processIdat(
     };
 
     for (0..hdr.height) |row| {
+        // copy data to buffer
         const i = row * (1 + bytes_per_row);
         const filter_method = std.enums.fromInt(FilterMethod, raw[i]) orelse //
             return error.UnsupportedFilterMethod;
         @memcpy(curr_row, raw[i + 1 ..][0..bytes_per_row]);
-
-        try defilterRow(filter_method, curr_row, prev_row, hdr.color_type.bytes_per_pixel());
-
-        const dst_base = row * hdr.width * hdr.color_type.bytes_per_pixel();
+        // modify buffer
+        try defilterRow(
+            filter_method,
+            curr_row,
+            prev_row,
+            try hdr.color_type.bytes_per_pixel(),
+        );
+        // std.debug.print(
+        //     "Curr Row: {}\nPixels Per Row: {}\n",
+        //     .{ curr_row.len / (try hdr.color_type.bytes_per_pixel()), hdr.width },
+        // );
+        // copy buffer to pixel array
         switch (hdr.color_type) {
-            .grays => for (0..hdr.width) |col| {
-                // const v = row_buf[col];
-                // const d = dst_base + col * 4;
-                // pixels.grays[i] = v;
-            },
-            .gray_alphas => unreachable,
-            .rgbs => {},
-            .rgbas => @memcpy(rgbas[dst_base..][0 .. hdr.width * 4], curr_row),
-            .indexed => unreachable,
+            .indices => unreachable,
+            inline else => |tag| {
+                const CHILD_TYPE = @typeInfo(@FieldType(Pixels, @tagName(tag))).pointer.child;
+                @memcpy(
+                    @field(pixels, @tagName(tag))[row * hdr.width ..][0..hdr.width],
+                    @as([]CHILD_TYPE, @ptrCast(curr_row)),
+                );
+            }
         }
     }
-
     return pixels;
 }

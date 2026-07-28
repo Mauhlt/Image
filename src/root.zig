@@ -329,6 +329,7 @@ test "PNG" {
     });
     defer img1.deinit(gpa);
     std.debug.print("{f}\n", .{img1});
+    try img1.printPixels();
 }
 
 test "TGA" {}
