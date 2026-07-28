@@ -74,6 +74,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         .rgbas => .r8g8b8a8_srgb,
         else => unreachable,
     };
+
     return .{
         .width = hdr.width,
         .height = hdr.height,
@@ -83,21 +84,64 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 }
 
 pub fn encode(
-    self: *const @This(),
-    gpa: std.mem.Allocator,
-    w: *std.Io.Writer,
     img: *const Image,
+    w: *std.Io.Writer,
+    gpa: std.mem.Allocator,
 ) !void {
-    _ = self;
-    _ = w;
     const hdr: Header = try .fromImage(img);
     const n_pixels = hdr.width * hdr.height;
-    _ = n_pixels;
 
-    const row_bytes = hdr.width * 4;
+    const row_bytes = hdr.width * (try hdr.color_type.bytes_per_pixel());
     const raw_size = hdr.height * (1 + row_bytes);
     const raw = try gpa.alloc(u8, raw_size);
     defer gpa.free(raw);
+
+    for (0..hdr.height) |row| {
+        const raw_base = row * (1 + row_bytes);
+        raw[raw_base] = 0; // filter type: None
+        const src_base = row * row_bytes;
+        switch (img.pixels) {
+            .bgrs, .bgras => return Error.Encode.UnsupportedColorspace,
+            inline else => |pixels| {
+                @memcpy(
+                    raw[raw_base + 1 ..][0..row_bytes],
+                    @as([]const u8, @ptrCast(pixels[src_base..][0..row_bytes])),
+                );
+            },
+        }
+    }
+
+    // compress with zlib (Huffman deflate)
+    var comp_aw: std.Io.Writer.Allocating = try .initCapacity(gpa, raw_size / 2 + 128);
+    errdefer comp_aw.deinit();
+
+    var hist_buf: [std.compress.flate.max_window_len]u8 = undefined;
+    var comp: std.compress.flate.Compress.Huffman = try .init(&comp_aw.writer, &hist_buf, .zlib);
+    try comp.writer.writeAll(raw);
+    try comp.writer.flush();
+
+    const idat_data = try comp_aw.toOwnedSlice();
+    defer gpa.free(idat_data);
+
+    const out_size = 8 + 25 + (12 + idat_data.len) + 12;
+    const buf = try gpa.alloc(u8, out_size);
+    errdefer gpa.free(buf);
+
+    // var w: usize = 0;
+
+    // sig
+    try w.writeAll(&SIG);
+    // hdr
+    try hdr.encode(w);
+    // IDAT chunk
+    try w.writeInt(u32, @intCast(idat_data.len), .big);
+    try w.writeAll("IDAT");
+    try w.writeAll(idat_data);
+    try w.writeInt(u32, chunkCrc("IDAT", idat_data), .big);
+    // iend
+    try w.writeInt(u32, 0, .big);
+    try w.writeAll("IEND");
+    try w.writeInt(u32, chunkCrc("IEND", &.{}), .big);
 }
 
 fn validateHeader(hdr: Header) !void {
@@ -228,10 +272,6 @@ fn processIdat(
             prev_row,
             try hdr.color_type.bytes_per_pixel(),
         );
-        // std.debug.print(
-        //     "Curr Row: {}\nPixels Per Row: {}\n",
-        //     .{ curr_row.len / (try hdr.color_type.bytes_per_pixel()), hdr.width },
-        // );
         // copy buffer to pixel array
         switch (hdr.color_type) {
             .indices => unreachable,
