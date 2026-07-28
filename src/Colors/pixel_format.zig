@@ -830,7 +830,7 @@ test "GRAY_ALPHA" {
     }, bgra1);
 
     // eql
-    try std.testing.expect(ga1.eql(ga2));
+    try std.testing.expect(ga1.eql(ga3));
 }
 
 test "RGB" {
