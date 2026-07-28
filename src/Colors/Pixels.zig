@@ -3,10 +3,12 @@ const std = @import("std");
 const Position = @import("position.zig");
 
 const GrayOrder = @import("pixel_format.zig").GrayOrder;
+const GrayAlphaOrder = @import("pixel_format.zig").GrayAlphaOrder;
 const RgbOrder = @import("pixel_format.zig").RgbOrder;
 const RgbaOrder = @import("pixel_format.zig").RgbaOrder;
 
 const GRAY = @import("pixel_format.zig").GRAY;
+const GRAY_ALPHA = @import("pixel_format.zig").GRAY_ALPHA;
 const RGB = @import("pixel_format.zig").RGB;
 const BGR = @import("pixel_format.zig").BGR;
 const RGBA = @import("pixel_format.zig").RGBA;
@@ -21,12 +23,7 @@ const PixelTag = enum(u8) {
     bgras,
 
     fn modCheck(self: PixelTag, data: []const u8) !void {
-        return switch (self) {
-            .grays => {},
-            .gray_alphas => {},
-            .rgbs, .bgrs => if (@mod(data.len, 3) != 0) error.InvalidDataLength else {},
-            .rgbas, .bgras => if (@mod(data.len, 4) != 0) error.InvalidDataLength else {},
-        };
+        return if (@mod(data.len, self.alignOf()) != 0) error.InvalidDataLength else {};
     }
 
     fn alignOf(self: PixelTag) usize {
@@ -184,6 +181,7 @@ pub const Pixels = union(PixelTag) {
                 const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(other_tag)));
                 const method = comptime switch (other_tag) {
                     .grays => "toGray16",
+                    .gray_alphas => "toGrayAlpha",
                     .rgbs => "toRgb",
                     .rgbas => "toRgba",
                     .bgrs => "toBgr",
