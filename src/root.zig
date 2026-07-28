@@ -329,16 +329,43 @@ test "PNG" {
     });
     defer img1.deinit(gpa);
     std.debug.print("{f}\n", .{img1});
-    try img1.printPixels();
+    // try img1.printPixels();
 }
 
-test "TGA" {}
+test "KTX2" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
 
-test "WEBP" {}
+    const img1 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = "src/Data/Read/BasicArt.bmp",
+    });
+    defer img1.deinit(gpa);
 
-test "GIF" {}
+    try img1.write(io, "src/Data/Read/BasicArt.ktx2");
 
-test "Convert Image Types" {}
+    const img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = "src/Data/Read/BasicArt.ktx2",
+    });
+    defer img2.deinit(gpa);
+
+    try img2.write(io, "src/Data/Write/BasicArt.ktx2");
+
+    const img3 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = "src/Data/Write/BasicArt.ktx2",
+    });
+    defer img3.deinit(gpa);
+
+    for (img1.pixels.rgbs, img3.pixels.rgbas) |rgb1, rgb2| {
+        try std.testing.expectEqual(rgb1, rgb2);
+    }
+}
 
 test "Everything" {
     _ = @import("Colors/test.zig");
