@@ -699,7 +699,14 @@ test "GRAY" {
     try std.testing.expect(gray3.eql(gray4));
     try std.testing.expect(gray3.eql(gray5));
 
-    // toRgb
+    // gray alpha
+    const ga1 = gray1.toGrayAlpha();
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = gray1.gray,
+        .alpha = 0xFF,
+    }, ga1);
+
+    // rgb
     const rgb = gray1.toRgb();
     try std.testing.expectEqualDeep(RGB{
         .red = 0xFF,
@@ -707,7 +714,7 @@ test "GRAY" {
         .blue = 0xFF,
     }, rgb);
 
-    // toBgr
+    // bgr
     const bgr = gray1.toBgr();
     try std.testing.expectEqualDeep(BGR{
         .red = 0xFF,
@@ -715,7 +722,7 @@ test "GRAY" {
         .blue = 0xFF,
     }, bgr);
 
-    // toRgba
+    // rgba
     const rgba = gray1.toRgba();
     try std.testing.expectEqualDeep(RGBA{
         .red = 0xFF,
@@ -724,7 +731,7 @@ test "GRAY" {
         .alpha = 0xFF,
     }, rgba);
 
-    // toBgra
+    // bgra
     const bgra = gray1.toBgra();
     try std.testing.expectEqualDeep(BGRA{
         .blue = 0xFF,
@@ -763,10 +770,66 @@ test "GRAY_ALPHA" {
     }, ga2);
 
     const lum = ga1.luminance();
-    _ = lum;
+    try std.testing.expectEqual(134, lum);
 
     const lum_ntsc = ga1.luminanceNtsc();
-    _ = lum_ntsc;
+    try std.testing.expectEqual(135, lum_ntsc);
+
+    // gray
+    const gray = ga1.toGray();
+    try std.testing.expectEqualDeep(GRAY{ .gray = 134 }, gray);
+
+    // gray 8
+    const gray8 = ga1.toGray8();
+    try std.testing.expectEqualDeep(GRAY{ .gray = 135 }, gray8);
+
+    // gray 16
+    const gray16 = ga1.toGray16();
+    try std.testing.expectEqualDeep(GRAY{ .gray = 134 }, gray16);
+
+    // gray alpha
+    const ga3 = ga1.toGrayAlpha();
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = ga1.gray,
+        .alpha = ga1.alpha,
+    }, ga3);
+
+    // rgb
+    const rgb = ga1.toRgb();
+    try std.testing.expectEqualDeep(RGB{
+        .red = ga1.gray,
+        .green = ga1.gray,
+        .blue = ga1.gray,
+    }, rgb);
+
+    // rgba
+    const rgba = ga1.toRgba();
+    try std.testing.expectEqualDeep(RGBA{
+        .red = ga1.red,
+        .green = ga1.green,
+        .blue = ga1.blue,
+        .alpha = ga1.alpha,
+    }, rgba);
+
+    // bgr
+    const bgr = ga1.toBgr();
+    try std.testing.expectEqualDeep(BGR{
+        .blue = ga1.gray,
+        .green = ga1.gray,
+        .red = ga1.gray,
+    }, bgr);
+
+    // bgra
+    const bgra1 = ga1.toBgra();
+    try std.testing.expectEqualDeep(BGRA{
+        .blue = ga1.gray,
+        .green = ga1.gray,
+        .red = ga1.gray,
+        .alpha = ga1.alpha,
+    }, bgra1);
+
+    // eql
+    try std.testing.expect(ga1.eql(ga2));
 }
 
 test "RGB" {
@@ -818,6 +881,13 @@ test "RGB" {
     // gray 16
     const gray16 = rgb1.toGray16();
     try std.testing.expectEqualDeep(GRAY{ .gray = 134 }, gray16);
+
+    // gray alpha
+    const ga1 = rgb1.toGrayAlpha();
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = rgb1.toGray().gray,
+        .alpha = 0xFF,
+    }, ga1);
 
     // rgb
     const rgb3 = rgb1.toRgb();
@@ -886,6 +956,13 @@ test "BGR" {
     // gray 16
     const gray16 = bgr1.toGray16();
     try std.testing.expectEqualDeep(GRAY{ .gray = 134 }, gray16);
+
+    // gray alpha
+    const ga1 = bgr1.toGrayAlpha();
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = bgr1.toGray().gray,
+        .alpha = 0xFF,
+    }, ga1);
 
     // rgb
     const rgb = bgr1.toRgb();
@@ -958,6 +1035,13 @@ test "RGBA" {
     const gray16 = rgba1.toGray16();
     try std.testing.expectEqual(134, gray16.gray);
 
+    // gray alpha
+    const ga1 = rgba1.toGrayAlpha();
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = rgba1.toGray().gray,
+        .alpha = 0xFF,
+    }, ga1);
+
     // rgb
     const rgb = rgba1.toRgb();
     try std.testing.expectEqualDeep(RGB{
@@ -1028,6 +1112,13 @@ test "BGRA" {
     // gray 16
     const gray16 = bgra1.toGray16();
     try std.testing.expectEqual(134, gray16.gray);
+
+    // gray alpha
+    const ga1 = bgra1.toGrayAlpha();
+    try std.testing.expectEqualDeep(GRAY_ALPHA{
+        .gray = bgra1.toGray().gray,
+        .alpha = 0xFF,
+    }, ga1);
 
     // rgb
     const rgb = bgra1.toRgb();
