@@ -4,7 +4,21 @@ pub const GrayOrder = enum(u8) {
     g,
 };
 
-// stores position as u6 (every 2 bytes = position)
+/// stores position as u2 (evey bit = position)
+pub const GrayAlphaOrder = enum(u8) {
+    ga = 0b0000_0001,
+    ag = 0b0000_0010,
+
+    pub fn toGa(order: @This()) GRAY_ALPHA {
+        const value: u8 = @intFromEnum(order);
+        return .{
+            .gray = (value & 2) >> 1,
+            .alpha = (value & 1),
+        };
+    }
+};
+
+/// stores position as u6 (every 2 bits = position of rgb)
 pub const RgbOrder = enum(u8) {
     rgb = 0b0000_0110,
     rbg = 0b0000_1001,
@@ -32,6 +46,7 @@ pub const RgbOrder = enum(u8) {
     }
 };
 
+/// stores position as u8 (every 2 bits = position of rgba)
 pub const RgbaOrder = enum(u8) {
     rgba = 0b0001_1011,
     rgab = 0b0001_1110,
@@ -147,6 +162,87 @@ pub const GRAY = extern struct {
 
     pub fn eql(self: GRAY, other: GRAY) bool {
         return self.gray == other.gray;
+    }
+};
+
+pub const GRAY_ALPHA = extern struct {
+    gray: u8,
+    alpha: u8,
+
+    pub fn init(data: *const [2]u8) GRAY {
+        return .{
+            .gray = data[0],
+            .alpha = data[1],
+        };
+    }
+
+    pub fn initOrder(data: u8, order: GrayOrder) GRAY {
+        const idx = order.toGa();
+        return .{
+            .gray = data[idx.gray],
+            .alpha = data[idx.alpha],
+        };
+    }
+
+    pub fn luminance(self: GRAY_ALPHA) u8 {
+        return self.gray;
+    }
+
+    pub fn luminanceNtsc(self: GRAY_ALPHA) u8 {
+        return self.gray;
+    }
+
+    pub fn toGray(self: GRAY_ALPHA) GRAY {
+        return .{ .gray = self.gray };
+    }
+
+    pub fn toGray8(self: GRAY) GRAY {
+        return .{ .gray = self.gray };
+    }
+    pub fn toGray16(self: GRAY_ALPHA) GRAY {
+        return .{ .gray = self.gray };
+    }
+
+    pub fn toGrayAlpha(self: GRAY_ALPHA) GRAY_ALPHA {
+        return self;
+    }
+
+    pub fn toRgb(self: GRAY) RGB {
+        return .{
+            .red = self.gray,
+            .green = self.gray,
+            .blue = self.gray,
+        };
+    }
+
+    pub fn toBgr(self: GRAY) BGR {
+        return .{
+            .blue = self.gray,
+            .green = self.gray,
+            .red = self.gray,
+        };
+    }
+
+    pub fn toRgba(self: GRAY) RGBA {
+        return .{
+            .red = self.gray,
+            .green = self.gray,
+            .blue = self.gray,
+            .alpha = self.alpha,
+        };
+    }
+
+    pub fn toBgra(self: GRAY) BGRA {
+        return .{
+            .blue = self.gray,
+            .green = self.gray,
+            .red = self.gray,
+            .alpha = self.alpha,
+        };
+    }
+
+    pub fn eql(self: GRAY, other: GRAY) bool {
+        return @as(u16, @bitCast(self)) == @as(u16, @bitCast(other));
     }
 };
 

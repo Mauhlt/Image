@@ -74,7 +74,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         .height = 0,
         .pixels = undefined,
         // .pixels = .{ .rgbs =  },
-        // new_pixels.toOwnedSlice(gpa),
         .fmt = .r8g8b8_srgb,
     };
 }
@@ -132,45 +131,39 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     return c;
 }
 
-fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8) !void {
-    // always assume bits_per_pixel = 4
+fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: usize) !void {
     if (row.len != prev.len) return Error.Decode.InvalidDataLength;
-    const len = row.len;
     switch (filter_method) {
-        .none => {}, // no change
-        .sub => {
-            var i: usize = 0;
-            while (i + 64 < row.len) {
-                const V1 = row[i..][0..64];
+        .none => {},
+        .sub => for (bpp..row.len) |i| {
+            row[i] = row[i] +% row[i - bpp];
+        },
+        .up => for (0..row.len) |i| {
+            row[i] = row[i] +% prev[i];
+        },
+        .avg => {
+            if (bpp > row.len) return Error.Decode.InvalidDataLength;
+            for (0..bpp) |i| {
+                row[i] = row[i] +% (prev[i] / 2);
             }
-
             for (bpp..row.len) |i| {
-                row[i] = row[i] +% row[i - bpp];
+                const a: u16 = row[i - bpp];
+                const b: u16 = prev[i];
+                row[i] = row[i] +% @as(u8, @truncate((a + b) / 2));
             }
         },
-        .up => {
-            var i: usize = 0;
-            while (i + 64 < n_pixels) {
-                const V1: @Vector(64, u8) = row[i..][0..64].*;
-                const V2: @Vector(64, u8) = prev[i..][0..64].*;
-                row[i..][0..64].* = V1 + V2;
+        .paeth => {
+            if (bpp > row.len) return Error.Decode.InvalidDataLength;
+            for (0..bpp) |i| {
+                row[i] = row[i] +% paethPredictor(0, prev[i], 0);
             }
-            while (i < n_pixels) {
-                row[i] +%= prev[i];
+            for (bpp..row.len) |i| {
+                const a: u8 = row[i - bpp];
+                const b: u8 = prev[i];
+                const c: u8 = prev[i - bpp];
+                row[i] = row[i] +% paethPredictor(a, b, c);
             }
         },
-        .avg => for (0..row.len) |i| {
-            const a: u16 = if (i >= bpp) row[i - bpp] else 0;
-            const b: u16 = prev[i];
-            row[i] = row[i] +% @as(u8, @truncate((a + b) / 2));
-        },
-        .paeth => for (0..row.len) |i| {
-            const a: u8 = if (i >= bpp) row[i - bpp] else 0;
-            const b: u8 = prev[i];
-            const c: u8 = if (i >= bpp) prev[i - bpp] else 0;
-            row[i] = row[i] +% paethPredictor(a, b, c);
-        },
-        else => return error.InvalidFilterType,
     }
 }
 
@@ -209,8 +202,13 @@ fn processIdat(
     const curr_row = try gpa.alloc(u8, bytes_per_row);
     defer gpa.free(curr_row);
 
-    const T = @FieldType(Pixels, @tagName(.rgbas));
-    var rgbas = gpa.alloc(T, n_pixels);
+    const pixels = switch (hdr.color_type) {
+        .gray => Pixels{ .grays = try gpa.alloc(@FieldType(Pixels, .grays), n_pixels) },
+        .rgb => Pixels{ .rgbs = try gpa.alloc(@FieldType(Pixels, .rgbs), n_pixels) },
+        .rgba => Pixels{ .rgbas = try gpa.alloc(@FieldType(Pixels, .rgbas), n_pixels) },
+        else => return error.UnsupportedColorspace,
+    };
+    defer pixels.deinit(gpa);
 
     for (0..hdr.height) |row| {
         const i = row * (1 + bytes_per_row);
@@ -222,8 +220,12 @@ fn processIdat(
 
         const dst_base = row * hdr.width * hdr.color_type.bits_per_pixel();
         switch (hdr.color_type) {
-            .gray => {},
-            .gray_alpha => {},
+            .gray => for (0..hdr.width) |col| {
+                const v = row_buf[col];
+                const d = dst_base + col * 4;
+                pixels.grays[i] = v;
+            },
+            .gray_alpha => unreachable,
             .rgb => {},
             .rgba => @memcpy(rgbas[dst_base..][0 .. hdr.width * 4], curr_row),
             .indexed => unreachable,
