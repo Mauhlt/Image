@@ -104,7 +104,7 @@ pub fn encode(
             inline else => |pixels| {
                 @memcpy(
                     raw[raw_base + 1 ..][0..row_bytes],
-                    @as([]const u8, @ptrCast(pixels[src_base..][0..row_bytes])),
+                    @as([]const u8, @ptrCast(pixels[src_base..][0..hdr.width])),
                 );
             },
         }
@@ -134,11 +134,11 @@ pub fn encode(
     try w.writeInt(u32, @intCast(idat_data.len), .big);
     try w.writeAll("IDAT");
     try w.writeAll(idat_data);
-    try w.writeInt(u32, chunkCrc("IDAT", idat_data), .big);
+    try w.writeInt(u32, chunkCrc(.IDAT, idat_data), .big);
     // iend
     try w.writeInt(u32, 0, .big);
     try w.writeAll("IEND");
-    try w.writeInt(u32, chunkCrc("IEND", &.{}), .big);
+    try w.writeInt(u32, chunkCrc(.IEND, &.{}), .big);
 }
 
 fn validateHeader(hdr: Header) !void {
