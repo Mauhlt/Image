@@ -44,5 +44,6 @@ pub const Encode = error{
     InvalidChannels,
     InvalidEndMarker,
     UnsupportedChannel,
+    UnsupportedColorspace,
     UnexpectedEof,
 };

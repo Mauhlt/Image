@@ -331,9 +331,22 @@ test "PNG" {
     });
     defer img1.deinit(gpa);
     std.debug.print("{f}\n", .{img1});
-    // try img1.printPixels();
 
     try img1.write(io, gpa, "src/Data/Write/BasicArt.png");
+
+    const img2 = try read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = "src/Data/Write/BasicArt.png",
+    });
+    defer img2.deinit(gpa);
+
+    try std.testing.expectEqual(
+        std.meta.activeTag(img1.pixels),
+        std.meta.activeTag(img2.pixels),
+    );
+    // orion, rigel (foot, blue star = hottest star), betelgeuse (top, red star = coolest star)
+    // as stars die, they lose gravitational pull, expand, become red
 }
 
 // test "KTX2" {
