@@ -117,14 +117,21 @@ pub fn encode(
     // extract header
     const hdr: Header = .fromImage(img);
 
-    // compute dst data
+    // create  data
     const bpp = try hdr.color_type.bytes_per_pixel(); // bytes per pixel
     const bpr = hdr.width * bpp + 1; // bytes per row
     const dst_size = hdr.height * bpr;
     const dst = try gpa.alloc(u8, dst_size);
     defer gpa.free(dst);
-    // create dst data
-    // FIXME: defaults to none, but i want sub + top combo for better encoding
+    // alloc mem to get best filter
+    const prev_row = try gpa.alloc(u8, bpr - 1);
+    defer gpa.free(prev_row);
+    @memset(prev_row, 0);
+    const cand_buf = try gpa.alloc(u8, bpr - 1);
+    defer gpa.free(cand_buf);
+    const best_buf = try gpa.alloc(u8, bpr - 1);
+    defer gpa.free(best_buf);
+
     var src_idx: usize = 0;
     var dst_idx: usize = 0;
     while (src_idx < src.len and dst_idx < dst_size) : ({
@@ -132,9 +139,22 @@ pub fn encode(
         dst_idx += bpr;
     }) {
         const src_bytes: []const u8 = @ptrCast(src[src_idx..][0..hdr.width]);
+        // identify best filter = min sum
+        var best_filter_method: FilterMethod = .none;
+        var min_sum: u64 = std.math.maxInt(u64);
+        for (std.enums.values(FilterMethod)) |filter_method| {
+            filterRow(cand_buf, filter_method, src_bytes, prev_row, bpp);
+            const sum = sumAbs(cand_buf);
+            if (sum < min_sum) {
+                min_sum = sum;
+                best_filter_method = filter_method;
+                @memcpy(best_buf, cand_buf);
+            }
+        }
+
         const dst_bytes: []u8 = dst[dst_idx..][0..bpr];
-        dst_bytes[0] = @intFromEnum(FilterMethod.none);
-        @memcpy(dst_bytes[1..], src_bytes);
+        dst_bytes[0] = @intFromEnum(best_filter_method);
+        @memcpy(dst_bytes[1..], best_buf);
     }
     // compress w/ zlib
     var comp_aw: std.Io.Writer.Allocating = try .initCapacity(gpa, dst_size / 2 + 128);
@@ -183,6 +203,45 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     if (pa <= pb and pa <= pc) return a;
     if (pb <= pc) return b;
     return c;
+}
+
+fn filterRow(
+    out: []u8,
+    filter_method: FilterMethod,
+    row: []const u8,
+    prev: []const u8,
+    bpp: usize,
+) void {
+    switch (filter_method) {
+        .none => @memcpy(out, row),
+        .sub => {
+            for (0..bpp) |i| out[i] = row[i];
+            for (bpp..row.len) |i| out[i] = row[i] -% row[i - bpp];
+        },
+        .up => for (0..row.len) |i| {
+            out[i] = row[i] -% prev[i];
+        },
+        .avg => {
+            for (0..bpp) |i| out[i] = row[i] -% @as(u8, @truncate(prev[i] / 2));
+            for (bpp..row.len) |i| {
+                const a: u16 = row[i - bpp];
+                const b: u16 = prev[i];
+                out[i] = row[i] -% @as(u8, @truncate((a + b) / 2));
+            }
+        },
+        .paeth => {
+            for (0..bpp) |i| out[i] = row[i] -% paethPredictor(0, prev[i], 0);
+            for (bpp..row.len) |i| {
+                out[i] = row[i] -% paethPredictor(row[i - bpp], prev[i], prev[i - bpp]);
+            }
+        },
+    }
+}
+
+fn sumAbs(row: []const u8) u64 {
+    var sum: u64 = 0;
+    for (row) |r| sum += @abs(@as(i16, @as(i8, @bitCast(r))));
+    return sum;
 }
 
 fn defilterRow(
