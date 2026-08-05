@@ -330,8 +330,7 @@ test "PNG" {
         .filepath = "src/Data/Read/BasicArt.png",
     });
     defer img1.deinit(gpa);
-    std.debug.print("{f}\n", .{img1});
-
+    // std.debug.print("{f}\n", .{img1});
     try img1.write(io, gpa, "src/Data/Write/BasicArt.png");
 
     const img2 = try read(.{
@@ -341,10 +340,18 @@ test "PNG" {
     });
     defer img2.deinit(gpa);
 
+    // test orig to new image
     try std.testing.expectEqual(
         std.meta.activeTag(img1.pixels),
         std.meta.activeTag(img2.pixels),
     );
+    const rgbas1 = img1.pixels.rgbas;
+    const rgbas2 = img2.pixels.rgbas;
+    try std.testing.expectEqual(rgbas1.len, rgbas2.len);
+    for (rgbas1, rgbas2) |rgba1, rgba2| {
+        try std.testing.expectEqualDeep(rgba1, rgba2);
+    }
+
     // orion, rigel (foot, blue star = hottest star), betelgeuse (top, red star = coolest star)
     // as stars die, they lose gravitational pull, expand, become red
 }

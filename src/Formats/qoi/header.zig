@@ -34,7 +34,7 @@ pub fn fromImage(img: *const Image) !@This() {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    if (data.len < @sizeOf(@This())) return Error.Decode.InvalidDataLength;
+    if (data.len < @sizeOf(@This())) return Error.Decode.InvalidDataLen;
     var i: usize = 0;
     if (!std.mem.startsWith(u8, data[i..], SIG)) //
         return Error.Decode.UnexpectedSignature;

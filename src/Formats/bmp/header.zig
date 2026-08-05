@@ -109,13 +109,13 @@ pub fn decode(data: []const u8) !@This() {
                 .{ file_size, data.len },
             );
         }
-        return Error.Decode.InvalidDataLength;
+        return Error.Decode.InvalidDataLen;
     }
     const data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
     // dib
     const dib_hdr_size = std.mem.readInt(u32, data[14..][0..4], .little);
     if (dib_hdr_size != 40)
-        return Error.Decode.InvalidHeaderLength;
+        return Error.Decode.InvalidHeaderLen;
     const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
     const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
     if (raw_width <= 0 or raw_height == 0)
