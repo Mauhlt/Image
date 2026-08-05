@@ -89,7 +89,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
 }
 
 fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
-    if (data.len == 0) return Error.Decode.InvalidDataLength;
+    if (data.len == 0) return Error.Decode.InvalidDataLen;
     const rgb_pxs: Pixels = .{ .rgbs = try gpa.alloc(RGB, n_pixels) };
     // var rgb_pxs: Pixels = try .initEmpty(gpa, .rgbs, n_pixels);
     errdefer rgb_pxs.deinit(gpa);
@@ -164,7 +164,7 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
 }
 
 fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
-    if (data.len == 0) return error.InvalidDataLength;
+    if (data.len == 0) return Error.Decode.InvalidDataLen;
     const rgba_pxs: Pixels = .{ .rgbas = try gpa.alloc(RGBA, n_pixels) };
     errdefer rgba_pxs.deinit(gpa);
     var prev: RGBA = .{
