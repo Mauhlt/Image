@@ -108,14 +108,15 @@ pub fn encode(
     w: *std.Io.Writer,
     gpa: std.mem.Allocator,
 ) !void {
-    // Encode: hdr -> srgb -> idat -> iend
-    // extract header
-    const hdr: Header = try .fromImage(img);
-    // grab src data
-    const src = try switch (img.pixels) {
+    // FIXME: only works with rgba data currently
+    // need to format to use all data (gray, gray_alpha, bgr, bgra, rgb, rgba)
+    const src = switch (img.pixels) {
         .rgbas => |rgbas| rgbas,
-        else => Error.Encode.UnsupportedColorspace,
+        else => return Error.Encode.UnsupportedChannel,
     };
+    // extract header
+    const hdr: Header = .fromImage(img);
+
     // compute dst data
     const bpp = try hdr.color_type.bytes_per_pixel(); // bytes per pixel
     const bpr = hdr.width * bpp + 1; // bytes per row
@@ -123,7 +124,7 @@ pub fn encode(
     const dst = try gpa.alloc(u8, dst_size);
     defer gpa.free(dst);
     // create dst data
-    // now default to sub -> up following it
+    // FIXME: defaults to none, but i want sub + top combo for better encoding
     var src_idx: usize = 0;
     var dst_idx: usize = 0;
     while (src_idx < src.len and dst_idx < dst_size) : ({
@@ -144,8 +145,7 @@ pub fn encode(
     try comp.finish(); // must be called
     const idat_data = try comp_aw.toOwnedSlice();
     defer gpa.free(idat_data);
-    // write chunks
-    try w.writeAll(SIG[0..SIG.len]);
+    // create chunks
     var hdr_bytes: [13]u8 = undefined;
     try hdr.encode(&hdr_bytes);
     var chunks = [_]Chunk{
@@ -155,10 +155,10 @@ pub fn encode(
         .{ .tag = .IDAT, .len = @truncate(idat_data.len), .data = idat_data },
         .{ .tag = .IEND, .len = 0, .data = &.{} },
     };
-    for (0..chunks.len) |i| {
-        chunks[i].crc = chunks[i].updateCrc();
-        try chunks[i].encode(w);
-    }
+    for (0..chunks.len) |i| chunks[i].crc = chunks[i].updateCrc();
+    // write
+    try w.writeAll(SIG[0..SIG.len]);
+    for (0..chunks.len) |i| try chunks[i].encode(w);
     try w.flush();
 }
 
@@ -171,11 +171,6 @@ fn validateHeader(hdr: Header) !void {
     if (hdr.filter_method != .none) return Error.Decode.UnsupportedFilterMethod;
     if (hdr.interlace_method != .none) return Error.Decode.UnsupportedInterlaceMethod;
 }
-
-// fn readCrc(data: []const u8) !u32 {
-//     if (data.len < CRC_SIZE) return Error.Decode.OutOfBounds;
-//     return std.mem.readInt(u32, data[0..][0..4], .big);
-// }
 
 fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     const ia: i32 = a;
@@ -190,7 +185,12 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     return c;
 }
 
-fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: usize) !void {
+fn defilterRow(
+    filter_method: FilterMethod,
+    row: []u8,
+    prev: []const u8,
+    bpp: usize,
+) !void {
     if (row.len != prev.len) return Error.Decode.InvalidDataLen;
     switch (filter_method) {
         .none => {},
@@ -254,11 +254,11 @@ fn processIdat(
     const n_pixels, const overflow = @mulWithOverflow(hdr.width, hdr.height);
     if (overflow == 1) return Error.Decode.Overflow;
 
-    const prev_row = try gpa.alloc(u8, bytes_per_row);
+    var prev_row = try gpa.alloc(u8, bytes_per_row);
     defer gpa.free(prev_row);
     @memset(prev_row, 0);
 
-    const curr_row = try gpa.alloc(u8, bytes_per_row);
+    var curr_row = try gpa.alloc(u8, bytes_per_row);
     defer gpa.free(curr_row);
 
     const pixels: Pixels = switch (hdr.color_type) {
@@ -274,7 +274,7 @@ fn processIdat(
         // copy data to buffer
         const i = row * (1 + bytes_per_row);
         const filter_method = std.enums.fromInt(FilterMethod, raw[i]) orelse //
-            return error.UnsupportedFilterMethod;
+            return Error.Decode.UnsupportedFilterMethod;
         @memcpy(curr_row, raw[i + 1 ..][0..bytes_per_row]);
         // modify buffer
         try defilterRow(
@@ -294,13 +294,7 @@ fn processIdat(
                 );
             }
         }
+        std.mem.swap([]u8, &prev_row, &curr_row); // need to swap curr + prev rows!
     }
     return pixels;
 }
-
-// const SRGB = enum(u8) {
-//     perceptual = 0,
-//     rel_colorimetric = 1, // usually default or ignored
-//     saturation = 2,
-//     abs_colorimetric = 3,
-// };
