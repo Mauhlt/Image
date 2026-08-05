@@ -2,77 +2,97 @@ const std = @import("std");
 const Format = @import("Vulkan").Format;
 const Error = @import("../error.zig");
 
-const ChunkHeader = @import("chunk_header.zig");
-const ChunkTag = @import("chunk_header.zig").ChunkTag;
+const Chunk = @import("chunk.zig");
 const Header = @import("header.zig");
 const FilterMethod = @import("header.zig").FilterMethod;
 const Image = @import("../../root.zig");
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const SIG = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
-const CRC_SIZE = 4;
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     var i: usize = 0;
+
+    // sig
     if (!std.mem.startsWith(u8, data[0..SIG.len], &SIG)) //
         return Error.Decode.UnexpectedSignature;
     i += SIG.len;
 
-    const hdr_chunk: ChunkHeader = try .decode(data[i..]);
-    i += ChunkHeader.CHUNK_SIZE;
-
-    if (hdr_chunk.tag != .IHDR) return Error.Decode.MissingIHDR;
-    const hdr: Header = try .decode(hdr_chunk.tag.IHDR);
-    i += hdr_chunk.len;
+    // extract hdr
+    const hdr_chunk: Chunk = try .decode(data[i..]);
+    const hdr: Header = try .decode(hdr_chunk);
+    // std.debug.print("{f}", .{hdr});
     try validateHeader(hdr);
+    try hdr_chunk.validateCrc();
+    i += hdr_chunk.sizeOf();
 
-    var computed_crc: u32 = chunkCrc(hdr_chunk.tag, hdr_chunk.tag.IHDR);
-    var stored_crc: u32 = try readCrc(data[i..]);
-    if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
-    i += CRC_SIZE;
-
-    var chunk: ChunkHeader = undefined;
-    var seen_idat: bool = false;
+    // extract chunks
+    var has_srgb: bool = false;
+    var has_gamma: bool = false;
+    var has_idat: bool = false;
+    var has_iend: bool = false;
     var pixels: Pixels = undefined;
     while (i < data.len) {
-        chunk = try .decode(data[i..]);
-        i += ChunkHeader.CHUNK_SIZE;
-        if (chunk.tag == .IEND) break;
+        const chunk: Chunk = try .decode(data[i..]);
         if (i + chunk.len > data.len) return Error.Decode.OutOfBounds;
-        const chunk_data = data[i..][0..chunk.len];
+        // std.debug.print("{f}", .{chunk});
+        try chunk.validateCrc();
         switch (chunk.tag) {
-            .unsupported => {
-                std.debug.print("{f}\n", .{chunk});
+            .unsupported => {}, // skip these
+            .sRGB => {
+                if (has_srgb) return Error.Decode.UnhandledMultiSrgb;
+                if (has_idat) return Error.Decode.InvalidChunkOrder;
+                has_srgb = true;
+                if (chunk.len != 1) return Error.Decode.InvalidChunkLen;
+                if (chunk.data[0] != 0) return Error.Decode.UnsupportedSrgb;
+            },
+            .gAMA => {
+                if (has_gamma) return Error.Decode.UnhandledMultiGamma;
+                if (has_idat) return Error.Decode.InvalidChunkOrder;
+                has_gamma = true;
+                if (chunk.len != 4) return Error.Decode.InvalidChunkLen;
+                if (!std.mem.eql(u8, chunk.data, &.{ 0, 0, 177, 143 })) //
+                    return Error.Decode.UnsupportedGamma;
             },
             .IDAT => {
-                if (seen_idat) return Error.Decode.UnhandledMultiIDAT;
-                seen_idat = true;
-                pixels = try processIdat(gpa, &hdr, data[i..][0..chunk.len]);
+                if (has_idat) return Error.Decode.UnhandledMultiIdat;
+                has_idat = true;
+                pixels = try processIdat(gpa, &hdr, chunk.data);
             },
-            .IEND => unreachable,
+            .IHDR => return Error.Decode.InvalidHeader,
+            .IEND => {
+                has_iend = true;
+                if (chunk.len > 0) return Error.Decode.InvalidChunkLen;
+                break;
+            },
             else => {},
         }
-        i += chunk.len;
-
-        switch (chunk.tag) {
-            .unsupported => {},
-            .IEND => unreachable,
-            else => {
-                computed_crc = chunkCrc(chunk.tag, chunk_data);
-                stored_crc = try readCrc(data[i..]);
-                if (computed_crc != stored_crc) return Error.Decode.InvalidCrc;
-            },
-        }
-        i += CRC_SIZE;
+        i += chunk.sizeOf();
     }
-    if (seen_idat == false) return Error.Decode.MissingIDAT;
-    if (chunk.tag != .IEND) return Error.Decode.MissingIEND;
-    const fmt: Format = switch (pixels) {
-        .grays => .r8_srgb,
-        .gray_alphas => .r8g8_srgb,
-        .rgbs => .r8g8b8_srgb,
-        .rgbas => .r8g8b8a8_srgb,
-        else => unreachable,
+    // validate
+    if (!has_idat) return Error.Decode.MissingIdat;
+    if (!has_iend) return Error.Decode.MissingIend;
+
+    const fmt: Format = blk: {
+        var fmt: Format = undefined;
+        if (has_srgb) {
+            fmt = switch (pixels) {
+                .grays => .r8_srgb,
+                .gray_alphas => .r8g8_srgb,
+                .rgbs => .r8g8b8_srgb,
+                .rgbas => .r8g8b8a8_srgb,
+                else => unreachable,
+            };
+        } else {
+            fmt = switch (pixels) {
+                .grays => .r8_uint,
+                .gray_alphas => .r8g8_uint,
+                .rgbs => .r8g8b8_uint,
+                .rgbas => .r8g8b8a8_uint,
+                else => unreachable,
+            };
+        }
+        break :blk fmt;
     };
 
     return .{
@@ -88,57 +108,58 @@ pub fn encode(
     w: *std.Io.Writer,
     gpa: std.mem.Allocator,
 ) !void {
+    // Encode: hdr -> srgb -> idat -> iend
+    // extract header
     const hdr: Header = try .fromImage(img);
-
-    const row_bytes = hdr.width * (try hdr.color_type.bytes_per_pixel());
-    const raw_size = hdr.height * (1 + row_bytes);
-    const raw = try gpa.alloc(u8, raw_size);
-    defer gpa.free(raw);
-
-    for (0..hdr.height) |row| {
-        const raw_base = row * (1 + row_bytes);
-        raw[raw_base] = 0; // filter type: None
-        const src_base = row * row_bytes;
-        switch (img.pixels) {
-            .bgrs, .bgras => return Error.Encode.UnsupportedColorspace,
-            inline else => |pixels| {
-                @memcpy(
-                    raw[raw_base + 1 ..][0..row_bytes],
-                    @as([]const u8, @ptrCast(pixels[src_base..][0..hdr.width])),
-                );
-            },
-        }
+    // grab src data
+    const src = try switch (img.pixels) {
+        .rgbas => |rgbas| rgbas,
+        else => Error.Encode.UnsupportedColorspace,
+    };
+    // compute dst data
+    const bpp = try hdr.color_type.bytes_per_pixel(); // bytes per pixel
+    const bpr = hdr.width * bpp + 1; // bytes per row
+    const dst_size = hdr.height * bpr;
+    const dst = try gpa.alloc(u8, dst_size);
+    defer gpa.free(dst);
+    // create dst data
+    // now default to sub -> up following it
+    var src_idx: usize = 0;
+    var dst_idx: usize = 0;
+    while (src_idx < src.len and dst_idx < dst_size) : ({
+        src_idx += hdr.width;
+        dst_idx += bpr;
+    }) {
+        const src_bytes: []const u8 = @ptrCast(src[src_idx..][0..hdr.width]);
+        const dst_bytes: []u8 = dst[dst_idx..][0..bpr];
+        dst_bytes[0] = @intFromEnum(FilterMethod.none);
+        @memcpy(dst_bytes[1..], src_bytes);
     }
-
-    // compress with zlib (Huffman deflate)
-    var comp_aw: std.Io.Writer.Allocating = try .initCapacity(gpa, raw_size / 2 + 128);
+    // compress w/ zlib
+    var comp_aw: std.Io.Writer.Allocating = try .initCapacity(gpa, dst_size / 2 + 128);
     errdefer comp_aw.deinit();
-
     var hist_buf: [std.compress.flate.max_window_len]u8 = undefined;
-    var comp: std.compress.flate.Compress.Huffman = try .init(&comp_aw.writer, &hist_buf, .zlib);
-    try comp.writer.writeAll(raw);
-    try comp.writer.flush();
-
+    var comp: std.compress.flate.Compress = try .init(&comp_aw.writer, &hist_buf, .zlib, .default);
+    try comp.writer.writeAll(dst);
+    try comp.finish(); // must be called
     const idat_data = try comp_aw.toOwnedSlice();
     defer gpa.free(idat_data);
-
-    const out_size = 8 + 25 + (12 + idat_data.len) + 12;
-    const buf = try gpa.alloc(u8, out_size);
-    errdefer gpa.free(buf);
-
-    // sig
-    try w.writeAll(&SIG);
-    // hdr
-    try hdr.encode(w);
-    // IDAT chunk
-    try w.writeInt(u32, @intCast(idat_data.len), .big);
-    try w.writeAll("IDAT");
-    try w.writeAll(idat_data);
-    try w.writeInt(u32, chunkCrc(.IDAT, idat_data), .big);
-    // iend
-    try w.writeInt(u32, 0, .big);
-    try w.writeAll("IEND");
-    try w.writeInt(u32, chunkCrc(.IEND, &.{}), .big);
+    // write chunks
+    try w.writeAll(SIG[0..SIG.len]);
+    var hdr_bytes: [13]u8 = undefined;
+    try hdr.encode(&hdr_bytes);
+    var chunks = [_]Chunk{
+        .{ .tag = .IHDR, .len = 13, .data = &hdr_bytes },
+        .{ .tag = .sRGB, .len = 1, .data = &.{0} },
+        .{ .tag = .gAMA, .len = 4, .data = &.{ 0, 0, 177, 143 } },
+        .{ .tag = .IDAT, .len = @truncate(idat_data.len), .data = idat_data },
+        .{ .tag = .IEND, .len = 0, .data = &.{} },
+    };
+    for (0..chunks.len) |i| {
+        chunks[i].crc = chunks[i].updateCrc();
+        try chunks[i].encode(w);
+    }
+    try w.flush();
 }
 
 fn validateHeader(hdr: Header) !void {
@@ -151,17 +172,10 @@ fn validateHeader(hdr: Header) !void {
     if (hdr.interlace_method != .none) return Error.Decode.UnsupportedInterlaceMethod;
 }
 
-fn readCrc(data: []const u8) !u32 {
-    if (data.len < CRC_SIZE) return Error.Decode.OutOfBounds;
-    return std.mem.readInt(u32, data[0..][0..4], .big);
-}
-
-fn chunkCrc(chunk_tag: ChunkTag, data: []const u8) u32 {
-    var h = std.hash.Crc32.init();
-    h.update(@tagName(chunk_tag));
-    h.update(data);
-    return h.final();
-}
+// fn readCrc(data: []const u8) !u32 {
+//     if (data.len < CRC_SIZE) return Error.Decode.OutOfBounds;
+//     return std.mem.readInt(u32, data[0..][0..4], .big);
+// }
 
 fn paethPredictor(a: u8, b: u8, c: u8) u8 {
     const ia: i32 = a;
@@ -177,7 +191,7 @@ fn paethPredictor(a: u8, b: u8, c: u8) u8 {
 }
 
 fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: usize) !void {
-    if (row.len != prev.len) return Error.Decode.InvalidDataLength;
+    if (row.len != prev.len) return Error.Decode.InvalidDataLen;
     switch (filter_method) {
         .none => {},
         .sub => for (bpp..row.len) |i| {
@@ -187,7 +201,7 @@ fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: us
             row[i] = row[i] +% prev[i];
         },
         .avg => {
-            if (bpp > row.len) return Error.Decode.InvalidDataLength;
+            if (bpp > row.len) return Error.Decode.InvalidDataLen;
             for (0..bpp) |i| {
                 row[i] = row[i] +% (prev[i] / 2);
             }
@@ -198,7 +212,7 @@ fn defilterRow(filter_method: FilterMethod, row: []u8, prev: []const u8, bpp: us
             }
         },
         .paeth => {
-            if (bpp > row.len) return Error.Decode.InvalidDataLength;
+            if (bpp > row.len) return Error.Decode.InvalidDataLen;
             for (0..bpp) |i| {
                 row[i] = row[i] +% paethPredictor(0, prev[i], 0);
             }
@@ -283,3 +297,10 @@ fn processIdat(
     }
     return pixels;
 }
+
+// const SRGB = enum(u8) {
+//     perceptual = 0,
+//     rel_colorimetric = 1, // usually default or ignored
+//     saturation = 2,
+//     abs_colorimetric = 3,
+// };
