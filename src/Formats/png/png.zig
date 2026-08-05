@@ -142,19 +142,29 @@ pub fn encode(
         // identify best filter = min sum
         var best_filter_method: FilterMethod = .none;
         var min_sum: u64 = std.math.maxInt(u64);
+        // var min_cost: f64 = std.math.inf(f64);
         for (std.enums.values(FilterMethod)) |filter_method| {
             filterRow(cand_buf, filter_method, src_bytes, prev_row, bpp);
+            // Method 1: Sum Abs Values
             const sum = sumAbs(cand_buf);
             if (sum < min_sum) {
                 min_sum = sum;
                 best_filter_method = filter_method;
                 @memcpy(best_buf, cand_buf);
             }
+            // Method 2: Entropy Estimate
+            // const cost = entropyEstimate(cand_buf);
+            // if (cost < min_cost) {
+            //     min_cost = cost;
+            //     best_filter_method = filter_method;
+            //     @memcpy(best_buf, cand_buf);
+            // }
         }
-
+        // updates
         const dst_bytes: []u8 = dst[dst_idx..][0..bpr];
         dst_bytes[0] = @intFromEnum(best_filter_method);
         @memcpy(dst_bytes[1..], best_buf);
+        @memcpy(prev_row, src_bytes);
     }
     // compress w/ zlib
     var comp_aw: std.Io.Writer.Allocating = try .initCapacity(gpa, dst_size / 2 + 128);
@@ -164,7 +174,7 @@ pub fn encode(
         &comp_aw.writer,
         &hist_buf,
         .zlib,
-        .best,
+        .default,
     );
     try comp.writer.writeAll(dst);
     try comp.finish(); // must be called
@@ -243,10 +253,27 @@ fn filterRow(
     }
 }
 
+/// heuristic that quickly predicts per-row compression level as correlating with mag
 fn sumAbs(row: []const u8) u64 {
     var sum: u64 = 0;
     for (row) |r| sum += @abs(@as(i16, @as(i8, @bitCast(r))));
     return sum;
+}
+
+/// esitameted bits need huffman-code 'row' via zero-order Shannon entropy
+/// correlates with deflate size better than sum of abs of values heuristic
+/// rewards byte repetition (LZ77 + Huffman exploits) instead of small magnitudes
+fn entropyEstimate(row: []const u8) f64 {
+    var hist: [256]u32 = @splat(0);
+    for (row) |r| hist[r] += 1;
+    var bits: f64 = 0;
+    const n: f64 = @floatFromInt(row.len);
+    for (hist) |count| {
+        if (count == 0) continue;
+        const p = @as(f64, @floatFromInt(count)) / n;
+        bits -= @as(f64, @floatFromInt(count)) * @log2(p);
+    }
+    return bits;
 }
 
 fn defilterRow(
@@ -339,6 +366,7 @@ fn processIdat(
         const i = row * (1 + bytes_per_row);
         const filter_method = std.enums.fromInt(FilterMethod, raw[i]) orelse //
             return Error.Decode.UnsupportedFilterMethod;
+        // std.debug.print("{t} ", .{filter_method});
         @memcpy(curr_row, raw[i + 1 ..][0..bytes_per_row]);
         // modify buffer
         try defilterRow(
@@ -360,5 +388,6 @@ fn processIdat(
         }
         std.mem.swap([]u8, &prev_row, &curr_row); // need to swap curr + prev rows!
     }
+    std.debug.print("\n", .{});
     return pixels;
 }
