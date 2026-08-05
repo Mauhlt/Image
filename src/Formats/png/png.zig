@@ -160,7 +160,12 @@ pub fn encode(
     var comp_aw: std.Io.Writer.Allocating = try .initCapacity(gpa, dst_size / 2 + 128);
     errdefer comp_aw.deinit();
     var hist_buf: [std.compress.flate.max_window_len]u8 = undefined;
-    var comp: std.compress.flate.Compress = try .init(&comp_aw.writer, &hist_buf, .zlib, .default);
+    var comp: std.compress.flate.Compress = try .init(
+        &comp_aw.writer,
+        &hist_buf,
+        .zlib,
+        .best,
+    );
     try comp.writer.writeAll(dst);
     try comp.finish(); // must be called
     const idat_data = try comp_aw.toOwnedSlice();
