@@ -287,6 +287,20 @@ pub const RGB = extern struct {
         );
     }
 
+    pub fn blueChrominance(self: RGB) f32 {
+        return -0.1687 * @as(f32, @floatFromInt(self.red)) + //
+            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
+            0.5 * @as(f32, @floatFromInt(self.blue)) + //
+            128;
+    }
+
+    pub fn redChrominance(self: RGB) f32 {
+        return 0.5 * @as(f32, @floatFromInt(self.red)) - //
+            0.4187 * @as(f32, @floatFromInt(self.green)) - //
+            0.0813 * @as(f32, @floatFromInt(self.blue)) + //
+            128;
+    }
+
     pub fn toGray(self: RGB) GRAY {
         return .{
             .gray = @intFromFloat( //
@@ -387,6 +401,20 @@ pub const BGR = extern struct {
             0.59 * @as(f32, @floatFromInt(self.green)) + //
             0.3 * @as(f32, @floatFromInt(self.red)) //
         );
+    }
+
+    pub fn blueChrominance(self: RGB) f32 {
+        return 0.5 * @as(f32, @floatFromInt(self.blue)) + //
+            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
+            -0.1687 * @as(f32, @floatFromInt(self.red)) + //
+            128;
+    }
+
+    pub fn redChrominance(self: RGB) f32 {
+        return 0.0813 * @as(f32, @floatFromInt(self.blue)) + //
+            0.4187 * @as(f32, @floatFromInt(self.green)) - //
+            0.5 * @as(f32, @floatFromInt(self.red)) - //
+            128;
     }
 
     pub fn toGray(self: BGR) GRAY {
@@ -490,6 +518,20 @@ pub const RGBA = extern struct {
             0.59 * @as(f32, @floatFromInt(self.green)) + //
             0.11 * @as(f32, @floatFromInt(self.blue)) //
         );
+    }
+
+    pub fn blueChrominance(self: RGB) f32 {
+        return -0.1687 * @as(f32, @floatFromInt(self.red)) + //
+            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
+            0.5 * @as(f32, @floatFromInt(self.blue)) + //
+            128;
+    }
+
+    pub fn redChrominance(self: RGB) f32 {
+        return 0.5 * @as(f32, @floatFromInt(self.red)) - //
+            0.4187 * @as(f32, @floatFromInt(self.green)) - //
+            0.0813 * @as(f32, @floatFromInt(self.blue)) + //
+            128;
     }
 
     pub fn toGray(self: RGBA) GRAY {
@@ -597,6 +639,20 @@ pub const BGRA = extern struct {
             0.3 * @as(f32, @floatFromInt(self.red)) + //
             0.59 * @as(f32, @floatFromInt(self.green)) //
         );
+    }
+
+    pub fn blueChrominance(self: RGB) f32 {
+        return 0.5 * @as(f32, @floatFromInt(self.blue)) + //
+            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
+            -0.1687 * @as(f32, @floatFromInt(self.red)) + //
+            128;
+    }
+
+    pub fn redChrominance(self: RGB) f32 {
+        return 0.0813 * @as(f32, @floatFromInt(self.blue)) + //
+            0.5 * @as(f32, @floatFromInt(self.red)) - //
+            0.4187 * @as(f32, @floatFromInt(self.green)) - //
+            128;
     }
 
     pub fn toGray(self: BGRA) GRAY {

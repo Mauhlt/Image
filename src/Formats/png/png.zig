@@ -108,8 +108,6 @@ pub fn encode(
     w: *std.Io.Writer,
     gpa: std.mem.Allocator,
 ) !void {
-    // FIXME: only works with rgba data currently
-    // need to format to use all data (gray, gray_alpha, bgr, bgra, rgb, rgba)
     const src = switch (img.pixels) {
         .rgbas => |rgbas| rgbas,
         else => return Error.Encode.UnsupportedChannel,
