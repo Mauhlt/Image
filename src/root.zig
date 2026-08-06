@@ -6,6 +6,7 @@ const BMP = @import("Formats/bmp/bmp.zig");
 const PPM = @import("Formats/ppm/ppm.zig");
 const PNG = @import("Formats/png/png.zig");
 const QOI = @import("Formats/qoi/qoi.zig");
+const JPG = @import("Formats/jpg/jpg.zig");
 
 // misc
 const ImageTag = @import("misc.zig").ImageTag;
@@ -167,6 +168,12 @@ test "BMP" {
         const bgr2 = img2.pixels.bgrs[i];
         try std.testing.expectEqualDeep(bgr1, bgr2);
     }
+}
+
+test "JPG" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
 }
 
 test "QOI" {
@@ -351,45 +358,7 @@ test "PNG" {
     for (rgbas1, rgbas2) |rgba1, rgba2| {
         try std.testing.expectEqualDeep(rgba1, rgba2);
     }
-
-    // orion, rigel (foot, blue star = hottest star), betelgeuse (top, red star = coolest star)
-    // as stars die, they lose gravitational pull, expand, become red
 }
-
-// test "KTX2" {
-//     const gpa = std.testing.allocator;
-//     var threaded: std.Io.Threaded = .init(gpa, .{});
-//     const io = threaded.io();
-//
-//     const img1 = try read(.{
-//         .io = io,
-//         .gpa = gpa,
-//         .filepath = "src/Data/Read/BasicArt.bmp",
-//     });
-//     defer img1.deinit(gpa);
-//
-//     try img1.write(io, gpa, "src/Data/Read/BasicArt.ktx2");
-//
-//     const img2 = try read(.{
-//         .io = io,
-//         .gpa = gpa,
-//         .filepath = "src/Data/Read/BasicArt.ktx2",
-//     });
-//     defer img2.deinit(gpa);
-//
-//     try img2.write(io, gpa, "src/Data/Write/BasicArt.ktx2");
-//
-//     const img3 = try read(.{
-//         .io = io,
-//         .gpa = gpa,
-//         .filepath = "src/Data/Write/BasicArt.ktx2",
-//     });
-//     defer img3.deinit(gpa);
-//
-//     for (img1.pixels.rgbs, img3.pixels.rgbas) |rgb1, rgb2| {
-//         try std.testing.expectEqual(rgb1, rgb2);
-//     }
-// }
 
 test "Everything" {
     _ = @import("Colors/test.zig");
