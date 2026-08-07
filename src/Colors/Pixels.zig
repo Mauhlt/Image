@@ -198,7 +198,7 @@ pub const Pixels = union(PixelTag) {
                     .rgbs => "toRgb",
                     .rgbas => "toRgba",
                     .bgrs => "toBgr",
-                    .bgras => "toBgras",
+                    .bgras => "toBgra",
                 };
                 const dst = try gpa.alloc(DstElem, len);
                 errdefer gpa.free(dst);
@@ -246,8 +246,8 @@ pub const Pixels = union(PixelTag) {
         }
     }
 
+    /// Uses vectors to speed up computations
     pub fn luminance(self: @This(), gpa: std.mem.Allocator) ![]f32 {
-        // uses memcpy/vectors for faster speed
         const len = self.length();
         var lum = try gpa.alloc(f32, len);
         errdefer gpa.free(lum);
@@ -381,9 +381,9 @@ pub const Pixels = union(PixelTag) {
             .rgbas => |rgbas| {
                 const data: []const u8 = @ptrCast(rgbas);
                 while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
+                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
+                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
+                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
                     cb[i..][0..VEC_LEN].* = _blueChrominance(reds, greens, blues);
                 }
                 while (i < len) : (i += 1) {
@@ -393,9 +393,9 @@ pub const Pixels = union(PixelTag) {
             .bgras => |bgras| {
                 const data: []const u8 = @ptrCast(bgras);
                 while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
+                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
+                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
+                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
                     cb[i..][0..VEC_LEN].* = _blueChrominance(reds, greens, blues);
                 }
                 while (i < len) : (i += 1) {
@@ -446,9 +446,9 @@ pub const Pixels = union(PixelTag) {
             .bgrs => |bgrs| {
                 const data: []const u8 = @ptrCast(bgrs);
                 while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
+                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
                     const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
+                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
                     cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
                 }
                 while (i < len) : (i += 1) {
@@ -458,9 +458,9 @@ pub const Pixels = union(PixelTag) {
             .rgbas => |rgbas| {
                 const data: []const u8 = @ptrCast(rgbas);
                 while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
+                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
+                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
+                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
                     cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
                 }
                 while (i < len) : (i += 1) {
@@ -470,9 +470,9 @@ pub const Pixels = union(PixelTag) {
             .bgras => |bgras| {
                 const data: []const u8 = @ptrCast(bgras);
                 while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
+                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
+                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
+                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
                     cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
                 }
                 while (i < len) : (i += 1) {
