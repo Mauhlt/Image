@@ -571,17 +571,11 @@ pub const BGRA = extern struct {
     }
 
     pub fn blueChrominance(self: RGB) f32 {
-        return 0.5 * @as(f32, @floatFromInt(self.blue)) + //
-            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
-            -0.1687 * @as(f32, @floatFromInt(self.red)) + //
-            128;
+        return _blueChrominance(self.red, self.green, self.blue);
     }
 
     pub fn redChrominance(self: RGB) f32 {
-        return 0.0813 * @as(f32, @floatFromInt(self.blue)) + //
-            0.5 * @as(f32, @floatFromInt(self.red)) - //
-            0.4187 * @as(f32, @floatFromInt(self.green)) - //
-            128;
+        return _redChrominance(self.red, self.green, self.blue);
     }
 
     pub fn toGray(self: BGRA) GRAY {
