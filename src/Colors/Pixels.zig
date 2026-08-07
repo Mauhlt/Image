@@ -493,16 +493,16 @@ inline fn _luminance(reds: VF32, greens: VF32, blues: VF32) VF32 {
 }
 
 inline fn _blueChrominance(reds: VF32, greens: VF32, blues: VF32) VF32 {
-    return @as(VF32, @splat(-0.1687)) * reds + //
-        @as(VF32, @splat(-0.3313)) * greens + //
+    return @as(VF32, @splat(-0.168736)) * reds + //
+        @as(VF32, @splat(-0.331264)) * greens + //
         @as(VF32, @splat(0.5)) * blues + //
         @as(VF32, @splat(128));
 }
 
 inline fn _redChrominance(reds: VF32, greens: VF32, blues: VF32) VF32 {
-    return @as(VF32, @splat(-0.1687)) * reds + //
-        @as(VF32, @splat(-0.3313)) * greens + //
-        @as(VF32, @splat(0.5)) * blues + //
+    return @as(VF32, @splat(0.5)) * reds + //
+        @as(VF32, @splat(-0.418688)) * greens + //
+        @as(VF32, @splat(0.081312)) * blues + //
         @as(VF32, @splat(128));
 }
 
