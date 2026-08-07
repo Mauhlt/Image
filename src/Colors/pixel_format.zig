@@ -1,5 +1,5 @@
 const std = @import("std");
-
+/// Add basic fn called from struct + generalized fn that does the computation = easier to handle
 pub const GrayOrder = enum(u8) {
     g,
 };
@@ -118,17 +118,11 @@ pub const GRAY = extern struct {
     }
 
     pub fn blueChrominance(self: GRAY) f32 {
-        return @as(f32, -0.1687) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, -0.3313) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, 0.5) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, 128);
+        return _blueChrominance(self.gray, self.gray, self.gray);
     }
 
     pub fn redChrominance(self: GRAY) f32 {
-        return @as(f32, 0.5) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, -0.4187) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, -0.0813) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, 128);
+        return _redChrominance(self.gray, self.gray, self.gray);
     }
 
     pub fn toGray(self: GRAY) GRAY {
@@ -211,17 +205,11 @@ pub const GRAY_ALPHA = extern struct {
     }
 
     pub fn blueChrominance(self: GRAY_ALPHA) f32 {
-        return @as(f32, -0.1687) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, -0.3313) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, 0.5) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, 128);
+        return _blueChrominance(self.gray, self.gray, self.gray);
     }
 
     pub fn redChrominance(self: GRAY_ALPHA) f32 {
-        return @as(f32, 0.5) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, -0.4187) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, -0.0813) * @as(f32, @floatFromInt(self.gray)) + //
-            @as(f32, 128);
+        return _redChrominance(self.gray, self.gray, self.gray);
     }
 
     pub fn toGray(self: GRAY_ALPHA) GRAY {
@@ -302,60 +290,31 @@ pub const RGB = extern struct {
     }
 
     pub fn luminance(self: RGB) f32 {
-        return @as(f32, 0.299) * @as(f32, @floatFromInt(self.red)) + //
-            @as(f32, 0.587) * @as(f32, @floatFromInt(self.green)) +
-            @as(f32, 0.114) * @as(f32, @floatFromInt(self.blue));
+        return _luminance(self.red, self.green, self.blue);
     }
 
     pub fn luminanceNtsc(self: RGB) u32 {
-        return @intFromFloat( //
-        @as(f32, 0.3) * @as(f32, @floatFromInt(self.red)) + //
-            @as(f32, 0.59) * @as(f32, @floatFromInt(self.green)) + //
-            @as(f32, 0.11) * @as(f32, @floatFromInt(self.blue)) //
-        );
+        return _luminanceNtsc(self.red, self.green, self.blue);
     }
 
     pub fn blueChrominance(self: RGB) f32 {
-        return @as(f32, -0.1687) * @as(f32, @floatFromInt(self.red)) + //
-            @as(f32, -0.3313) * @as(f32, @floatFromInt(self.green)) + //
-            @as(f32, 0.5) * @as(f32, @floatFromInt(self.blue)) + //
-            @as(f32, 128);
+        return _blueChrominance(self.red, self.green, self.blue);
     }
 
     pub fn redChrominance(self: RGB) f32 {
-        return @as(f32, 0.5) * @as(f32, @floatFromInt(self.red)) + //
-            @as(f32, -0.4187) * @as(f32, @floatFromInt(self.green)) + //
-            @as(f32, -0.0813) * @as(f32, @floatFromInt(self.blue)) + //
-            @as(f32, 128);
+        return _redChrominance(self.red, self.green, self.blue);
     }
 
     pub fn toGray(self: RGB) GRAY {
-        return .{
-            .gray = @intFromFloat( //
-            @as(f32, 0.2989) * @as(f32, @floatFromInt(self.red)) + //
-                @as(f32, 0.587) * @as(f32, @floatFromInt(self.green)) + //
-                @as(f32, 0.1140) * @as(f32, @floatFromInt(self.blue)) //
-            ),
-        };
+        return _toGray(self.red, self.green, self.blue);
     }
+
     pub fn toGray8(self: RGB) GRAY {
-        return .{
-            .gray = @truncate( //
-            (@as(u32, 77) *% @as(u32, self.red) +% //
-                @as(u32, 150) *% @as(u32, self.green) +% //
-                @as(u32, 29) *% @as(u32, self.blue)) //
-                >> 8),
-        };
+        return _toGray8(self.red, self.green, self.blue);
     }
 
     pub fn toGray16(self: RGB) GRAY {
-        return .{
-            .gray = @truncate( //
-            (@as(u32, 19595) *% @as(u32, self.red) +% //
-                @as(u32, 38470) *% @as(u32, self.green) +% //
-                @as(u32, 7471) *% @as(u32, self.blue)) //
-                >> 16),
-        };
+        return _toGray16(self.red, self.green, self.blue);
     }
 
     pub fn toGrayAlpha(self: RGB) GRAY_ALPHA {
@@ -418,58 +377,30 @@ pub const BGR = extern struct {
     }
 
     pub fn luminance(self: BGR) f32 {
-        return 0.114 * @as(f32, @floatFromInt(self.blue)) +
-            0.587 * @as(f32, @floatFromInt(self.green)) +
-            0.299 * @as(f32, @floatFromInt(self.red));
+        return _luminance(self.red, self.green, self.blue);
     }
 
     pub fn luminanceNtsc(self: BGR) u32 {
-        return @intFromFloat( //
-        0.11 * @as(f32, @floatFromInt(self.blue)) + //
-            0.59 * @as(f32, @floatFromInt(self.green)) + //
-            0.3 * @as(f32, @floatFromInt(self.red)) //
-        );
+        return _luminanceNtsc(self.red, self.green, self.blue);
     }
 
     pub fn blueChrominance(self: RGB) f32 {
-        return 0.5 * @as(f32, @floatFromInt(self.blue)) + //
-            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
-            -0.1687 * @as(f32, @floatFromInt(self.red)) + //
-            128;
+        return _blueChrominance(self.red, self.green, self.blue);
     }
 
     pub fn redChrominance(self: RGB) f32 {
-        return 0.0813 * @as(f32, @floatFromInt(self.blue)) + //
-            0.4187 * @as(f32, @floatFromInt(self.green)) - //
-            0.5 * @as(f32, @floatFromInt(self.red)) - //
-            128;
+        return _redChrominance(self.red, self.green, self.blue);
     }
 
     pub fn toGray(self: BGR) GRAY {
-        return .{
-            .gray = @intFromFloat( //
-            0.1140 * @as(f32, @floatFromInt(self.blue)) + //
-                0.587 * @as(f32, @floatFromInt(self.green)) + //
-                0.2989 * @as(f32, @floatFromInt(self.red)) //
-            ),
-        };
+        return _toGray(self.red, self.green, self.blue);
     }
     pub fn toGray8(self: BGR) GRAY {
-        return .{
-            .gray = @truncate( //
-            (29 *% @as(u32, self.blue) +%
-                150 *% @as(u32, self.green) +% //
-                77 *% @as(u32, self.red)) >> 8),
-        };
+        return _toGray8(self.red, self.green, self.blue);
     }
 
     pub fn toGray16(self: BGR) GRAY {
-        return .{
-            .gray = @truncate( //
-            (7471 *% @as(u32, self.blue)) +% //
-                38470 *% @as(u32, self.green) +% //
-                19595 *% @as(u32, self.red) >> 16),
-        };
+        return _toGray16(self.red, self.green, self.blue);
     }
 
     pub fn toGrayAlpha(self: BGR) GRAY_ALPHA {
@@ -535,61 +466,31 @@ pub const RGBA = extern struct {
     }
 
     pub fn luminance(self: RGBA) f32 {
-        return 0.299 * @as(f32, @floatFromInt(self.red)) + //
-            0.587 * @as(f32, @floatFromInt(self.green)) +
-            0.114 * @as(f32, @floatFromInt(self.blue));
+        return _luminance(self.red, self.green, self.blue);
     }
 
     pub fn luminanceNtsc(self: RGBA) u32 {
-        return @intFromFloat( //
-        0.3 * @as(f32, @floatFromInt(self.red)) + //
-            0.59 * @as(f32, @floatFromInt(self.green)) + //
-            0.11 * @as(f32, @floatFromInt(self.blue)) //
-        );
+        return _luminanceNtsc(self.red, self.green, self.blue);
     }
 
     pub fn blueChrominance(self: RGB) f32 {
-        return -0.1687 * @as(f32, @floatFromInt(self.red)) + //
-            -0.3313 * @as(f32, @floatFromInt(self.green)) + //
-            0.5 * @as(f32, @floatFromInt(self.blue)) + //
-            128;
+        return _blueChrominance(self.red, self.green, self.blue);
     }
 
     pub fn redChrominance(self: RGB) f32 {
-        return 0.5 * @as(f32, @floatFromInt(self.red)) - //
-            0.4187 * @as(f32, @floatFromInt(self.green)) - //
-            0.0813 * @as(f32, @floatFromInt(self.blue)) + //
-            128;
+        return _redChrominance(self.red, self.green, self.blue);
     }
 
     pub fn toGray(self: RGBA) GRAY {
-        return .{
-            .gray = @intFromFloat( //
-            0.2989 * @as(f32, @floatFromInt(self.red)) + //
-                0.587 * @as(f32, @floatFromInt(self.green)) + //
-                0.1140 * @as(f32, @floatFromInt(self.blue)) //
-            ),
-        };
+        return _toGray(self.red, self.green, self.blue);
     }
 
     pub fn toGray8(self: RGBA) GRAY {
-        return .{
-            .gray = @truncate( //
-            (77 *% @as(u32, self.red) +% //
-                150 *% @as(u32, self.green) +% //
-                29 *% @as(u32, self.blue)) //
-                >> 8),
-        };
+        return _toGray8(self.red, self.green, self.blue);
     }
 
     pub fn toGray16(self: RGBA) GRAY {
-        return .{
-            .gray = @truncate( //
-            19595 *% @as(u32, self.red) +% //
-                38470 *% @as(u32, self.green) +% //
-                7471 *% @as(u32, self.blue) //
-            >> 16),
-        };
+        return _toGray16(self.red, self.green, self.blue);
     }
 
     pub fn toGrayAlpha(self: RGBA) GRAY_ALPHA {
@@ -684,33 +585,15 @@ pub const BGRA = extern struct {
     }
 
     pub fn toGray(self: BGRA) GRAY {
-        return .{
-            .gray = @intFromFloat( //
-            0.1140 * @as(f32, @floatFromInt(self.blue)) + //
-                0.587 * @as(f32, @floatFromInt(self.green)) +
-                0.2989 * @as(f32, @floatFromInt(self.red)) //
-            ),
-        };
+        return _toGray(self.red, self.green, self.blue);
     }
 
     pub fn toGray8(self: BGRA) GRAY {
-        return .{
-            .gray = @truncate( //
-            29 *% @as(u32, self.blue) +% //
-                150 *% @as(u32, self.green) +%
-                77 *% @as(u32, self.red) //
-            >> 8),
-        };
+        return _toGray8(self.red, self.green, self.blue);
     }
 
     pub fn toGray16(self: BGRA) GRAY {
-        return .{
-            .gray = @truncate( //
-            7471 *% @as(u32, self.blue) +% //
-                38470 *% @as(u32, self.green) +% //
-                19595 *% @as(u32, self.red) //
-            >> 16),
-        };
+        return _toGray16(self.red, self.green, self.blue);
     }
 
     pub fn toGrayAlpha(self: BGRA) GRAY_ALPHA {
@@ -751,11 +634,65 @@ pub const BGRA = extern struct {
     }
 };
 
-fn luminance(red: u8, green: u8, blue: u8) f32 {}
+/// generalized priv fns that can be used across data structurs
+/// makes it easier so no mistakes are made in computation
+fn _luminance(red: u8, green: u8, blue: u8) f32 {
+    return @as(f32, 0.299) * @as(f32, @floatFromInt(red)) + //
+        @as(f32, 0.587) * @as(f32, @floatFromInt(green)) +
+        @as(f32, 0.114) * @as(f32, @floatFromInt(blue));
+}
 
-fn blueChrominance() f32 {}
+fn _luminanceNtsc(red: u8, green: u8, blue: u8) u32 {
+    return @intFromFloat( //
+    @as(f32, 0.3) * @as(f32, @floatFromInt(red)) + //
+        @as(f32, 0.59) * @as(f32, @floatFromInt(green)) + //
+        @as(f32, 0.11) * @as(f32, @floatFromInt(blue)) //
+    );
+}
 
-fn redChrominance() f32 {}
+fn _blueChrominance(red: u8, green: u8, blue: u8) f32 {
+    return @as(f32, -0.1687) * @as(f32, @floatFromInt(red)) + //
+        @as(f32, -0.3313) * @as(f32, @floatFromInt(green)) + //
+        @as(f32, 0.5) * @as(f32, @floatFromInt(blue)) + //
+        @as(f32, 128);
+}
+
+fn _redChrominance(red: u8, green: u8, blue: u8) f32 {
+    return @as(f32, 0.5) * @as(f32, @floatFromInt(red)) + //
+        @as(f32, -0.4187) * @as(f32, @floatFromInt(green)) + //
+        @as(f32, -0.0813) * @as(f32, @floatFromInt(blue)) + //
+        @as(f32, 128);
+}
+
+fn _toGray(red: u8, green: u8, blue: u8) GRAY {
+    return .{
+        .gray = @intFromFloat( //
+        @as(f32, 0.2989) * @as(f32, @floatFromInt(red)) + //
+            @as(f32, 0.587) * @as(f32, @floatFromInt(green)) + //
+            @as(f32, 0.1140) * @as(f32, @floatFromInt(blue)) //
+        ),
+    };
+}
+
+fn _toGray8(red: u8, green: u8, blue: u8) GRAY {
+    return .{
+        .gray = @truncate( //
+        (@as(u32, 77) *% @as(u32, red) +% //
+            @as(u32, 150) *% @as(u32, green) +% //
+            @as(u32, 29) *% @as(u32, blue)) //
+            >> 8),
+    };
+}
+
+fn _toGray16(red: u8, green: u8, blue: u8) GRAY {
+    return .{
+        .gray = @truncate( //
+        (@as(u32, 19595) *% @as(u32, red) +% //
+            @as(u32, 38470) *% @as(u32, green) +% //
+            @as(u32, 7471) *% @as(u32, blue)) //
+            >> 16),
+    };
+}
 
 test "GRAY" {
     // check order
