@@ -635,14 +635,14 @@ pub const BGRA = extern struct {
 };
 
 /// generalized priv fns that can be used across data structurs
-/// makes it easier so no mistakes are made in computation
-fn _luminance(red: u8, green: u8, blue: u8) f32 {
+/// makes code more robust
+inline fn _luminance(red: u8, green: u8, blue: u8) f32 {
     return @as(f32, 0.299) * @as(f32, @floatFromInt(red)) + //
         @as(f32, 0.587) * @as(f32, @floatFromInt(green)) +
         @as(f32, 0.114) * @as(f32, @floatFromInt(blue));
 }
 
-fn _luminanceNtsc(red: u8, green: u8, blue: u8) u32 {
+inline fn _luminanceNtsc(red: u8, green: u8, blue: u8) u32 {
     return @intFromFloat( //
     @as(f32, 0.3) * @as(f32, @floatFromInt(red)) + //
         @as(f32, 0.59) * @as(f32, @floatFromInt(green)) + //
@@ -650,21 +650,21 @@ fn _luminanceNtsc(red: u8, green: u8, blue: u8) u32 {
     );
 }
 
-fn _blueChrominance(red: u8, green: u8, blue: u8) f32 {
+inline fn _blueChrominance(red: u8, green: u8, blue: u8) f32 {
     return @as(f32, -0.1687) * @as(f32, @floatFromInt(red)) + //
         @as(f32, -0.3313) * @as(f32, @floatFromInt(green)) + //
         @as(f32, 0.5) * @as(f32, @floatFromInt(blue)) + //
         @as(f32, 128);
 }
 
-fn _redChrominance(red: u8, green: u8, blue: u8) f32 {
+inline fn _redChrominance(red: u8, green: u8, blue: u8) f32 {
     return @as(f32, 0.5) * @as(f32, @floatFromInt(red)) + //
         @as(f32, -0.4187) * @as(f32, @floatFromInt(green)) + //
         @as(f32, -0.0813) * @as(f32, @floatFromInt(blue)) + //
         @as(f32, 128);
 }
 
-fn _toGray(red: u8, green: u8, blue: u8) GRAY {
+inline fn _toGray(red: u8, green: u8, blue: u8) GRAY {
     return .{
         .gray = @intFromFloat( //
         @as(f32, 0.2989) * @as(f32, @floatFromInt(red)) + //
@@ -674,7 +674,7 @@ fn _toGray(red: u8, green: u8, blue: u8) GRAY {
     };
 }
 
-fn _toGray8(red: u8, green: u8, blue: u8) GRAY {
+inline fn _toGray8(red: u8, green: u8, blue: u8) GRAY {
     return .{
         .gray = @truncate( //
         (@as(u32, 77) *% @as(u32, red) +% //
@@ -684,7 +684,7 @@ fn _toGray8(red: u8, green: u8, blue: u8) GRAY {
     };
 }
 
-fn _toGray16(red: u8, green: u8, blue: u8) GRAY {
+inline fn _toGray16(red: u8, green: u8, blue: u8) GRAY {
     return .{
         .gray = @truncate( //
         (@as(u32, 19595) *% @as(u32, red) +% //
