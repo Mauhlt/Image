@@ -174,6 +174,7 @@ test "JPG" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
+    _ = io;
 }
 
 test "QOI" {
