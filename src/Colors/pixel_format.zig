@@ -384,11 +384,11 @@ pub const BGR = extern struct {
         return _luminanceNtsc(self.red, self.green, self.blue);
     }
 
-    pub fn blueChrominance(self: RGB) f32 {
+    pub fn blueChrominance(self: BGR) f32 {
         return _blueChrominance(self.red, self.green, self.blue);
     }
 
-    pub fn redChrominance(self: RGB) f32 {
+    pub fn redChrominance(self: BGR) f32 {
         return _redChrominance(self.red, self.green, self.blue);
     }
 
@@ -473,11 +473,11 @@ pub const RGBA = extern struct {
         return _luminanceNtsc(self.red, self.green, self.blue);
     }
 
-    pub fn blueChrominance(self: RGB) f32 {
+    pub fn blueChrominance(self: RGBA) f32 {
         return _blueChrominance(self.red, self.green, self.blue);
     }
 
-    pub fn redChrominance(self: RGB) f32 {
+    pub fn redChrominance(self: RGBA) f32 {
         return _redChrominance(self.red, self.green, self.blue);
     }
 
@@ -570,11 +570,11 @@ pub const BGRA = extern struct {
         );
     }
 
-    pub fn blueChrominance(self: RGB) f32 {
+    pub fn blueChrominance(self: BGRA) f32 {
         return _blueChrominance(self.red, self.green, self.blue);
     }
 
-    pub fn redChrominance(self: RGB) f32 {
+    pub fn redChrominance(self: BGRA) f32 {
         return _redChrominance(self.red, self.green, self.blue);
     }
 
