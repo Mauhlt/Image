@@ -98,10 +98,11 @@ pub fn read(args: ReadArgs) !@This() {
     };
 
     return switch (ext) {
-        .bmp => try BMP.decode(args.gpa, data),
-        .ppm => try PPM.decode(args.gpa, data),
-        .png => try PNG.decode(args.gpa, data),
-        .qoi => try QOI.decode(args.gpa, data),
+        .bmp => BMP.decode(args.gpa, data),
+        .jpg => JPG.decode(args.gpa, data),
+        .png => PNG.decode(args.gpa, data),
+        .ppm => PPM.decode(args.gpa, data),
+        .qoi => QOI.decode(args.gpa, data),
         else => unreachable,
     };
 }
@@ -122,8 +123,10 @@ pub fn write(
     const image_tag = try tagFromExt(filepath);
     return switch (image_tag) {
         .bmp => BMP.encode(img, io_writer),
+        .jpg => JPG.decode(img, io_writer),
+        .png => PNG.decode(img, io_writer, gpa),
+        .ppm => PPM.decode(img, io_writer),
         .qoi => QOI.encode(img, io_writer),
-        .png => PNG.encode(img, io_writer, gpa),
         else => unreachable,
     };
 }
