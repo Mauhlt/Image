@@ -645,16 +645,16 @@ inline fn _luminanceNtsc(red: u8, green: u8, blue: u8) u32 {
 }
 
 inline fn _blueChrominance(red: u8, green: u8, blue: u8) f32 {
-    return @as(f32, -0.1687) * @as(f32, @floatFromInt(red)) + //
-        @as(f32, -0.3313) * @as(f32, @floatFromInt(green)) + //
+    return @as(f32, -0.168736) * @as(f32, @floatFromInt(red)) + //
+        @as(f32, -0.331264) * @as(f32, @floatFromInt(green)) + //
         @as(f32, 0.5) * @as(f32, @floatFromInt(blue)) + //
         @as(f32, 128);
 }
 
 inline fn _redChrominance(red: u8, green: u8, blue: u8) f32 {
     return @as(f32, 0.5) * @as(f32, @floatFromInt(red)) + //
-        @as(f32, -0.4187) * @as(f32, @floatFromInt(green)) + //
-        @as(f32, -0.0813) * @as(f32, @floatFromInt(blue)) + //
+        @as(f32, -0.418688) * @as(f32, @floatFromInt(green)) + //
+        @as(f32, -0.081312) * @as(f32, @floatFromInt(blue)) + //
         @as(f32, 128);
 }
 
