@@ -45,6 +45,7 @@ pub const ImageTag = enum {
     heic,
     jpg,
     paint,
+    pgm,
     png,
     ppm,
     qoi,
