@@ -1,5 +1,6 @@
 pub const Decode = error{
     DecompressionFailed,
+    Incomplete,
     InvalidBitsPerPixel,
     InvalidChunkHeader,
     InvalidChunkTag,
@@ -14,9 +15,12 @@ pub const Decode = error{
     InvalidHeaderLen,
     InvalidDimensions,
     InvalidImportantColors,
+    InvalidNum,
     InvalidNumberOfColors,
+    InvalidNumOfPixels,
     InvalidRLEData,
     InvalidTGAEnum,
+    InvalidMaxVal,
     MissingIhdr,
     MissingIdat,
     MissingIend,
@@ -43,11 +47,14 @@ pub const Decode = error{
 };
 
 pub const Encode = error{
-    InvalidMagic,
     InvalidDimensions,
     InvalidColorspace,
     InvalidChannels,
     InvalidEndMarker,
+    InvalidMagic,
+    InvalidPosition,
+    InvalidBitsPerPixel,
+    Incomplete,
     UnsupportedChannel,
     UnsupportedColorspace,
     UnsupportedHeader,

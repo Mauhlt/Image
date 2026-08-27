@@ -5,8 +5,8 @@ const Error = @import("../error.zig");
 const Header = @import("header.zig");
 
 const Image = @import("../../root.zig");
-const RGB = @import("../../Colors/pixel_format.zig").RGB;
-const RGBA = @import("../../Colors/pixel_format.zig").RGBA;
+const RGB = @import("../../Colors/Pixels.zig").RGB;
+const RGBA = @import("../../Colors/Pixels.zig").RGBA;
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const SIG = @import("misc.zig").SIG;
@@ -103,11 +103,11 @@ fn decodeRgb(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
         .green = 0,
         .blue = 0,
     };
-    var table = [_]RGB{.{
+    var table: [HASH_TABLE_SIZE]RGB = @splat(.{
         .red = 0,
         .green = 0,
         .blue = 0,
-    }} ** HASH_TABLE_SIZE;
+    });
     var i: usize = 0; // data idx
     var j: usize = 0; // rgbs idx
     while (i < data.len) : (i += 1) {
@@ -177,11 +177,11 @@ fn decodeRgba(gpa: std.mem.Allocator, n_pixels: u32, data: []const u8) !Pixels {
         .green = 0,
         .blue = 0,
     };
-    var table = [_]RGBA{.{
+    var table: [HASH_TABLE_SIZE]RGBA = @splat(.{
         .red = 0,
         .green = 0,
         .blue = 0,
-    }} ** HASH_TABLE_SIZE;
+    });
     var i: usize = 0; // data idx
     var j: usize = 0; // rgbas idx
     while (i < data.len) : (i += 1) {
@@ -255,11 +255,11 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         .green = 0,
         .blue = 0,
     };
-    var table = [_]RGB{.{
+    var table: [HASH_TABLE_SIZE]RGB = @splat(.{
         .red = 0,
         .green = 0,
         .blue = 0,
-    }} ** HASH_TABLE_SIZE;
+    });
 
     var i: usize = 0;
     const len = rgbs.len;
@@ -328,11 +328,11 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
         .green = 0,
         .blue = 0,
     };
-    var table = [_]RGBA{.{
+    var table: [HASH_TABLE_SIZE]RGBA = @splat(.{
         .red = 0,
         .green = 0,
         .blue = 0,
-    }} ** HASH_TABLE_SIZE;
+    });
     var i: usize = 0;
 
     while (i < rgbas.len) : (i += 1) {
@@ -394,6 +394,98 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             try w.writeByte(px.green);
             try w.writeByte(px.blue);
             try w.writeByte(px.alpha);
+        }
+    }
+}
+
+test "QOI" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    const io = threaded.io();
+
+    { // RGB
+        // Expected (6 Total): rgb, run, diff, luma, index, rgb
+        const data = [_]u8{
+            255, 255, 10, // rgb
+            255, 255, 10, //
+            255, 255, 10, // run (1)
+            253, 253, 8, // diff
+            17, 10, 17, // luma
+            255, 255, 10, // index
+            30, 30, 30, // rgb
+        };
+
+        const rgb_pxs: Pixels = try .init(.rgbs, gpa, &data);
+        defer rgb_pxs.deinit(gpa);
+
+        const img1: @This() = .{
+            .width = @truncate(rgb_pxs.rgbs.len),
+            .height = 1,
+            .pixels = rgb_pxs,
+            .fmt = .r8g8b8_srgb,
+        };
+        if (@import("builtin").mode == .debug) std.debug.print("{f}\n", .{img1});
+
+        const read_filepath = "src/Data/Read/BasicDecodeRGB.qoi";
+        try img1.write(io, gpa, read_filepath);
+
+        var img2 = try read(.{
+            .io = io,
+            .gpa = gpa,
+            .filepath = read_basic_decode_rgb_qoi_filepath,
+        });
+        defer img2.deinit(gpa);
+        // std.debug.print("{f}\n", .{img2});
+        // try img2.printPixels();
+
+        // std.debug.print("Pixels\n", .{});
+        try std.testing.expect(std.meta.activeTag(img1.pixels) == std.meta.activeTag(img2.pixels));
+        for (img1.pixels.rgbs, img2.pixels.rgbs) |px1, px2| {
+            // std.debug.print("{} {}\n", .{ px1, px2 });
+            try std.testing.expectEqualDeep(px1, px2);
+        }
+    }
+
+    { // RGBA
+        // Expected (6 Total): rgba, run, diff, luma, index, rgb, rgba
+        const data = [_]u8{
+            255, 255, 10, 0, // rgba
+            255, 255, 10, 0, //
+            255, 255, 10, 0, // run 1
+            253, 253, 8, 0, // diff
+            17, 10, 17, 0, // luma
+            255, 255, 10, 0, // index
+            30, 30, 30, 0, // rgb
+            170, 170, 170, 170, // rgba
+        };
+        const rgba_pxs: Pixels = try .init(.rgbas, gpa, &data);
+        defer rgba_pxs.deinit(gpa);
+
+        const img1: @This() = .{
+            .width = @truncate(rgba_pxs.rgbas.len),
+            .height = 1,
+            .pixels = rgba_pxs,
+            .fmt = .r8g8b8a8_srgb,
+        };
+        // std.debug.print("{f}\n", .{img3});
+        // try img3.printPixels();
+
+        const read_basic_decode_rgba_qoi_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
+        try img1.write(io, gpa, read_basic_decode_rgba_qoi_filepath);
+
+        var img2 = try read(.{
+            .io = io,
+            .gpa = gpa,
+            .filepath = read_basic_decode_rgba_qoi_filepath,
+        });
+        defer img2.deinit(gpa);
+        // std.debug.print("{f}\n", .{img4});
+        // try img4.printPixels();
+
+        try std.testing.expect(std.meta.activeTag(img1.pixels) == std.meta.activeTag(img2.pixels));
+        for (img1.pixels.rgbas, img2.pixels.rgbas) |px1, px2| {
+            // std.debug.print("{} {}\n", .{ px1, px2 });
+            try std.testing.expectEqualDeep(px1, px2);
         }
     }
 }

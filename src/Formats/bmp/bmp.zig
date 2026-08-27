@@ -3,9 +3,9 @@ const Format = @import("Vulkan").Format;
 const Error = @import("../Error.zig");
 
 const Image = @import("../../root.zig");
-const GRAY = @import("../../Colors/pixel_format.zig").GRAY;
-const BGR = @import("../../Colors/pixel_format.zig").BGR;
-const BGRA = @import("../../Colors/pixel_format.zig").BGRA;
+const GRAY = @import("../../Colors/Pixels.zig").GRAY;
+const BGR = @import("../../Colors/Pixels.zig").BGR;
+const BGRA = @import("../../Colors/Pixels.zig").BGRA;
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const Header = @import("header.zig");
@@ -162,11 +162,11 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
 pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     const hdr: Header = try .fromImage(img);
     try hdr.encode(w);
+    const zeros: [4]u8 = @splat(0);
     switch (img.pixels) {
         .grays => |grays| {
             const row_bytes = img.width;
             const pad = strideOf(row_bytes) - row_bytes; // pad to 4 bytes
-            const zeros = [_]u8{0} ** 4;
             for (0..img.height) |file_row| {
                 const img_row = img.height - file_row - 1;
                 const row = grays[img_row * img.width ..][0..img.width];
@@ -178,7 +178,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
         .rgbs => |rgbs| {
             const row_bytes = img.width * 3;
             const pad = strideOf(row_bytes) - row_bytes;
-            const zeros = [_]u8{0} ** 4;
             for (0..img.height) |file_row| {
                 const img_row = img.height - file_row - 1;
                 const row = rgbs[img_row * img.width ..][0..img.width];
@@ -189,7 +188,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
         .bgrs => |bgrs| {
             const row_bytes = img.width * 3;
             const pad = strideOf(row_bytes) - row_bytes;
-            const zeros = [_]u8{0} ** 4;
             for (0..img.height) |file_row| {
                 const img_row = img.height - file_row - 1;
                 const row = bgrs[img_row * img.width ..][0..img.width];
@@ -200,7 +198,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
         .rgbas => |rgbas| {
             const row_bytes = img.width * 4;
             const pad = strideOf(row_bytes) - row_bytes;
-            const zeros = [_]u8{0} ** 4;
             for (0..img.height) |file_row| {
                 const img_row = img.height - file_row - 1;
                 const row = rgbas[img_row * img.width ..][0..img.width];
@@ -211,7 +208,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
         .bgras => |bgras| {
             const row_bytes = img.width * 4;
             const pad = strideOf(row_bytes) - row_bytes;
-            const zeros = [_]u8{0} ** 4;
             for (0..img.height) |file_row| {
                 const img_row = img.height - file_row - 1;
                 const row = bgras[img_row * img.width ..][0..img.width];

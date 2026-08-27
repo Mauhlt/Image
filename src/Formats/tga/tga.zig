@@ -2,12 +2,9 @@ const std = @import("std");
 const isSigSame = @import("Misc.zig").isSigSame;
 const Error = @import("error.zig");
 
-const GRAY = @import("../Colors/gray.zig");
-const GRAYS = @import("../Colors/gray.zig");
-const RGB = @import("../Colors/rgb.zig");
-const RGBS = @import("../Colors/rgbs.zig");
-const RGBA = @import("../Colors/rgba.zig");
-const RGBAS = @import("../Colors/rgbas.zig");
+const GRAY = @import("../Colors/Pixels.zig").GRAY;
+const RGB = @import("../Colors/Pixels.zig").RGB;
+const RGBA = @import("../Colors/Pixels.zig").RGBA;
 const Pixels = @import("../Colors/Pixels.zig");
 
 // http://www.paulbourke.net/dataformats/tga/
