@@ -38,8 +38,6 @@ pub fn fromImage(img: *const Image) !@This() {
         .r8g8b8a8_srgb => 4,
         else => return Error.Decode.InvalidFormat,
     };
-    _, const overflow = @mulWithOverflow(img.width, img.height);
-    if (overflow > 0) return Error.Decode.InvalidDimensions;
     // hdr
     var hdr: @This() = undefined;
     hdr.data_offset = 54;
@@ -103,7 +101,7 @@ pub fn decode(data: []const u8) !@This() {
         return Error.Decode.UnexpectedSignature;
     const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
     if (data.len != file_size) {
-        if (@import("builtin").mode == .Debug) {
+        if (@import("builtin").mode == .debug) {
             std.debug.print(
                 "\nBMP Header:\nFile Size: {}\nData Length: {}\n",
                 .{ file_size, data.len },

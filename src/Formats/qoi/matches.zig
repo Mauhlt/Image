@@ -1,16 +1,16 @@
 const std = @import("std");
-const RGB = @import("../../Colors/pixel_format.zig").RGB;
-const BGR = @import("../../Colors/pixel_format.zig").BGR;
-const RGBA = @import("../../Colors/pixel_format.zig").RGBA;
-const BGRA = @import("../../Colors/pixel_format.zig").BGRA;
+const RGB = @import("../../Colors/Pixels.zig").RGB;
+const BGR = @import("../../Colors/Pixels.zig").BGR;
+const RGBA = @import("../../Colors/Pixels.zig").RGBA;
+const BGRA = @import("../../Colors/Pixels.zig").BGRA;
 
 const VEC_LEN = 64;
 const VEC = @Vector(64, u8);
 
 pub fn findFirst64Matches(comptime T: type, haystack: []const T, needle: T) usize {
     if (haystack.len >= 64) {
-        const fields = @typeInfo(T).@"struct".fields;
-        const n_fields = fields.len;
+        const field_names = @typeInfo(T).@"struct".field_names;
+        const n_fields = field_names.len;
         const masks: [n_fields]VEC = comptime blk: {
             var masks: [n_fields]VEC = undefined;
             for (0..n_fields) |i| {
@@ -28,7 +28,7 @@ pub fn findFirst64Matches(comptime T: type, haystack: []const T, needle: T) usiz
         }
         var needles: [n_fields]VEC = undefined;
         inline for (0..n_fields) |i| {
-            needles[i] = @splat(@field(needle, fields[i].name));
+            needles[i] = @splat(@field(needle, field_names[i]));
         }
         var matches: u64 = 0;
         for (0..n_fields) |i| {

@@ -2,17 +2,18 @@ const std = @import("std");
 
 const Position = @import("position.zig");
 
-const GrayOrder = @import("pixel_format.zig").GrayOrder;
-const GrayAlphaOrder = @import("pixel_format.zig").GrayAlphaOrder;
-const RgbOrder = @import("pixel_format.zig").RgbOrder;
-const RgbaOrder = @import("pixel_format.zig").RgbaOrder;
+const GrayOrder = @import("g.zig").GrayOrder;
+const GrayAlphaOrder = @import("ga.zig").GrayAlphaOrder;
+const RgbOrder = @import("rgb.zig").RgbOrder;
+const RgbaOrder = @import("rgba.zig").RgbaOrder;
 
-const GRAY = @import("pixel_format.zig").GRAY;
-const GRAY_ALPHA = @import("pixel_format.zig").GRAY_ALPHA;
-const RGB = @import("pixel_format.zig").RGB;
-const BGR = @import("pixel_format.zig").BGR;
-const RGBA = @import("pixel_format.zig").RGBA;
-const BGRA = @import("pixel_format.zig").BGRA;
+// TODO: Should these be public?
+pub const GRAY = @import("g.zig").GRAY;
+pub const GRAY_ALPHA = @import("ga.zig").GRAY_ALPHA;
+pub const RGB = @import("rgb.zig").RGB;
+pub const BGR = @import("rgb.zig").BGR;
+pub const RGBA = @import("rgba.zig").RGBA;
+pub const BGRA = @import("rgba.zig").BGRA;
 
 const VEC_LEN = std.simd.suggestVectorLength(f32) orelse 16;
 const VF32 = @Vector(VEC_LEN, f32);
@@ -26,7 +27,7 @@ const ADD1: VU64 = @splat(1);
 const ADD2: VU64 = @splat(2);
 const ADD3: VU64 = @splat(3);
 
-const PixelTag = enum(u8) {
+pub const PixelTag = enum(u8) {
     grays,
     gray_alphas,
     rgbs,
@@ -50,6 +51,7 @@ const PixelTag = enum(u8) {
 
 /// Returns Enum that is a superset
 fn MergeEnums(comptime types: []const type) !type {
+    // check that all types are enums
     for (types) |t| {
         switch (@typeInfo(t)) {
             .@"enum" => {},
@@ -57,43 +59,48 @@ fn MergeEnums(comptime types: []const type) !type {
         }
     }
     comptime {
-        const first_tag_type = @typeInfo(types[0]).@"enum".tag_type;
+        // check that backing integer for each enum is the same
         for (types[1..]) |t| {
-            if (@typeInfo(t).@"enum".tag_type != first_tag_type) //
+            if (@typeInfo(t).@"enum".tag_type != @typeInfo(types[0]).@"enum".tag_type) {
                 return error.MismatchingEnumTagType;
+            }
         }
-
+        // check that each enum field name and field value is unique
         for (0..types.len - 1) |i| {
-            const fields1 = @typeInfo(types[i]).@"enum".fields;
+            const field_names1 = std.meta.fieldNames(types[i]);
             for (i + 1..types.len) |j| {
-                const fields2 = @typeInfo(types[j]).@"enum".fields;
-                for (fields1) |field1| {
-                    for (fields2) |field2| {
-                        if (std.mem.eql(u8, field1.name, field2.name)) //
+                const field_names2 = std.meta.fieldNames(types[j]);
+                for (field_names1) |fn1| {
+                    for (field_names2) |fn2| {
+                        if (std.mem.eql(u8, fn1, fn2)) //
                             return error.EnumNameIsNotUnique;
-                        if (field1.value == field2.value) //
+                        if (@intFromEnum(@field(types[i], fn1)) == @intFromEnum(@field(types[j], fn2))) //
                             return error.EnumValueIsNotUnique;
                     }
                 }
             }
         }
-
-        var n_fields: usize = @typeInfo(types[0]).@"enum".fields.len;
-        for (types[1..]) |t| {
-            n_fields += @typeInfo(t).@"enum".fields.len;
-        }
-
+        // compute total # of fields
+        const n_fields = blk: {
+            var n_fields: usize = 0;
+            for (types) |t| {
+                n_fields += std.meta.fieldNames(t).len;
+            }
+            break :blk n_fields;
+        };
+        // concatenate each field name + value
         var names: [n_fields][]const u8 = undefined;
         var values: [n_fields]u8 = undefined;
         var i: usize = 0;
         for (types) |t| {
-            for (@typeInfo(t).@"enum".fields) |enum_field| {
-                names[i] = enum_field.name;
-                values[i] = enum_field.value;
+            const field_names = std.meta.fieldNames(t);
+            for (field_names) |field_name| {
+                names[i] = field_name;
+                values[i] = @intFromEnum(@field(t, field_name));
                 i += 1;
             }
         }
-
+        // reify enum
         return @Enum(
             @typeInfo(types[0]).@"enum".tag_type,
             .exhaustive,
@@ -482,6 +489,30 @@ pub const Pixels = union(PixelTag) {
         }
         return cr;
     }
+
+    pub fn eql(self: @This(), other: @This()) bool {
+        const tag = std.meta.activeTag(self);
+        if (tag != std.meta.activeTag(other)) return false;
+        const len1 = self.length();
+        const len2 = other.length();
+        if (len1 != len2) return false;
+        switch (tag) {
+            inline else => {
+                const data1 = @field(self, tag);
+                const data2 = @field(other, tag);
+                var i: usize = 0;
+                while (i + VEC_LEN <= len1) : (i += VEC_LEN) {
+                    if (!@reduce(.And, @as(VU8, data1[i..][0..VEC_LEN].*) == @as(VU8, data2[i..][0..VEC_LEN].*))) {
+                        return false;
+                    }
+                }
+                for (data1[i..], data2[i..]) |d1, d2| {
+                    if (!d1.eql(d2)) return false;
+                }
+                return true;
+            },
+        }
+    }
 };
 
 /// generalized priv fns that can be used across data structurs
@@ -508,41 +539,16 @@ inline fn _redChrominance(reds: VF32, greens: VF32, blues: VF32) VF32 {
 
 test "Pixels" {
     @setEvalBranchQuota(10_000);
-    const da_fields = std.meta.fields(DataTag);
-    const g_fields = std.meta.fields(GrayOrder);
-    inline for (g_fields) |field1| {
-        var found_match: bool = false;
-        inline for (da_fields) |field2| {
-            if (std.mem.eql(u8, field1.name, field2.name)) {
-                try std.testing.expectEqual(field1.value, field2.value);
-                found_match = true;
-            }
-        }
-        try std.testing.expectEqual(found_match, true);
+    // check that superset enum contains subsets
+    inline for (comptime [_]type{
+        GrayOrder,
+        GrayAlphaOrder,
+        RgbOrder,
+        RgbaOrder,
+    }) |T| {
+        const is_valid = checkSupersetEnumContainsSubsetEnum(DataTag, T);
+        std.debug.print("{any}: {}\n", .{ T, is_valid });
     }
-    const rgb_fields = std.meta.fields(RgbOrder);
-    inline for (rgb_fields) |field1| {
-        var found_match: bool = false;
-        inline for (da_fields) |field2| {
-            if (std.mem.eql(u8, field1.name, field2.name)) {
-                try std.testing.expectEqual(field1.value, field2.value);
-                found_match = true;
-            }
-        }
-        try std.testing.expectEqual(found_match, true);
-    }
-    const rgba_fields = std.meta.fields(RgbaOrder);
-    inline for (rgba_fields) |field1| {
-        var found_match: bool = false;
-        inline for (da_fields) |field2| {
-            if (std.mem.eql(u8, field1.name, field2.name)) {
-                try std.testing.expectEqual(field1.value, field2.value);
-                found_match = true;
-            }
-        }
-        try std.testing.expectEqual(found_match, true);
-    }
-
     // pixels
     const gpa = std.testing.allocator;
     // const da: DataTag = .g;
@@ -558,25 +564,25 @@ test "Pixels" {
         const rgb_pxs = try gray_pxs.convertTo(.rgbs, gpa);
         defer rgb_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgb_act: u24 = @bitCast(rgb_pxs.rgbs[i]);
-            const rgb_exp: u24 = @bitCast(RGB{
+            const rgb_act = rgb_pxs.rgbs[i];
+            const rgb_exp = RGB{
                 .red = data[i],
                 .green = data[i],
                 .blue = data[i],
-            });
-            try std.testing.expectEqual(rgb_exp, rgb_act);
+            };
+            try std.testing.expectEqualDeep(rgb_exp, rgb_act);
         }
         // grays -> rgbas
         const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
         defer rgba_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const rgba_act: u32 = @bitCast(rgba_pxs.rgbas[i]);
-            const rgba_exp: u32 = @bitCast(RGBA{
+            const rgba_act = rgba_pxs.rgbas[i];
+            const rgba_exp = RGBA{
                 .red = data[i],
                 .green = data[i],
                 .blue = data[i],
-            });
-            try std.testing.expectEqual(rgba_exp, rgba_act);
+            };
+            try std.testing.expectEqualDeep(rgba_exp, rgba_act);
         }
     }
 
@@ -587,20 +593,21 @@ test "Pixels" {
         const gray_pxs = try rgb_pxs.convertTo(.grays, gpa);
         defer gray_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
-            const gray_exp: u8 = data[i];
+            const gray_act = gray_pxs.grays[i];
+            const gray_exp: GRAY = .{ .gray = data[i] };
             try std.testing.expectEqualDeep(gray_exp, gray_act);
         }
         // rgbs -> rgbas
         const rgba_pxs = try rgb_pxs.convertTo(.rgbas, gpa);
         defer rgba_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            try std.testing.expect( //
-                rgba_pxs.rgbas[i].eql(RGBA{
-                    .red = data[i],
-                    .green = data[i],
-                    .blue = data[i],
-                }));
+            const rgba_act = rgba_pxs.rgbas[i];
+            const rgba_exp: RGBA = .{
+                .red = data[i],
+                .green = data[i],
+                .blue = data[i],
+            };
+            try std.testing.expectEqualDeep(rgba_exp, rgba_act);
         }
     }
 
@@ -611,19 +618,33 @@ test "Pixels" {
         const gray_pxs = try rgba_pxs.convertTo(.grays, gpa);
         defer gray_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            const gray_act: u8 = @bitCast(gray_pxs.grays[i]);
-            const gray_exp = data[i];
+            const gray_act = gray_pxs.grays[i];
+            const gray_exp: GRAY = .{ .gray = data[i] };
             try std.testing.expectEqual(gray_exp, gray_act);
         }
         // rgbas -> rgbs
         const rgb_pxs = try rgba_pxs.convertTo(.rgbs, gpa);
         defer rgb_pxs.deinit(gpa);
         for (0..data.len) |i| {
-            try std.testing.expect(rgb_pxs.rgbs[i].eql(RGB{
+            const rgb_act = rgb_pxs.rgbs[i];
+            const rgb_exp: RGB = .{
                 .red = data[i],
                 .green = data[i],
                 .blue = data[i],
-            }));
+            };
+            try std.testing.expectEqualDeep(rgb_exp, rgb_act);
         }
     }
+}
+
+fn checkSupersetEnumContainsSubsetEnum(SupersetEnumType: type, SubsetEnumType: type) bool {
+    if (std.meta.activeTag(@typeInfo(SupersetEnumType)) != .@"enum") return false; // error.InvalidType;
+    if (std.meta.activeTag(@typeInfo(SubsetEnumType)) != .@"enum") return false; // error.InvalidType;
+    const subset_fns = comptime std.meta.fieldNames(SubsetEnumType);
+    inline for (subset_fns) |subset_fn| {
+        const value1 = @intFromEnum(@field(SubsetEnumType, subset_fn));
+        const value2 = @intFromEnum(@field(SupersetEnumType, subset_fn));
+        if (value1 != value2) return false;
+    }
+    return true;
 }
