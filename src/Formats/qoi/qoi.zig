@@ -418,7 +418,7 @@ test "QOI" {
         const rgb_pxs: Pixels = try .init(.rgbs, gpa, &data);
         defer rgb_pxs.deinit(gpa);
 
-        const img1: @This() = .{
+        const img1: Image = .{
             .width = @truncate(rgb_pxs.rgbs.len),
             .height = 1,
             .pixels = rgb_pxs,
@@ -429,10 +429,10 @@ test "QOI" {
         const read_filepath = "src/Data/Read/BasicDecodeRGB.qoi";
         try img1.write(io, gpa, read_filepath);
 
-        var img2 = try read(.{
+        var img2: Image = try .read(.{
             .io = io,
             .gpa = gpa,
-            .filepath = read_basic_decode_rgb_qoi_filepath,
+            .filepath = read_filepath,
         });
         defer img2.deinit(gpa);
         // std.debug.print("{f}\n", .{img2});
@@ -461,7 +461,7 @@ test "QOI" {
         const rgba_pxs: Pixels = try .init(.rgbas, gpa, &data);
         defer rgba_pxs.deinit(gpa);
 
-        const img1: @This() = .{
+        const img1: Image = .{
             .width = @truncate(rgba_pxs.rgbas.len),
             .height = 1,
             .pixels = rgba_pxs,
@@ -470,13 +470,13 @@ test "QOI" {
         // std.debug.print("{f}\n", .{img3});
         // try img3.printPixels();
 
-        const read_basic_decode_rgba_qoi_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
-        try img1.write(io, gpa, read_basic_decode_rgba_qoi_filepath);
+        const read_filepath = "src/Data/Read/BasicDecodeRGBA.qoi";
+        try img1.write(io, gpa, read_filepath);
 
-        var img2 = try read(.{
+        var img2: Image = try .read(.{
             .io = io,
             .gpa = gpa,
-            .filepath = read_basic_decode_rgba_qoi_filepath,
+            .filepath = read_filepath,
         });
         defer img2.deinit(gpa);
         // std.debug.print("{f}\n", .{img4});
