@@ -7,7 +7,7 @@ const Header = @import("header.zig");
 const Image = @import("../../root.zig");
 const RGB = @import("../../Colors/rgb.zig").RGB;
 const RGBA = @import("../../Colors/rgba.zig").RGBA;
-const Pixels = @import("../../Colors/Pixels.zig").Pixels;
+const Pixels = @import("../../Colors/pixels.zig").Pixels;
 
 const SIG = @import("misc.zig").SIG;
 

@@ -6,7 +6,7 @@ const Chunk = @import("chunk.zig");
 const Header = @import("header.zig");
 const FilterMethod = @import("header.zig").FilterMethod;
 const Image = @import("../../root.zig");
-const Pixels = @import("../../Colors/Pixels.zig").Pixels;
+const Pixels = @import("../../Colors/pixels.zig").Pixels;
 
 const SIG = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
 

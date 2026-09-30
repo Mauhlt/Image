@@ -6,7 +6,7 @@ const Image = @import("../../root.zig");
 const G = @import("../../Colors/g.zig").G;
 const BGR = @import("../../Colors/bgr.zig").BGR;
 const BGRA = @import("../../Colors/bgra.zig").BGRA;
-const Pixels = @import("../../Colors/Pixels.zig").Pixels;
+const Pixels = @import("../../Colors/pixels.zig").Pixels;
 
 const Header = @import("header.zig");
 const strideOf = @import("misc.zig").strideOf;

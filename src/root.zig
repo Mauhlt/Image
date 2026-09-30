@@ -1,6 +1,6 @@
 const std = @import("std");
 const vk = @import("Vulkan");
-const Pixels = @import("Colors/Pixels.zig").Pixels;
+const Pixels = @import("Colors/pixels.zig").Pixels;
 
 const BMP = @import("Formats/bmp/bmp.zig");
 const JPG = @import("Formats/jpg/jpg.zig");
@@ -155,7 +155,7 @@ fn checkImgsMatch(img1: *const @This(), img2: *const @This()) !void {
     }
 }
 
-test "QOI" {
+test "QOI - Basics" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     const io = threaded.io();
