@@ -4,7 +4,7 @@ const isSigSame = @import("Misc.zig").isSigSame;
 const G = @import("../Colors/g.zig").G;
 const RGB = @import("../Colors/rgb.zig").RGB;
 const RGBA = @import("../Colors/rgba.zig").RGBA;
-const Pixels = @import("../Colors/Pixels.zig");
+const Pixels = @import("../Colors/pixels.zig");
 
 pub fn read(self: *@This(), r: *std.Io.Reader, allo: std.mem.Allocator) !void {
     self.hdr = try .init(r);

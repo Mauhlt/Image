@@ -5,7 +5,7 @@ const Error = @import("error.zig");
 const G = @import("../Colors/g.zig").G;
 const RGB = @import("../Colors/rgb.zig").RGB;
 const RGBA = @import("../Colors/rgba.zig").RGBA;
-const Pixels = @import("../Colors/Pixels.zig");
+const Pixels = @import("../Colors/pixels.zig").Pixels;
 
 // http://www.paulbourke.net/dataformats/tga/
 

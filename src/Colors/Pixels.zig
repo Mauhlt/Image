@@ -15,11 +15,10 @@ const BGRA = @import("bgra.zig").BGRA;
 const YCbCrA = @import("ycbcra.zig").YCbCrA;
 
 const misc = @import("misc.zig");
-const U8_1 = @Vector(misc.N, u8);
+const U8_1 = @Vector(misc.N, u8); // mult of U8_I
 const U8_2 = @Vector(misc.N * 2, u8);
 const U8_3 = @Vector(misc.N * 3, u8);
 const U8_4 = @Vector(misc.N * 4, u8);
-const I16 = @Vector(misc.N, u16);
 
 pub const PixelTag = enum(u8) {
     g,
@@ -60,7 +59,10 @@ pub const Pixels = union(PixelTag) {
         gpa: std.mem.Allocator,
         data: []const u8,
     ) !Pixels {
-        if (@mod(data.len, pixel_tag.alignOf()) != 0 or data.len == 0) return error.InvalidDataLength;
+        if (@mod(data.len, pixel_tag.alignOf()) != 0 or data.len == 0) {
+            std.debug.print("Mod: {}\nLen: {}\n", .{ @mod(data.len, pixel_tag.alignOf()), data.len });
+            return error.InvalidDataLength;
+        }
         const T = @FieldType(Pixels, @tagName(pixel_tag));
         const slice: T = @ptrCast(try gpa.dupe(u8, data));
         const pixels = @unionInit(Pixels, @tagName(pixel_tag), slice);
@@ -112,19 +114,23 @@ pub const Pixels = union(PixelTag) {
     /// Elegant but not fast
     pub fn convert(
         self: @This(),
-        comptime other_tag: PixelTag,
+        tag: PixelTag,
         gpa: std.mem.Allocator,
     ) !@This() {
-        const method = @tagName(other_tag);
         switch (self) {
-            inline else => |src, tag| {
-                if (tag == other_tag) return self.dupe(gpa);
-                const len = src.len;
-                const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(other_tag)));
-                const dst = try gpa.alloc(DstElem, len);
-                errdefer gpa.free(dst);
-                for (src, dst) |s, *d| d.* = @field(@TypeOf(s), method)(s);
-                return @unionInit(Pixels, @tagName(other_tag), dst);
+            inline else => |src, src_tag| {
+                switch (tag) {
+                    inline else => |other_tag| {
+                        if (src_tag == other_tag) return self.dupe(gpa);
+                        const method = comptime methodName(other_tag);
+                        const len = src.len;
+                        const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(other_tag)));
+                        const dst = try gpa.alloc(DstElem, len);
+                        errdefer gpa.free(dst);
+                        for (src, dst) |s, *d| d.* = @field(@TypeOf(s), method)(s);
+                        return @unionInit(Pixels, @tagName(other_tag), dst);
+                    }
+                }
             }
         }
     }
@@ -133,69 +139,75 @@ pub const Pixels = union(PixelTag) {
         self: @This(),
         tag: PixelTag,
         gpa: std.mem.Allocator,
-    ) !void { // @This() {
-        _ = gpa;
+        // ) !void {
+    ) !@This() {
+        // _ = gpa;
         switch (self) {
             inline else => |src, src_tag| {
-                _ = src;
-                // const len = src.len;
-                // const srcV: []const u8 = @ptrCast(src);
-                // const src_step = comptime src_tag.alignOf() * misc.N;
-                // const src_len = srcV.len;
+                // _ = src;
+                // std.debug.print("Len: {}\nSrc Step: {}\nSrc Len: {}\nMod: {}\n", .{ len, src_step, src_len, @mod(src_len, src_step) == 0 });
                 switch (tag) {
                     inline else => |dst_tag| {
-                        // if (src_tag == dst_tag) return self.dupe(gpa);
-
-                        const methodV = comptime methodVName(src_tag, dst_tag);
-                        const method = comptime methodName(dst_tag);
-                        std.debug.print(
-                            "Src: {t}\nDst: {t}\nMethodV: {s}\nMethod: {s}\n",
-                            .{ src_tag, dst_tag, methodV, method },
-                        );
-
-                        // const Elem = @typeInfo(@FieldType(Pixels, @tagName(dst_tag))).pointer.child;
-                        // const result: []Elem = try gpa.alloc(Elem, len);
-                        // errdefer gpa.free(result);
-
-                        // const dstV: []u8 = @ptrCast(result);
-                        // const dst_step = comptime dst_tag.alignOf() * misc.N;
-                        // const dst_len = dstV.len;
-
-                        // var i: usize = 0; // src as u8s
-                        // var j: usize = 0; // dst as u8s
-                        // while ((i + src_step) < src_len and (j + dst_step) < dst_len) : ({
-                        //     i += src_len;
-                        //     j += dst_len;
-                        // }) {
-                        //     dstV[j..][0..dst_step].* = @field(Pixels, methodV)(srcV[i..][0..src_step]);
-                        // }
-                        //
-                        // i /= src_step; // in original form
-                        // j /= dst_step; // in orginal form
-                        // while (i < src_len and j < dst_len) : ({
-                        //     i += 1;
-                        //     j += 1;
-                        // }) {
-                        //     dstV[j] = @field(Pixels, method)(src[i]);
-                        // }
-
-                        // return @unionInit(Pixels, @tagName(dst_tag), result);
+                        return if (src_tag == dst_tag) self.dupe(gpa) //
+                        else convertDistinct(src_tag, dst_tag, gpa, src);
                     }
                 }
             }
         }
     }
 
+    fn convertDistinct(
+        comptime src_tag: PixelTag,
+        comptime dst_tag: PixelTag,
+        gpa: std.mem.Allocator,
+        src: []const @typeInfo(@FieldType(Pixels, @tagName(src_tag))).pointer.child,
+    ) !@This() {
+        comptime std.debug.assert(src_tag != dst_tag);
+
+        const len = src.len;
+        const methodV = comptime methodVName(src_tag, dst_tag);
+
+        const method = comptime methodName(dst_tag);
+        const SrcElem = @typeInfo(@FieldType(Pixels, @tagName(src_tag))).pointer.child;
+
+        const DstElem = @typeInfo(@FieldType(Pixels, @tagName(dst_tag))).pointer.child;
+        const result: []DstElem = try gpa.alloc(DstElem, len);
+        errdefer gpa.free(result);
+
+        const srcV: []const u8 = @ptrCast(src);
+        const src_step = comptime src_tag.alignOf() * misc.N;
+        const src_len = srcV.len;
+
+        const dstV: []u8 = @ptrCast(result);
+        const dst_step = comptime dst_tag.alignOf() * misc.N;
+        const dst_len = dstV.len;
+
+        var i: usize = 0; // idx into src as []const u8
+        var j: usize = 0; // idx into dst as []u8
+        while ((i + src_step) <= src_len and (j + dst_step) <= dst_len) : ({
+            i += src_step;
+            j += dst_step;
+        }) {
+            dstV[j..][0..dst_step].* = @field(Pixels, methodV)(srcV[i..][0..src_step]);
+        }
+
+        var k: usize = i / comptime src_tag.alignOf();
+        while (k < len) : (k += 1) {
+            result[k] = @field(SrcElem, method)(src[k]);
+        }
+
+        return @unionInit(Pixels, @tagName(dst_tag), result);
+    }
+
     fn methodVName(comptime src: PixelTag, comptime dst: PixelTag) []const u8 {
-        // rgbFromG
         const from = "From";
         const name1 = @tagName(src);
         const name2 = @tagName(dst);
-        var buf: [name1.len + from.len + name2.len]u8 = undefined;
-        @memcpy(buf[0..name1.len], name1);
-        @memcpy(buf[name1.len .. name1.len + from.len], from[0..from.len]);
-        @memcpy(buf[name1.len + from.len .. name1.len + from.len + name2.len], name2);
-        buf[name1.len + from.len] = std.ascii.toUpper(name2[0]);
+        var buf: [name2.len + from.len + name1.len]u8 = undefined;
+        @memcpy(buf[0..name2.len], name2);
+        @memcpy(buf[name2.len .. name2.len + from.len], from[0..from.len]);
+        @memcpy(buf[name2.len + from.len .. name2.len + from.len + name1.len], name1);
+        buf[name2.len + from.len] = std.ascii.toUpper(name1[0]);
         const final = buf;
         return &final;
     }
@@ -212,62 +224,62 @@ pub const Pixels = union(PixelTag) {
     }
 
     inline fn splitVecs(comptime M: usize, src: *const [misc.N * M]u8) [M]U8_1 {
-        return if (M == 1) @as(U8_1, src.*) else //
-        std.simd.deinterlace(M, @as(@Vector(misc.N * M, u8), src.*));
+        // M > 1
+        return std.simd.deinterlace(M, @as(@Vector(misc.N * M, u8), src.*));
     }
 
-    fn rgbFromG(src: *const [misc.N]u8) U8_3 {
-        const g = splitVecs(1, src);
+    pub fn rgbFromG(src: *const [misc.N]u8) U8_3 {
+        const g: U8_1 = src.*;
         return std.simd.interlace(.{ g, g, g });
     }
 
-    fn bgrFromG(src: *const [misc.N]u8) U8_3 {
-        const g = splitVecs(1, src);
+    pub fn bgrFromG(src: *const [misc.N]u8) U8_3 {
+        const g: U8_1 = src.*;
         return std.simd.interlace(.{ g, g, g });
     }
 
-    fn ycbcrFromG(src: *const [misc.N]u8) U8_3 {
-        const g = splitVecs(1, src);
+    pub fn ycbcrFromG(src: *const [misc.N]u8) U8_3 {
+        const g: U8_1 = src.*;
         const c: U8_1 = @splat(128);
         return std.simd.interlace(.{ g, c, c });
     }
 
-    fn gaFromG(src: *const [misc.N]u8) U8_2 {
-        const g = splitVecs(1, src);
+    pub fn gaFromG(src: *const [misc.N]u8) U8_2 {
+        const g: U8_1 = src.*;
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ g, a });
     }
 
-    fn rgbaFromG(src: *const [misc.N]u8) U8_4 {
-        const g = splitVecs(1, src);
+    pub fn rgbaFromG(src: *const [misc.N]u8) U8_4 {
+        const g: U8_1 = src.*;
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ g, g, g, a });
     }
 
-    fn bgraFromG(src: *const [misc.N]u8) U8_4 {
-        const g = splitVecs(1, src);
+    pub fn bgraFromG(src: *const [misc.N]u8) U8_4 {
+        const g: U8_1 = src.*;
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ g, g, g, a });
     }
 
-    fn ycbcraFromG(src: *const [misc.N]u8) U8_4 {
-        const g = splitVecs(1, src);
+    pub fn ycbcraFromG(src: *const [misc.N]u8) U8_4 {
+        const g: U8_1 = src.*;
         const c: U8_1 = @splat(128);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ g, c, c, a });
     }
 
-    fn gFromRgb(src: *const [misc.N * 3]u8) U8_1 {
+    pub fn gFromRgb(src: *const [misc.N * 3]u8) U8_1 {
         const rgb = splitVecs(3, src);
         return misc.lumV(rgb[0], rgb[1], rgb[2]);
     }
 
-    fn bgrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
+    pub fn bgrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
         const rgb = splitVecs(3, src);
         return std.simd.interlace(.{ rgb[2], rgb[1], rgb[0] });
     }
 
-    fn ycbcrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
+    pub fn ycbcrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
         const rgb = splitVecs(3, src);
         const y = misc.lumV(rgb[0], rgb[1], rgb[2]);
         const cb = misc.blueChromaV(rgb[0], rgb[1], rgb[2]);
@@ -275,26 +287,26 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr });
     }
 
-    fn gaFromRgb(src: *const [misc.N * 3]u8) U8_2 {
+    pub fn gaFromRgb(src: *const [misc.N * 3]u8) U8_2 {
         const rgb = splitVecs(3, src);
         const g = misc.lumV(rgb[0], rgb[1], rgb[2]);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ g, a });
     }
 
-    fn rgbaFromRgb(src: *const [misc.N * 3]u8) U8_4 {
+    pub fn rgbaFromRgb(src: *const [misc.N * 3]u8) U8_4 {
         const rgb = splitVecs(3, src);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ rgb[0], rgb[1], rgb[2], a });
     }
 
-    fn bgraFromRgb(src: *const [misc.N * 3]u8) U8_4 {
+    pub fn bgraFromRgb(src: *const [misc.N * 3]u8) U8_4 {
         const rgb = splitVecs(3, src);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ rgb[2], rgb[1], rgb[0], a });
     }
 
-    fn ycbcraFromRgb(src: *const [misc.N * 3]u8) U8_4 {
+    pub fn ycbcraFromRgb(src: *const [misc.N * 3]u8) U8_4 {
         const rgb = splitVecs(3, src);
         const y = misc.lumV(rgb[0], rgb[1], rgb[2]);
         const cb = misc.blueChromaV(rgb[0], rgb[1], rgb[2]);
@@ -303,17 +315,17 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr, a });
     }
 
-    fn gFromBgr(src: *const [misc.N]u8) U8_1 {
+    pub fn gFromBgr(src: *const [misc.N * 3]u8) U8_1 {
         const bgr = splitVecs(3, src);
         return misc.lumV(bgr[2], bgr[1], bgr[0]);
     }
 
-    fn rgbFromBgr(src: *const [misc.N]u8) U8_3 {
+    pub fn rgbFromBgr(src: *const [misc.N * 3]u8) U8_3 {
         const bgr = splitVecs(3, src);
         return std.simd.interlace(.{ bgr[2], bgr[1], bgr[0] });
     }
 
-    fn ycbcrFromBgr(src: *const [misc.N * 3]u8) U8_3 {
+    pub fn ycbcrFromBgr(src: *const [misc.N * 3]u8) U8_3 {
         const bgr = splitVecs(3, src);
         const y = misc.lumV(bgr[2], bgr[1], bgr[0]);
         const cb = misc.blueChromaV(bgr[2], bgr[1], bgr[0]);
@@ -321,26 +333,26 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr });
     }
 
-    fn gaFromBgr(src: *const [misc.N * 2]u8) U8_2 {
+    pub fn gaFromBgr(src: *const [misc.N * 3]u8) U8_2 {
         const bgr = splitVecs(3, src);
         const g = misc.lumV(bgr[2], bgr[1], bgr[0]);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ g, a });
     }
 
-    fn rgbaFromBgr(src: *const [misc.N * 3]u8) U8_4 {
+    pub fn rgbaFromBgr(src: *const [misc.N * 3]u8) U8_4 {
         const bgr = splitVecs(3, src);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ bgr[2], bgr[1], bgr[0], a });
     }
 
-    fn bgraFromBgr(src: *const [misc.N * 3]u8) U8_4 {
+    pub fn bgraFromBgr(src: *const [misc.N * 3]u8) U8_4 {
         const bgr = splitVecs(3, src);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ bgr[0], bgr[1], bgr[2], a });
     }
 
-    fn ycbcraFromBgr(src: *const [misc.N * 3]u8) U8_4 {
+    pub fn ycbcraFromBgr(src: *const [misc.N * 3]u8) U8_4 {
         const bgr = splitVecs(3, src);
         const y = misc.lumV(bgr[2], bgr[1], bgr[0]);
         const cb = misc.blueChromaV(bgr[2], bgr[1], bgr[0]);
@@ -349,105 +361,111 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr, a });
     }
 
-    fn gFromYcbcr(src: *const [misc.N * 3]u8) U8_1 {
+    pub fn gFromYcbcr(src: *const [misc.N * 3]u8) U8_1 {
         const ycbcr = splitVecs(3, src);
         return ycbcr[0];
     }
 
-    fn rgbFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
+    pub fn rgbFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
         const ycbcr = splitVecs(3, src);
-        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const r = misc.redV(ycbcr[0], ycbcr[2]);
         const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
-        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const b = misc.blueV(ycbcr[0], ycbcr[1]);
         return std.simd.interlace(.{ r, g, b });
     }
 
-    fn bgrFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
+    pub fn bgrFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
         const ycbcr = splitVecs(3, src);
-        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const b = misc.blueV(ycbcr[0], ycbcr[1]);
         const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
-        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const r = misc.redV(ycbcr[0], ycbcr[2]);
         return std.simd.interlace(.{ b, g, r });
     }
 
-    fn gaFromYcbcr(src: *const [misc.N * 3]u8) U8_2 {
+    pub fn gaFromYcbcr(src: *const [misc.N * 3]u8) U8_2 {
         const ycbcr = splitVecs(3, src);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ ycbcr[0], a });
     }
 
-    fn rgbaFromYcbcr(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn rgbaFromYcbcr(src: *const [misc.N * 3]u8) U8_4 {
         const ycbcr = splitVecs(3, src);
-        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const r = misc.redV(ycbcr[0], ycbcr[2]);
         const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
-        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const b = misc.blueV(ycbcr[0], ycbcr[1]);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ r, g, b, a });
     }
 
-    fn bgraFromYcbcr(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn bgraFromYcbcr(src: *const [misc.N * 3]u8) U8_4 {
         const ycbcr = splitVecs(3, src);
-        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const b = misc.blueV(ycbcr[0], ycbcr[1]);
         const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
-        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const r = misc.redV(ycbcr[0], ycbcr[2]);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ b, g, r, a });
     }
 
-    fn gFromGa(src: *const [misc.N * 2]u8) U8_1 {
+    pub fn ycbcraFromYcbcr(src: *const [misc.N * 3]u8) U8_4 {
+        const ycbcr = splitVecs(3, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ ycbcr[0], ycbcr[1], ycbcr[2], a });
+    }
+
+    pub fn gFromGa(src: *const [misc.N * 2]u8) U8_1 {
         const ga = splitVecs(2, src);
         return ga[0];
     }
 
-    fn rgbFromGa(src: *const [misc.N * 2]u8) U8_3 {
+    pub fn rgbFromGa(src: *const [misc.N * 2]u8) U8_3 {
         const ga = splitVecs(2, src);
         return std.simd.interlace(.{ ga[0], ga[0], ga[0] });
     }
 
-    fn bgrFromGa(src: *const [misc.N * 2]u8) U8_3 {
+    pub fn bgrFromGa(src: *const [misc.N * 2]u8) U8_3 {
         const ga = splitVecs(2, src);
         return std.simd.interlace(.{ ga[0], ga[0], ga[0] });
     }
 
-    fn ycbcrFromGa(src: *const [misc.N * 2]u8) U8_3 {
+    pub fn ycbcrFromGa(src: *const [misc.N * 2]u8) U8_3 {
         const ga = splitVecs(2, src);
         const mid: U8_1 = @splat(128);
         return std.simd.interlace(.{ ga[0], mid, mid });
     }
 
-    fn rgbaFromGa(src: *const [misc.N * 2]u8) U8_4 {
+    pub fn rgbaFromGa(src: *const [misc.N * 2]u8) U8_4 {
         const ga = splitVecs(2, src);
         const a: U8_1 = @splat(255);
         return std.simd.interlace(.{ ga[0], ga[0], ga[0], a });
     }
 
-    fn bgraFromGa(src: *const [misc.N * 2]u8) U8_4 {
+    pub fn bgraFromGa(src: *const [misc.N * 2]u8) U8_4 {
         const ga = splitVecs(2, src);
         return std.simd.interlace(.{ ga[0], ga[0], ga[0], ga[1] });
     }
 
-    fn ycbcraFromGa(src: *const [misc.N * 2]u8) U8_4 {
+    pub fn ycbcraFromGa(src: *const [misc.N * 2]u8) U8_4 {
         const ga = splitVecs(2, src);
         const mid: U8_1 = @splat(128);
         return std.simd.interlace(.{ ga[0], mid, mid, ga[1] });
     }
 
-    fn gFromRgba(src: *const [misc.N * 4]u8) U8_1 {
+    pub fn gFromRgba(src: *const [misc.N * 4]u8) U8_1 {
         const rgba = splitVecs(4, src);
         return misc.lumV(rgba[0], rgba[1], rgba[2]);
     }
 
-    fn rgbFromRgba(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn rgbFromRgba(src: *const [misc.N * 4]u8) U8_3 {
         const rgba = splitVecs(4, src);
         return std.simd.interlace(.{ rgba[0], rgba[1], rgba[2] });
     }
 
-    fn bgrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn bgrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
         const rgba = splitVecs(4, src);
         return std.simd.interlace(.{ rgba[2], rgba[1], rgba[0] });
     }
 
-    fn ycbcrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn ycbcrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
         const rgba = splitVecs(4, src);
         const y = misc.lumV(rgba[0], rgba[1], rgba[2]);
         const cb = misc.blueChromaV(rgba[0], rgba[1], rgba[2]);
@@ -455,19 +473,18 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr });
     }
 
-    fn gaFromRgba(src: *const [misc.N * 4]u8) U8_2 {
+    pub fn gaFromRgba(src: *const [misc.N * 4]u8) U8_2 {
         const rgba = splitVecs(4, src);
-        const g = misc.lum(rgba[0], rgba[1], rgba[2]);
-        const a: U8_1 = @splat(255);
-        return std.simd.interlace(.{ g, a });
+        const g = misc.lumV(rgba[0], rgba[1], rgba[2]);
+        return std.simd.interlace(.{ g, rgba[3] });
     }
 
-    fn bgraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn bgraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
         const rgba = splitVecs(4, src);
         return std.simd.interlace(.{ rgba[2], rgba[1], rgba[0], rgba[3] });
     }
 
-    fn ycbcraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn ycbcraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
         const rgba = splitVecs(4, src);
         const y = misc.lumV(rgba[0], rgba[1], rgba[2]);
         const cb = misc.blueChromaV(rgba[0], rgba[1], rgba[2]);
@@ -475,22 +492,22 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr, rgba[3] });
     }
 
-    fn gFromBgra(src: *const [misc.N * 4]u8) U8_1 {
+    pub fn gFromBgra(src: *const [misc.N * 4]u8) U8_1 {
         const bgra = splitVecs(4, src);
         return misc.lumV(bgra[2], bgra[1], bgra[0]);
     }
 
-    fn rgbFromBgra(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn rgbFromBgra(src: *const [misc.N * 4]u8) U8_3 {
         const bgra = splitVecs(4, src);
         return std.simd.interlace(.{ bgra[2], bgra[1], bgra[0] });
     }
 
-    fn bgrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn bgrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
         const bgra = splitVecs(4, src);
         return std.simd.interlace(.{ bgra[0], bgra[1], bgra[2] });
     }
 
-    fn ycbcrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn ycbcrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
         const bgra = splitVecs(4, src);
         const y = misc.lumV(bgra[2], bgra[1], bgra[0]);
         const cb = misc.blueChromaV(bgra[2], bgra[1], bgra[0]);
@@ -498,13 +515,18 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr });
     }
 
-    fn gaFromBgra(src: *const [misc.N * 4]u8) U8_2 {
+    pub fn gaFromBgra(src: *const [misc.N * 4]u8) U8_2 {
         const bgra = splitVecs(4, src);
         const g = misc.lumV(bgra[2], bgra[1], bgra[0]);
         return std.simd.interlace(.{ g, bgra[3] });
     }
 
-    fn ycbcraFromBgra(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn rgbaFromBgra(src: *const [misc.N * 4]u8) U8_4 {
+        const bgra = splitVecs(4, src);
+        return std.simd.interlace(.{ bgra[2], bgra[1], bgra[0], bgra[3] });
+    }
+
+    pub fn ycbcraFromBgra(src: *const [misc.N * 4]u8) U8_4 {
         const bgra = splitVecs(4, src);
         const y = misc.lumV(bgra[2], bgra[1], bgra[0]);
         const cb = misc.blueChromaV(bgra[2], bgra[1], bgra[0]);
@@ -512,149 +534,1210 @@ pub const Pixels = union(PixelTag) {
         return std.simd.interlace(.{ y, cb, cr, bgra[3] });
     }
 
-    fn gFromYcbcra(src: *const [misc.N * 4]u8) U8_1 {
+    pub fn gFromYcbcra(src: *const [misc.N * 4]u8) U8_1 {
         const ycbcra = splitVecs(4, src);
         return ycbcra[0];
     }
 
-    fn rgbFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn rgbFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
         const ycbcra = splitVecs(4, src);
-        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const r = misc.redV(ycbcra[0], ycbcra[1]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
-        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[2]);
         return std.simd.interlace(.{ r, g, b });
     }
 
-    fn bgrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn bgrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
         const ycbcra = splitVecs(4, src);
-        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[1]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
-        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const r = misc.redV(ycbcra[0], ycbcra[2]);
         return std.simd.interlace(.{ b, g, r });
     }
 
-    fn ycbcrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
+    pub fn ycbcrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
         const ycbcra = splitVecs(4, src);
         return std.simd.interlace(.{ ycbcra[0], ycbcra[1], ycbcra[2] });
     }
 
-    fn gaFromYcbcra(src: *const [misc.N * 4]u8) U8_2 {
+    pub fn gaFromYcbcra(src: *const [misc.N * 4]u8) U8_2 {
         const ycbcra = splitVecs(4, src);
         return std.simd.interlace(.{ ycbcra[0], ycbcra[3] });
     }
 
-    fn rgbaFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn rgbaFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
         const ycbcra = splitVecs(4, src);
-        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const r = misc.redV(ycbcra[0], ycbcra[2]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
-        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[1]);
         return std.simd.interlace(.{ r, g, b, ycbcra[3] });
     }
 
-    fn bgraFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
+    pub fn bgraFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
         const ycbcra = splitVecs(4, src);
-        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[1]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
-        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const r = misc.redV(ycbcra[0], ycbcra[2]);
         return std.simd.interlace(.{ b, g, r, ycbcra[0] });
     }
 };
 
 test "Pixels" {
     const gpa = std.testing.allocator;
-    const data = [_]u8{ 100, 25, 75, 175, 225 };
+    var data = [_]u8{ // 3 * 4 * 8 = fits reqs: > 64, mult of 12, tests all tags, short enough for vectors to be too slow
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
 
-    const base_pxs: Pixels = try .init(.g, gpa, &data);
-    defer base_pxs.deinit(gpa);
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
 
-    // const io = std.testing.io;
-    // var clock: std.Io.Clock = .awake;
-    // const t1 = clock.now(io);
-    try base_pxs.convertV(.bgra, gpa);
-    // const gray_pxs = try base_pxs.convertV(.bgra, gpa);
-    // defer gray_pxs.deinit(gpa);
-    // const t2 = t1.untilNow(io, clock);
-    // std.debug.print("{any}\n", .{t2});
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
 
-    // const gray_pxs2 = try base_pxs.convert(.bgra, gpa);
-    // defer gray_pxs2.deinit(gpa);
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
 
-    // { // grays
-    //     const gray_pxs = try base_pxs.dupe(gpa);
-    //     defer gray_pxs.deinit(gpa);
-    //     // grays -> rgbs
-    //     const rgb_pxs = try gray_pxs.convertTo(.rgbs, gpa);
-    //     defer rgb_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const rgb_act = rgb_pxs.rgbs[i];
-    //         const rgb_exp = RGB{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         };
-    //         try std.testing.expectEqualDeep(rgb_exp, rgb_act);
-    //     }
-    //     // grays -> rgbas
-    //     const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
-    //     defer rgba_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const rgba_act = rgba_pxs.rgbas[i];
-    //         const rgba_exp = RGBA{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         };
-    //         try std.testing.expectEqualDeep(rgba_exp, rgba_act);
-    //     }
-    // }
-    //
-    // { // rgbs
-    //     const rgb_pxs = try base_pxs.convertTo(.rgbs, gpa);
-    //     defer rgb_pxs.deinit(gpa);
-    //     // rgbs -> grays
-    //     const gray_pxs = try rgb_pxs.convertTo(.gs, gpa);
-    //     defer gray_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const gray_act = gray_pxs.grays[i];
-    //         const gray_exp: G = .{ .gray = data[i] };
-    //         try std.testing.expectEqualDeep(gray_exp, gray_act);
-    //     }
-    //     // rgbs -> rgbas
-    //     const rgba_pxs = try rgb_pxs.convertTo(.rgbas, gpa);
-    //     defer rgba_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const rgba_act = rgba_pxs.rgbas[i];
-    //         const rgba_exp: RGBA = .{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         };
-    //         try std.testing.expectEqualDeep(rgba_exp, rgba_act);
-    //     }
-    // }
-    //
-    // { // rgbas
-    //     const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
-    //     defer rgba_pxs.deinit(gpa);
-    //     // rgbas -> grays
-    //     const gray_pxs = try rgba_pxs.convertTo(.gs, gpa);
-    //     defer gray_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const gray_act = gray_pxs.grays[i];
-    //         const gray_exp: G = .{ .gray = data[i] };
-    //         try std.testing.expectEqual(gray_exp, gray_act);
-    //     }
-    //     // rgbas -> rgbs
-    //     const rgb_pxs = try rgba_pxs.convertTo(.rgbs, gpa);
-    //     defer rgb_pxs.deinit(gpa);
-    //     for (0..data.len) |i| {
-    //         const rgb_act = rgb_pxs.rgbs[i];
-    //         const rgb_exp: RGB = .{
-    //             .red = data[i],
-    //             .green = data[i],
-    //             .blue = data[i],
-    //         };
-    //         try std.testing.expectEqualDeep(rgb_exp, rgb_act);
-    //     }
-    // }
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+    };
+
+    var data2 = [_]u8{ // large, mult of 12, >64, long enough for vectors to matter
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+        1, 3, 7, 15, 31, 63, 127, 255,
+    };
+
+    var prng = std.Random.DefaultPrng.init(1010);
+    for (0..data.len) |i| {
+        data[i] = data[i] +% @as(u8, @truncate(prng.next()));
+    }
+    for (0..data2.len) |i| {
+        data2[i] = data2[i] +% @as(u8, @truncate(prng.next()));
+    }
+
+    const io = std.testing.io;
+    var clock: std.Io.Clock = .awake;
+
+    var n1: std.Io.Timestamp = undefined;
+    var n2: std.Io.Duration = undefined;
+    { // computing conversion for data
+        const base_pxs: Pixels = try .init(.g, gpa, &data);
+        defer base_pxs.deinit(gpa);
+
+        n1 = clock.now(io);
+        const bgra2 = try base_pxs.convert(.bgra, gpa);
+        defer bgra2.deinit(gpa);
+        n2 = n1.untilNow(io, clock);
+        const t2 = n2.nanoseconds;
+
+        n1 = clock.now(io);
+        const bgra1 = try base_pxs.convertV(.bgra, gpa); // so much work to only be slightly faster lol
+        defer bgra1.deinit(gpa);
+        n2 = n1.untilNow(io, clock);
+        const t1 = n2.nanoseconds;
+        try std.testing.expect(t1 < t2);
+    }
+
+    { // computing conversion for data2
+        const base_pxs: Pixels = try .init(.g, gpa, &data2);
+        defer base_pxs.deinit(gpa);
+
+        n1 = clock.now(io);
+        const bgra2 = try base_pxs.convert(.bgra, gpa);
+        defer bgra2.deinit(gpa);
+        n2 = n1.untilNow(io, clock);
+        const t2 = n2.nanoseconds;
+
+        n1 = clock.now(io);
+        const bgra1 = try base_pxs.convertV(.bgra, gpa); // so much work to only be slightly faster lol
+        defer bgra1.deinit(gpa);
+        n2 = n1.untilNow(io, clock);
+        const t1 = n2.nanoseconds;
+        try std.testing.expect(t1 < t2);
+    }
+
+    const tags = [_]PixelTag{ .g, .rgb, .bgr, .ycbcr, .ga, .rgba, .bgra, .ycbcra };
+    { // convert for each tag
+        inline for (tags) |tag1| {
+            const base1: Pixels = try .init(tag1, gpa, &data);
+            defer base1.deinit(gpa);
+            for (tags) |tag2| {
+                const base2: Pixels = try base1.convert(tag2, gpa);
+                defer base2.deinit(gpa);
+            }
+        }
+    }
+
+    // convertV for each tag
+    {
+        inline for (tags) |tag1| {
+            const base1: Pixels = try .init(tag1, gpa, &data);
+            defer base1.deinit(gpa);
+            for (tags) |tag2| {
+                const base2: Pixels = try base1.convertV(tag2, gpa);
+                defer base2.deinit(gpa);
+            }
+        }
+    }
 }

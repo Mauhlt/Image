@@ -2,7 +2,7 @@ const std = @import("std");
 const Header = @import("header.zig");
 const Image = @import("../../root.zig");
 const Error = @import("../error.zig");
-const Pixels = @import("../../Colors/Pixels.zig").Pixels;
+const Pixels = @import("../../Colors/pixels.zig").Pixels;
 const misc = @import("misc.zig");
 
 const BPC = enum(u8) { // Bytes Per Channel
