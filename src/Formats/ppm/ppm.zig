@@ -17,7 +17,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     const hdr: Header = try .decode(data, &i);
     const n_pixels = @as(u32, hdr.width) * @as(u32, hdr.height);
     _ = n_pixels;
-    const T = @typeInfo(@FieldType(Pixels, "rgbs")).pointer.child;
+    const T = @typeInfo(@FieldType(Pixels, "rgb")).pointer.child;
     std.debug.print("{}\n", .{T});
     return error.Incomplete;
     // const rgbs = try gpa.alloc(@typeInfo(@FieldType(Pixels, "rgbs")).pointer.child, n_pixels);
@@ -68,14 +68,14 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     const hdr: Header = try .fromImage(img);
     try hdr.encode(w);
     switch (img.pixels) {
-        .rgbs => |rgbs| {
+        .rgb => |rgbs| {
             try w.writeAll(@as([]const u8, @ptrCast(rgbs)));
         },
-        .bgrs => |bgrs| {
+        .bgr => |bgrs| {
             for (bgrs) |bgr| {
-                try w.writeByte(bgr.red);
-                try w.writeByte(bgr.green);
-                try w.writeByte(bgr.blue);
+                try w.writeByte(bgr.r);
+                try w.writeByte(bgr.g);
+                try w.writeByte(bgr.b);
             }
         },
         else => return Error.Encode.InvalidColorspace,

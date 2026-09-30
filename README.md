@@ -45,6 +45,7 @@ NEED TO SUPPLY YOUR OWN RENDERER FOR NOW.
         - highest priority
         - parallelizable streams
 6. Display Images and Come To Personal Conclusion about which image format to use 
+7. Create the ability to read/write many images of the same size - reduces amount of memory required
 
 ## Parsing BMP:
 1. BMP Header 

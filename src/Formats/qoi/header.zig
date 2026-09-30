@@ -17,8 +17,8 @@ pub fn fromImage(img: *const Image) !@This() {
     _, const overflow = @mulWithOverflow(img.width, img.height);
     if (overflow > 0) return Error.Encode.InvalidDimensions;
     const channel: Channel = switch (img.pixels) {
-        .rgbs => .rgb,
-        .rgbas => .rgba,
+        .rgb => .rgb,
+        .rgba => .rgba,
         else => return Error.Encode.InvalidColorspace,
     };
     const tagname = @tagName(img.fmt);
