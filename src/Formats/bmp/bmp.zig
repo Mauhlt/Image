@@ -3,9 +3,9 @@ const Format = @import("Vulkan").Format;
 const Error = @import("../Error.zig");
 
 const Image = @import("../../root.zig");
-const GRAY = @import("../../Colors/Pixels.zig").GRAY;
-const BGR = @import("../../Colors/Pixels.zig").BGR;
-const BGRA = @import("../../Colors/Pixels.zig").BGRA;
+const G = @import("../../Colors/g.zig").G;
+const BGR = @import("../../Colors/bgr.zig").BGR;
+const BGRA = @import("../../Colors/bgra.zig").BGRA;
 const Pixels = @import("../../Colors/Pixels.zig").Pixels;
 
 const Header = @import("header.zig");
@@ -117,15 +117,15 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
     switch (hdr.bits_per_pixel) {
         .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
         .monochrome => {
-            const slice = try gpa.alloc(GRAY, n_pixels);
-            pixels = .{ .grays = try gpa.alloc(GRAY, n_pixels) };
+            const slice = try gpa.alloc(G, n_pixels);
+            pixels = .{ .g = try gpa.alloc(G, n_pixels) };
             for (0..hdr.height) |dst_row| {
                 const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
                 const src = data[start + src_row * stride ..][0..row_bytes];
                 const dst = slice[dst_row * hdr.width ..][0..hdr.width];
-                @memcpy(dst, @as([]const GRAY, @ptrCast(src)));
+                @memcpy(dst, @as([]const G, @ptrCast(src)));
             }
-            pixels = .{ .grays = slice };
+            pixels = .{ .g = slice };
             fmt = .r8_srgb;
         },
         .rgb_24 => {
@@ -136,7 +136,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                 const dst = slice[dst_row * hdr.width ..][0..hdr.width];
                 @memcpy(dst, @as([]const BGR, @ptrCast(src)));
             }
-            pixels = .{ .bgrs = slice };
+            pixels = .{ .bgr = slice };
             fmt = .r8g8b8_srgb;
         },
         .rgba => {
@@ -147,7 +147,7 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
                 const dst = slice[dst_row * hdr.width ..][0..hdr.width];
                 @memcpy(dst, @as([]const BGRA, @ptrCast(src)));
             }
-            pixels = .{ .bgras = slice };
+            pixels = .{ .bgra = slice };
             fmt = .r8g8b8a8_srgb;
         },
     }
@@ -164,7 +164,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
     try hdr.encode(w);
     const zeros: [4]u8 = @splat(0);
     switch (img.pixels) {
-        .grays => |grays| {
+        .g => |grays| {
             const row_bytes = img.width;
             const pad = strideOf(row_bytes) - row_bytes; // pad to 4 bytes
             for (0..img.height) |file_row| {
@@ -174,8 +174,8 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
-        .gray_alphas => return error.UnsupportedColorspace, // TODO: Check if this is supported
-        .rgbs => |rgbs| {
+        .ga => return error.UnsupportedColorspace, // TODO: Check if this is supported
+        .rgb => |rgbs| {
             const row_bytes = img.width * 3;
             const pad = strideOf(row_bytes) - row_bytes;
             for (0..img.height) |file_row| {
@@ -185,7 +185,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
-        .bgrs => |bgrs| {
+        .bgr => |bgrs| {
             const row_bytes = img.width * 3;
             const pad = strideOf(row_bytes) - row_bytes;
             for (0..img.height) |file_row| {
@@ -195,7 +195,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
-        .rgbas => |rgbas| {
+        .rgba => |rgbas| {
             const row_bytes = img.width * 4;
             const pad = strideOf(row_bytes) - row_bytes;
             for (0..img.height) |file_row| {
@@ -205,7 +205,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
-        .bgras => |bgras| {
+        .bgra => |bgras| {
             const row_bytes = img.width * 4;
             const pad = strideOf(row_bytes) - row_bytes;
             for (0..img.height) |file_row| {
@@ -215,6 +215,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
                 try w.writeAll(zeros[0..pad]);
             }
         },
+        .ycbcr, .ycbcra => unreachable,
     }
     try w.flush();
 }

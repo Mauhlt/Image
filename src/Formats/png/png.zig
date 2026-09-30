@@ -77,18 +77,18 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
         var fmt: Format = undefined;
         if (has_srgb) {
             fmt = switch (pixels) {
-                .grays => .r8_srgb,
-                .gray_alphas => .r8g8_srgb,
-                .rgbs => .r8g8b8_srgb,
-                .rgbas => .r8g8b8a8_srgb,
+                .g => .r8_srgb,
+                .ga => .r8g8_srgb,
+                .rgb => .r8g8b8_srgb,
+                .rgba => .r8g8b8a8_srgb,
                 else => unreachable,
             };
         } else {
             fmt = switch (pixels) {
-                .grays => .r8_uint,
-                .gray_alphas => .r8g8_uint,
-                .rgbs => .r8g8b8_uint,
-                .rgbas => .r8g8b8a8_uint,
+                .g => .r8_uint,
+                .ga => .r8g8_uint,
+                .rgb => .r8g8b8_uint,
+                .rgba => .r8g8b8a8_uint,
                 else => unreachable,
             };
         }
@@ -109,7 +109,7 @@ pub fn encode(
     gpa: std.mem.Allocator,
 ) !void {
     const src = switch (img.pixels) {
-        .rgbas => |rgbas| rgbas,
+        .rgba => |rgba| rgba,
         else => return Error.Encode.UnsupportedChannel,
     };
     // extract header
@@ -198,7 +198,7 @@ pub fn encode(
 fn validateHeader(hdr: Header) !void {
     if (hdr.bit_depth != .bit8) return Error.Decode.UnsupportedBitsPerPixel;
     switch (hdr.color_type) {
-        .grays, .rgbs, .rgbas => {},
+        .g, .rgb, .rgba => {},
         else => return Error.Decode.UnsupportedColorspace,
     }
     if (hdr.filter_method != .none) return Error.Decode.UnsupportedFilterMethod;
@@ -351,7 +351,7 @@ fn processIdat(
     defer gpa.free(curr_row);
 
     const pixels: Pixels = switch (hdr.color_type) {
-        .indices => return Error.Decode.UnsupportedColorspace,
+        .i => return Error.Decode.UnsupportedColorspace,
         inline else => |tag| sw: {
             const CHILD_TYPE = @typeInfo(@FieldType(Pixels, @tagName(tag))).pointer.child;
             const slice = try gpa.alloc(CHILD_TYPE, n_pixels);
@@ -375,7 +375,7 @@ fn processIdat(
         );
         // copy buffer to pixel array
         switch (hdr.color_type) {
-            .indices => unreachable,
+            .i => unreachable,
             inline else => |tag| {
                 const CHILD_TYPE = @typeInfo(@FieldType(Pixels, @tagName(tag))).pointer.child;
                 @memcpy(

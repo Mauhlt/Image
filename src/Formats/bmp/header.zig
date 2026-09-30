@@ -1,11 +1,7 @@
 const std = @import("std");
-// Image
 const Image = @import("../../root.zig");
-// Colors
 const Pixels = @import("../../Colors/Pixels.zig");
-// Errors
 const Error = @import("../error.zig");
-// dir misc
 const BitsPerPixel = @import("misc.zig").BitsPerPixel;
 const Compression = @import("misc.zig").Compression;
 const strideOf = @import("misc.zig").strideOf;

@@ -2,134 +2,55 @@ const std = @import("std");
 
 const Position = @import("position.zig");
 
-const GrayOrder = @import("g.zig").GrayOrder;
-const GrayAlphaOrder = @import("ga.zig").GrayAlphaOrder;
-const RgbOrder = @import("rgb.zig").RgbOrder;
-const RgbaOrder = @import("rgba.zig").RgbaOrder;
+const OrderTag = @import("order.zig").OrderTag;
 
-// TODO: Should these be public?
-pub const GRAY = @import("g.zig").GRAY;
-pub const GRAY_ALPHA = @import("ga.zig").GRAY_ALPHA;
-pub const RGB = @import("rgb.zig").RGB;
-pub const BGR = @import("rgb.zig").BGR;
-pub const RGBA = @import("rgba.zig").RGBA;
-pub const BGRA = @import("rgba.zig").BGRA;
+const G = @import("g.zig").G;
+const RGB = @import("rgb.zig").RGB;
+const BGR = @import("bgr.zig").BGR;
+const YCbCr = @import("ycbcr.zig").YCbCr;
 
-const VEC_LEN = std.simd.suggestVectorLength(f32) orelse 16;
-const VF32 = @Vector(VEC_LEN, f32);
-const VU8 = @Vector(VEC_LEN, u8);
-const VU64 = @Vector(VEC_LEN, u64);
-const SEL = std.simd.iota(usize, VEC_LEN);
-const MUL2: VU64 = @splat(2);
-const MUL3: VU64 = @splat(3);
-const MUL4: VU64 = @splat(4);
-const ADD1: VU64 = @splat(1);
-const ADD2: VU64 = @splat(2);
-const ADD3: VU64 = @splat(3);
+const GA = @import("ga.zig").GA;
+const RGBA = @import("rgba.zig").RGBA;
+const BGRA = @import("bgra.zig").BGRA;
+const YCbCrA = @import("ycbcra.zig").YCbCrA;
+
+const misc = @import("misc.zig");
+const U8_1 = @Vector(misc.N, u8);
+const U8_2 = @Vector(misc.N * 2, u8);
+const U8_3 = @Vector(misc.N * 3, u8);
+const U8_4 = @Vector(misc.N * 4, u8);
+const I16 = @Vector(misc.N, u16);
 
 pub const PixelTag = enum(u8) {
-    grays,
-    gray_alphas,
-    rgbs,
-    bgrs,
-    rgbas,
-    bgras,
+    g,
+    rgb,
+    bgr,
+    ycbcr,
+    ga,
+    rgba,
+    bgra,
+    ycbcra,
 
-    fn modCheck(self: PixelTag, data: []const u8) !void {
-        return if (@mod(data.len, self.alignOf()) != 0) error.InvalidDataLength else {};
-    }
-
-    fn alignOf(self: PixelTag) usize {
+    fn alignOf(self: PixelTag) u16 {
         return switch (self) {
-            .grays => 1,
-            .gray_alphas => 2,
-            .rgbs, .bgrs => 3,
-            .rgbas, .bgras => 4,
+            .g => 1,
+            .ga => 2,
+            .rgb, .bgr, .ycbcr => 3,
+            .rgba, .bgra, .ycbcra => 4,
         };
     }
 };
 
-/// Returns Enum that is a superset
-fn MergeEnums(comptime types: []const type) !type {
-    // check that all types are enums
-    for (types) |t| {
-        switch (@typeInfo(t)) {
-            .@"enum" => {},
-            else => @compileError("Invalid Type. Fn accepts enums only"),
-        }
-    }
-    comptime {
-        // check that backing integer for each enum is the same
-        for (types[1..]) |t| {
-            if (@typeInfo(t).@"enum".tag_type != @typeInfo(types[0]).@"enum".tag_type) {
-                return error.MismatchingEnumTagType;
-            }
-        }
-        // check that each enum field name and field value is unique
-        for (0..types.len - 1) |i| {
-            const field_names1 = std.meta.fieldNames(types[i]);
-            for (i + 1..types.len) |j| {
-                const field_names2 = std.meta.fieldNames(types[j]);
-                for (field_names1) |fn1| {
-                    for (field_names2) |fn2| {
-                        if (std.mem.eql(u8, fn1, fn2)) //
-                            return error.EnumNameIsNotUnique;
-                        if (@intFromEnum(@field(types[i], fn1)) == @intFromEnum(@field(types[j], fn2))) //
-                            return error.EnumValueIsNotUnique;
-                    }
-                }
-            }
-        }
-        // compute total # of fields
-        const n_fields = blk: {
-            var n_fields: usize = 0;
-            for (types) |t| {
-                n_fields += std.meta.fieldNames(t).len;
-            }
-            break :blk n_fields;
-        };
-        // concatenate each field name + value
-        var names: [n_fields][]const u8 = undefined;
-        var values: [n_fields]u8 = undefined;
-        var i: usize = 0;
-        for (types) |t| {
-            const field_names = std.meta.fieldNames(t);
-            for (field_names) |field_name| {
-                names[i] = field_name;
-                values[i] = @intFromEnum(@field(t, field_name));
-                i += 1;
-            }
-        }
-        // reify enum
-        return @Enum(
-            @typeInfo(types[0]).@"enum".tag_type,
-            .exhaustive,
-            &names,
-            &values,
-        );
-    }
-}
-
-const DataTag: type = MergeEnums(&.{
-    GrayOrder,
-    GrayAlphaOrder,
-    RgbOrder,
-    RgbaOrder,
-}) catch unreachable;
-
 pub const Pixels = union(PixelTag) {
-    grays: []GRAY,
-    gray_alphas: []GRAY_ALPHA,
-    rgbs: []RGB,
-    bgrs: []BGR,
-    rgbas: []RGBA,
-    bgras: []BGRA,
+    g: []G,
+    rgb: []RGB,
+    bgr: []BGR,
+    ycbcr: []YCbCr,
 
-    fn length(self: Pixels) usize {
-        return switch (self) {
-            inline else => |data| data.len,
-        };
-    }
+    ga: []GA,
+    rgba: []RGBA,
+    bgra: []BGRA,
+    ycbcra: []YCbCrA,
 
     /// Assumes data is:
     ///     - correct alignment (u24 vs u32)
@@ -139,8 +60,7 @@ pub const Pixels = union(PixelTag) {
         gpa: std.mem.Allocator,
         data: []const u8,
     ) !Pixels {
-        if (data.len == 0) return error.InvalidDataLength;
-        try pixel_tag.modCheck(data);
+        if (@mod(data.len, pixel_tag.alignOf()) != 0 or data.len == 0) return error.InvalidDataLength;
         const T = @FieldType(Pixels, @tagName(pixel_tag));
         const slice: T = @ptrCast(try gpa.dupe(u8, data));
         const pixels = @unionInit(Pixels, @tagName(pixel_tag), slice);
@@ -152,7 +72,7 @@ pub const Pixels = union(PixelTag) {
     pub fn initOrder(
         gpa: std.mem.Allocator,
         data: []const u8,
-        data_order: DataTag,
+        data_order: OrderTag,
         pixel_order: PixelTag,
     ) !@This() {
         if (data.len == 0) return error.InvalidDataLength;
@@ -189,24 +109,18 @@ pub const Pixels = union(PixelTag) {
         }
     }
 
-    pub fn convertTo(
+    /// Elegant but not fast
+    pub fn convert(
         self: @This(),
         comptime other_tag: PixelTag,
         gpa: std.mem.Allocator,
     ) !@This() {
-        const len = self.length();
+        const method = @tagName(other_tag);
         switch (self) {
             inline else => |src, tag| {
                 if (tag == other_tag) return self.dupe(gpa);
+                const len = src.len;
                 const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(other_tag)));
-                const method = comptime switch (other_tag) {
-                    .grays => "toGray16",
-                    .gray_alphas => "toGrayAlpha",
-                    .rgbs => "toRgb",
-                    .rgbas => "toRgba",
-                    .bgrs => "toBgr",
-                    .bgras => "toBgra",
-                };
                 const dst = try gpa.alloc(DstElem, len);
                 errdefer gpa.free(dst);
                 for (src, dst) |s, *d| d.* = @field(@TypeOf(s), method)(s);
@@ -215,436 +129,532 @@ pub const Pixels = union(PixelTag) {
         }
     }
 
-    pub fn crop(
+    pub fn convertV(
         self: @This(),
+        tag: PixelTag,
         gpa: std.mem.Allocator,
-        box: [2]Position,
-    ) !@This() {
-        const min_row = @min(@min(box[0].row, box[1].row), self.height - 1);
-        const max_row = @min(@max(box[0].row, box[1].row), self.height - 1);
-
-        const min_col = @min(@min(box[0].col, box[1].col), self.width - 1);
-        const max_col = @min(@max(box[0].col, box[1].col), self.width - 1);
-
-        const height: u32 = @truncate(max_row - min_row);
-        const width: u32 = @truncate(max_col - min_col);
-        if (height == self.height and width == self.width) return self.dupe(gpa);
-
-        const n_pixels = width * height;
-
+    ) !void { // @This() {
+        _ = gpa;
         switch (self) {
-            inline else => |pixels| {
-                var new_pixels = try gpa.alloc(@TypeOf(pixels), n_pixels);
-                errdefer gpa.free(new_pixels);
-                for (0..height) |i| {
-                    @memcpy(
-                        new_pixels[i * width ..][0..width],
-                        pixels[min_row + i * self.width][0..width],
-                    );
-                }
-                return .{
-                    .width = width,
-                    .height = height,
-                    .fmt = self.fmt,
-                    .pixels = new_pixels,
-                    .order = self.order,
-                };
-            },
-        }
-    }
+            inline else => |src, src_tag| {
+                _ = src;
+                // const len = src.len;
+                // const srcV: []const u8 = @ptrCast(src);
+                // const src_step = comptime src_tag.alignOf() * misc.N;
+                // const src_len = srcV.len;
+                switch (tag) {
+                    inline else => |dst_tag| {
+                        // if (src_tag == dst_tag) return self.dupe(gpa);
 
-    /// Uses vectors to speed up computations
-    pub fn luminance(self: @This(), gpa: std.mem.Allocator) ![]f32 {
-        const len = self.length();
-        var lum = try gpa.alloc(f32, len);
-        errdefer gpa.free(lum);
-        switch (self) {
-            .grays => |grays| {
-                const data: []const u8 = @ptrCast(grays);
-                var i: usize = 0;
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    lum[i..][0..VEC_LEN].* = @floatFromInt(@as(VU8, data[i..][0..VEC_LEN].*));
-                }
-                while (i < data.len) : (i += 1) {
-                    lum[i] = grays[i].luminance();
-                }
-            },
-            .gray_alphas => |gray_alphas| {
-                const data: []const u8 = @ptrCast(gray_alphas);
-                var i: usize = 0;
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    lum[i..][0..VEC_LEN].* = @floatFromInt(@as(VU8, data[i * 2 ..][SEL * MUL2].*));
-                }
-                while (i < len) : (i += 1) {
-                    lum[i] = gray_alphas[i].luminance();
-                }
-            },
-            .rgbs => |rgbs| {
-                const data: []const u8 = @ptrCast(rgbs);
-                var i: usize = 0;
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
-                    lum[i..][0..VEC_LEN].* = _luminance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    lum[i] = rgbs[i].luminance();
-                }
-            },
-            .bgrs => |bgrs| {
-                const data: []const u8 = @ptrCast(bgrs);
-                var i: usize = 0;
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
-                    lum[i..][0..VEC_LEN].* = _luminance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    lum[i] = bgrs[i].luminance();
-                }
-            },
-            .rgbas => |rgbas| {
-                const data: []const u8 = @ptrCast(rgbas);
-                var i: usize = 0;
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
-                    lum[i..][0..VEC_LEN].* = _luminance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    lum[i] = rgbas[i].luminance();
-                }
-            },
-            .bgras => |bgras| {
-                const data: []const u8 = @ptrCast(bgras);
-                var i: usize = 0;
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
-                    lum[i..][0..VEC_LEN].* = _luminance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    lum[i] = bgras[i].luminance();
-                }
-            },
-        }
-        return lum;
-    }
+                        const methodV = comptime methodVName(src_tag, dst_tag);
+                        const method = comptime methodName(dst_tag);
+                        std.debug.print(
+                            "Src: {t}\nDst: {t}\nMethodV: {s}\nMethod: {s}\n",
+                            .{ src_tag, dst_tag, methodV, method },
+                        );
 
-    /// Cb does no exist for gray or gray alpha - pretending it is like RGB of equal values
-    pub fn blueChrominance(self: @This(), gpa: std.mem.Allocator) ![]f32 {
-        const len = self.length();
-        var cb = try gpa.alloc(f32, len);
-        errdefer gpa.free(cb);
-        var i: usize = 0;
-        switch (self) {
-            .grays => |grays| {
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const gs: VF32 = @floatFromInt(@as(VU8, grays[i..][0..VEC_LEN].*));
-                    cb[i..][0..VEC_LEN].* = _blueChrominance(gs, gs, gs);
-                }
-                while (i < len) : (i += 1) {
-                    cb[i] = grays[i].blueChrominance();
-                }
-            },
-            .gray_alphas => |gray_alphas| {
-                const data: []const u8 = @ptrCast(gray_alphas);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const gs: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL2].*));
-                    cb[i..][0..VEC_LEN].* = _blueChrominance(gs, gs, gs);
-                }
-                while (i < len) : (i += 1) {
-                    cb[i] = gray_alphas[i].blueChrominance();
-                }
-            },
-            .rgbs => |rgbs| {
-                const data: []const u8 = @ptrCast(rgbs);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
-                    cb[i..][0..VEC_LEN].* = _blueChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cb[i] = rgbs[i].blueChrominance();
-                }
-            },
-            .bgrs => |bgrs| {
-                const data: []const u8 = @ptrCast(bgrs);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
-                    cb[i..][0..VEC_LEN].* = _blueChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cb[i] = bgrs[i].blueChrominance();
-                }
-            },
-            .rgbas => |rgbas| {
-                const data: []const u8 = @ptrCast(rgbas);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
-                    cb[i..][0..VEC_LEN].* = _blueChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cb[i] = rgbas[i].blueChrominance();
-                }
-            },
-            .bgras => |bgras| {
-                const data: []const u8 = @ptrCast(bgras);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
-                    cb[i..][0..VEC_LEN].* = _blueChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cb[i] = bgras[i].blueChrominance();
-                }
-            },
-        }
-        return cb;
-    }
+                        // const Elem = @typeInfo(@FieldType(Pixels, @tagName(dst_tag))).pointer.child;
+                        // const result: []Elem = try gpa.alloc(Elem, len);
+                        // errdefer gpa.free(result);
 
-    /// Cr does no exist for gray or gray alpha - pretending it is like RGB of equal values
-    pub fn redChrominance(self: @This(), gpa: std.mem.Allocator) ![]f32 {
-        const len = self.length();
-        var cr = try gpa.alloc(f32, len);
-        errdefer gpa.free(cr);
-        var i: usize = 0;
-        switch (self) {
-            .grays => |grays| {
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const gs: VF32 = @floatFromInt(@as(VU8, grays[i..][0..VEC_LEN].*));
-                    cr[i..][0..VEC_LEN].* = _redChrominance(gs, gs, gs);
-                }
-                while (i < len) : (i += 1) {
-                    cr[i] = grays[i].redChrominance();
-                }
-            },
-            .gray_alphas => |gray_alphas| {
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const gs: VF32 = @floatFromInt(@as(VU8, gray_alphas[i..][0..VEC_LEN].*));
-                    cr[i..][0..VEC_LEN].* = _redChrominance(gs, gs, gs);
-                }
-                while (i < len) : (i += 1) {
-                    cr[i] = gray_alphas[i].redChrominance();
-                }
-            },
-            .rgbs => |rgbs| {
-                const data: []const u8 = @ptrCast(rgbs);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
-                    cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cr[i] = rgbs[i].redChrominance();
-                }
-            },
-            .bgrs => |bgrs| {
-                const data: []const u8 = @ptrCast(bgrs);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL3 + ADD2].*));
-                    cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cr[i] = bgrs[i].redChrominance();
-                }
-            },
-            .rgbas => |rgbas| {
-                const data: []const u8 = @ptrCast(rgbas);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
-                    cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cr[i] = rgbas[i].redChrominance();
-                }
-            },
-            .bgras => |bgras| {
-                const data: []const u8 = @ptrCast(bgras);
-                while (i + VEC_LEN < len) : (i += VEC_LEN) {
-                    const blues: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4].*));
-                    const greens: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD1].*));
-                    const reds: VF32 = @floatFromInt(@as(VU8, data[i..][SEL * MUL4 + ADD2].*));
-                    cr[i..][0..VEC_LEN].* = _redChrominance(reds, greens, blues);
-                }
-                while (i < len) : (i += 1) {
-                    cr[i] = bgras[i].redChrominance();
-                }
-            },
-        }
-        return cr;
-    }
+                        // const dstV: []u8 = @ptrCast(result);
+                        // const dst_step = comptime dst_tag.alignOf() * misc.N;
+                        // const dst_len = dstV.len;
 
-    pub fn eql(self: @This(), other: @This()) bool {
-        const tag = std.meta.activeTag(self);
-        if (tag != std.meta.activeTag(other)) return false;
-        const len1 = self.length();
-        const len2 = other.length();
-        if (len1 != len2) return false;
-        switch (tag) {
-            inline else => {
-                const data1 = @field(self, tag);
-                const data2 = @field(other, tag);
-                var i: usize = 0;
-                while (i + VEC_LEN <= len1) : (i += VEC_LEN) {
-                    if (!@reduce(.And, @as(VU8, data1[i..][0..VEC_LEN].*) == @as(VU8, data2[i..][0..VEC_LEN].*))) {
-                        return false;
+                        // var i: usize = 0; // src as u8s
+                        // var j: usize = 0; // dst as u8s
+                        // while ((i + src_step) < src_len and (j + dst_step) < dst_len) : ({
+                        //     i += src_len;
+                        //     j += dst_len;
+                        // }) {
+                        //     dstV[j..][0..dst_step].* = @field(Pixels, methodV)(srcV[i..][0..src_step]);
+                        // }
+                        //
+                        // i /= src_step; // in original form
+                        // j /= dst_step; // in orginal form
+                        // while (i < src_len and j < dst_len) : ({
+                        //     i += 1;
+                        //     j += 1;
+                        // }) {
+                        //     dstV[j] = @field(Pixels, method)(src[i]);
+                        // }
+
+                        // return @unionInit(Pixels, @tagName(dst_tag), result);
                     }
                 }
-                for (data1[i..], data2[i..]) |d1, d2| {
-                    if (!d1.eql(d2)) return false;
-                }
-                return true;
-            },
+            }
         }
+    }
+
+    fn methodVName(comptime src: PixelTag, comptime dst: PixelTag) []const u8 {
+        // rgbFromG
+        const from = "From";
+        const name1 = @tagName(src);
+        const name2 = @tagName(dst);
+        var buf: [name1.len + from.len + name2.len]u8 = undefined;
+        @memcpy(buf[0..name1.len], name1);
+        @memcpy(buf[name1.len .. name1.len + from.len], from[0..from.len]);
+        @memcpy(buf[name1.len + from.len .. name1.len + from.len + name2.len], name2);
+        buf[name1.len + from.len] = std.ascii.toUpper(name2[0]);
+        const final = buf;
+        return &final;
+    }
+
+    fn methodName(comptime dst: PixelTag) []const u8 {
+        const to = "to";
+        const name = @tagName(dst);
+        var buf: [to.len + name.len]u8 = undefined;
+        @memcpy(buf[0..to.len], to);
+        @memcpy(buf[to.len .. to.len + name.len], name[0..name.len]);
+        buf[to.len] = std.ascii.toUpper(name[0]);
+        const final = buf;
+        return &final;
+    }
+
+    inline fn splitVecs(comptime M: usize, src: *const [misc.N * M]u8) [M]U8_1 {
+        return if (M == 1) @as(U8_1, src.*) else //
+        std.simd.deinterlace(M, @as(@Vector(misc.N * M, u8), src.*));
+    }
+
+    fn rgbFromG(src: *const [misc.N]u8) U8_3 {
+        const g = splitVecs(1, src);
+        return std.simd.interlace(.{ g, g, g });
+    }
+
+    fn bgrFromG(src: *const [misc.N]u8) U8_3 {
+        const g = splitVecs(1, src);
+        return std.simd.interlace(.{ g, g, g });
+    }
+
+    fn ycbcrFromG(src: *const [misc.N]u8) U8_3 {
+        const g = splitVecs(1, src);
+        const c: U8_1 = @splat(128);
+        return std.simd.interlace(.{ g, c, c });
+    }
+
+    fn gaFromG(src: *const [misc.N]u8) U8_2 {
+        const g = splitVecs(1, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, a });
+    }
+
+    fn rgbaFromG(src: *const [misc.N]u8) U8_4 {
+        const g = splitVecs(1, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, g, g, a });
+    }
+
+    fn bgraFromG(src: *const [misc.N]u8) U8_4 {
+        const g = splitVecs(1, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, g, g, a });
+    }
+
+    fn ycbcraFromG(src: *const [misc.N]u8) U8_4 {
+        const g = splitVecs(1, src);
+        const c: U8_1 = @splat(128);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, c, c, a });
+    }
+
+    fn gFromRgb(src: *const [misc.N * 3]u8) U8_1 {
+        const rgb = splitVecs(3, src);
+        return misc.lumV(rgb[0], rgb[1], rgb[2]);
+    }
+
+    fn bgrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
+        const rgb = splitVecs(3, src);
+        return std.simd.interlace(.{ rgb[2], rgb[1], rgb[0] });
+    }
+
+    fn ycbcrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
+        const rgb = splitVecs(3, src);
+        const y = misc.lumV(rgb[0], rgb[1], rgb[2]);
+        const cb = misc.blueChromaV(rgb[0], rgb[1], rgb[2]);
+        const cr = misc.redChromaV(rgb[0], rgb[1], rgb[2]);
+        return std.simd.interlace(.{ y, cb, cr });
+    }
+
+    fn gaFromRgb(src: *const [misc.N * 3]u8) U8_2 {
+        const rgb = splitVecs(3, src);
+        const g = misc.lumV(rgb[0], rgb[1], rgb[2]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, a });
+    }
+
+    fn rgbaFromRgb(src: *const [misc.N * 3]u8) U8_4 {
+        const rgb = splitVecs(3, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ rgb[0], rgb[1], rgb[2], a });
+    }
+
+    fn bgraFromRgb(src: *const [misc.N * 3]u8) U8_4 {
+        const rgb = splitVecs(3, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ rgb[2], rgb[1], rgb[0], a });
+    }
+
+    fn ycbcraFromRgb(src: *const [misc.N * 3]u8) U8_4 {
+        const rgb = splitVecs(3, src);
+        const y = misc.lumV(rgb[0], rgb[1], rgb[2]);
+        const cb = misc.blueChromaV(rgb[0], rgb[1], rgb[2]);
+        const cr = misc.redChromaV(rgb[0], rgb[1], rgb[2]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ y, cb, cr, a });
+    }
+
+    fn gFromBgr(src: *const [misc.N]u8) U8_1 {
+        const bgr = splitVecs(3, src);
+        return misc.lumV(bgr[2], bgr[1], bgr[0]);
+    }
+
+    fn rgbFromBgr(src: *const [misc.N]u8) U8_3 {
+        const bgr = splitVecs(3, src);
+        return std.simd.interlace(.{ bgr[2], bgr[1], bgr[0] });
+    }
+
+    fn ycbcrFromBgr(src: *const [misc.N * 3]u8) U8_3 {
+        const bgr = splitVecs(3, src);
+        const y = misc.lumV(bgr[2], bgr[1], bgr[0]);
+        const cb = misc.blueChromaV(bgr[2], bgr[1], bgr[0]);
+        const cr = misc.redChromaV(bgr[2], bgr[1], bgr[0]);
+        return std.simd.interlace(.{ y, cb, cr });
+    }
+
+    fn gaFromBgr(src: *const [misc.N * 2]u8) U8_2 {
+        const bgr = splitVecs(3, src);
+        const g = misc.lumV(bgr[2], bgr[1], bgr[0]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, a });
+    }
+
+    fn rgbaFromBgr(src: *const [misc.N * 3]u8) U8_4 {
+        const bgr = splitVecs(3, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ bgr[2], bgr[1], bgr[0], a });
+    }
+
+    fn bgraFromBgr(src: *const [misc.N * 3]u8) U8_4 {
+        const bgr = splitVecs(3, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ bgr[0], bgr[1], bgr[2], a });
+    }
+
+    fn ycbcraFromBgr(src: *const [misc.N * 3]u8) U8_4 {
+        const bgr = splitVecs(3, src);
+        const y = misc.lumV(bgr[2], bgr[1], bgr[0]);
+        const cb = misc.blueChromaV(bgr[2], bgr[1], bgr[0]);
+        const cr = misc.redChromaV(bgr[2], bgr[1], bgr[0]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ y, cb, cr, a });
+    }
+
+    fn gFromYcbcr(src: *const [misc.N * 3]u8) U8_1 {
+        const ycbcr = splitVecs(3, src);
+        return ycbcr[0];
+    }
+
+    fn rgbFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
+        const ycbcr = splitVecs(3, src);
+        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        return std.simd.interlace(.{ r, g, b });
+    }
+
+    fn bgrFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
+        const ycbcr = splitVecs(3, src);
+        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        return std.simd.interlace(.{ b, g, r });
+    }
+
+    fn gaFromYcbcr(src: *const [misc.N * 3]u8) U8_2 {
+        const ycbcr = splitVecs(3, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ ycbcr[0], a });
+    }
+
+    fn rgbaFromYcbcr(src: *const [misc.N * 4]u8) U8_4 {
+        const ycbcr = splitVecs(3, src);
+        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ r, g, b, a });
+    }
+
+    fn bgraFromYcbcr(src: *const [misc.N * 4]u8) U8_4 {
+        const ycbcr = splitVecs(3, src);
+        const b = misc.blueV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const r = misc.redV(ycbcr[0], ycbcr[1], ycbcr[2]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ b, g, r, a });
+    }
+
+    fn gFromGa(src: *const [misc.N * 2]u8) U8_1 {
+        const ga = splitVecs(2, src);
+        return ga[0];
+    }
+
+    fn rgbFromGa(src: *const [misc.N * 2]u8) U8_3 {
+        const ga = splitVecs(2, src);
+        return std.simd.interlace(.{ ga[0], ga[0], ga[0] });
+    }
+
+    fn bgrFromGa(src: *const [misc.N * 2]u8) U8_3 {
+        const ga = splitVecs(2, src);
+        return std.simd.interlace(.{ ga[0], ga[0], ga[0] });
+    }
+
+    fn ycbcrFromGa(src: *const [misc.N * 2]u8) U8_3 {
+        const ga = splitVecs(2, src);
+        const mid: U8_1 = @splat(128);
+        return std.simd.interlace(.{ ga[0], mid, mid });
+    }
+
+    fn rgbaFromGa(src: *const [misc.N * 2]u8) U8_4 {
+        const ga = splitVecs(2, src);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ ga[0], ga[0], ga[0], a });
+    }
+
+    fn bgraFromGa(src: *const [misc.N * 2]u8) U8_4 {
+        const ga = splitVecs(2, src);
+        return std.simd.interlace(.{ ga[0], ga[0], ga[0], ga[1] });
+    }
+
+    fn ycbcraFromGa(src: *const [misc.N * 2]u8) U8_4 {
+        const ga = splitVecs(2, src);
+        const mid: U8_1 = @splat(128);
+        return std.simd.interlace(.{ ga[0], mid, mid, ga[1] });
+    }
+
+    fn gFromRgba(src: *const [misc.N * 4]u8) U8_1 {
+        const rgba = splitVecs(4, src);
+        return misc.lumV(rgba[0], rgba[1], rgba[2]);
+    }
+
+    fn rgbFromRgba(src: *const [misc.N * 4]u8) U8_3 {
+        const rgba = splitVecs(4, src);
+        return std.simd.interlace(.{ rgba[0], rgba[1], rgba[2] });
+    }
+
+    fn bgrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
+        const rgba = splitVecs(4, src);
+        return std.simd.interlace(.{ rgba[2], rgba[1], rgba[0] });
+    }
+
+    fn ycbcrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
+        const rgba = splitVecs(4, src);
+        const y = misc.lumV(rgba[0], rgba[1], rgba[2]);
+        const cb = misc.blueChromaV(rgba[0], rgba[1], rgba[2]);
+        const cr = misc.redChromaV(rgba[0], rgba[1], rgba[2]);
+        return std.simd.interlace(.{ y, cb, cr });
+    }
+
+    fn gaFromRgba(src: *const [misc.N * 4]u8) U8_2 {
+        const rgba = splitVecs(4, src);
+        const g = misc.lum(rgba[0], rgba[1], rgba[2]);
+        const a: U8_1 = @splat(255);
+        return std.simd.interlace(.{ g, a });
+    }
+
+    fn bgraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
+        const rgba = splitVecs(4, src);
+        return std.simd.interlace(.{ rgba[2], rgba[1], rgba[0], rgba[3] });
+    }
+
+    fn ycbcraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
+        const rgba = splitVecs(4, src);
+        const y = misc.lumV(rgba[0], rgba[1], rgba[2]);
+        const cb = misc.blueChromaV(rgba[0], rgba[1], rgba[2]);
+        const cr = misc.redChromaV(rgba[0], rgba[1], rgba[2]);
+        return std.simd.interlace(.{ y, cb, cr, rgba[3] });
+    }
+
+    fn gFromBgra(src: *const [misc.N * 4]u8) U8_1 {
+        const bgra = splitVecs(4, src);
+        return misc.lumV(bgra[2], bgra[1], bgra[0]);
+    }
+
+    fn rgbFromBgra(src: *const [misc.N * 4]u8) U8_3 {
+        const bgra = splitVecs(4, src);
+        return std.simd.interlace(.{ bgra[2], bgra[1], bgra[0] });
+    }
+
+    fn bgrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
+        const bgra = splitVecs(4, src);
+        return std.simd.interlace(.{ bgra[0], bgra[1], bgra[2] });
+    }
+
+    fn ycbcrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
+        const bgra = splitVecs(4, src);
+        const y = misc.lumV(bgra[2], bgra[1], bgra[0]);
+        const cb = misc.blueChromaV(bgra[2], bgra[1], bgra[0]);
+        const cr = misc.redChromaV(bgra[2], bgra[1], bgra[0]);
+        return std.simd.interlace(.{ y, cb, cr });
+    }
+
+    fn gaFromBgra(src: *const [misc.N * 4]u8) U8_2 {
+        const bgra = splitVecs(4, src);
+        const g = misc.lumV(bgra[2], bgra[1], bgra[0]);
+        return std.simd.interlace(.{ g, bgra[3] });
+    }
+
+    fn ycbcraFromBgra(src: *const [misc.N * 4]u8) U8_4 {
+        const bgra = splitVecs(4, src);
+        const y = misc.lumV(bgra[2], bgra[1], bgra[0]);
+        const cb = misc.blueChromaV(bgra[2], bgra[1], bgra[0]);
+        const cr = misc.redChromaV(bgra[2], bgra[1], bgra[0]);
+        return std.simd.interlace(.{ y, cb, cr, bgra[3] });
+    }
+
+    fn gFromYcbcra(src: *const [misc.N * 4]u8) U8_1 {
+        const ycbcra = splitVecs(4, src);
+        return ycbcra[0];
+    }
+
+    fn rgbFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
+        const ycbcra = splitVecs(4, src);
+        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        return std.simd.interlace(.{ r, g, b });
+    }
+
+    fn bgrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
+        const ycbcra = splitVecs(4, src);
+        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        return std.simd.interlace(.{ b, g, r });
+    }
+
+    fn ycbcrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
+        const ycbcra = splitVecs(4, src);
+        return std.simd.interlace(.{ ycbcra[0], ycbcra[1], ycbcra[2] });
+    }
+
+    fn gaFromYcbcra(src: *const [misc.N * 4]u8) U8_2 {
+        const ycbcra = splitVecs(4, src);
+        return std.simd.interlace(.{ ycbcra[0], ycbcra[3] });
+    }
+
+    fn rgbaFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
+        const ycbcra = splitVecs(4, src);
+        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        return std.simd.interlace(.{ r, g, b, ycbcra[3] });
+    }
+
+    fn bgraFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
+        const ycbcra = splitVecs(4, src);
+        const b = misc.blueV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        const r = misc.redV(ycbcra[0], ycbcra[1], ycbcra[2]);
+        return std.simd.interlace(.{ b, g, r, ycbcra[0] });
     }
 };
 
-/// generalized priv fns that can be used across data structurs
-/// makes code more robust
-inline fn _luminance(reds: VF32, greens: VF32, blues: VF32) VF32 {
-    return @as(VF32, @splat(0.299)) * reds + //
-        @as(VF32, @splat(0.587)) * greens + //
-        @as(VF32, @splat(0.144)) * blues;
-}
-
-inline fn _blueChrominance(reds: VF32, greens: VF32, blues: VF32) VF32 {
-    return @as(VF32, @splat(-0.168736)) * reds + //
-        @as(VF32, @splat(-0.331264)) * greens + //
-        @as(VF32, @splat(0.5)) * blues + //
-        @as(VF32, @splat(128));
-}
-
-inline fn _redChrominance(reds: VF32, greens: VF32, blues: VF32) VF32 {
-    return @as(VF32, @splat(0.5)) * reds + //
-        @as(VF32, @splat(-0.418688)) * greens + //
-        @as(VF32, @splat(0.081312)) * blues + //
-        @as(VF32, @splat(128));
-}
-
 test "Pixels" {
-    @setEvalBranchQuota(10_000);
-    // check that superset enum contains subsets
-    inline for (comptime [_]type{
-        GrayOrder,
-        GrayAlphaOrder,
-        RgbOrder,
-        RgbaOrder,
-    }) |T| {
-        const is_valid = checkSupersetEnumContainsSubsetEnum(DataTag, T);
-        std.debug.print("{any}: {}\n", .{ T, is_valid });
-    }
-    // pixels
     const gpa = std.testing.allocator;
-    // const da: DataTag = .g;
     const data = [_]u8{ 100, 25, 75, 175, 225 };
 
-    const base_pxs: Pixels = try .init(.grays, gpa, &data);
+    const base_pxs: Pixels = try .init(.g, gpa, &data);
     defer base_pxs.deinit(gpa);
 
-    { // grays
-        const gray_pxs = try base_pxs.dupe(gpa);
-        defer gray_pxs.deinit(gpa);
-        // grays -> rgbs
-        const rgb_pxs = try gray_pxs.convertTo(.rgbs, gpa);
-        defer rgb_pxs.deinit(gpa);
-        for (0..data.len) |i| {
-            const rgb_act = rgb_pxs.rgbs[i];
-            const rgb_exp = RGB{
-                .red = data[i],
-                .green = data[i],
-                .blue = data[i],
-            };
-            try std.testing.expectEqualDeep(rgb_exp, rgb_act);
-        }
-        // grays -> rgbas
-        const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
-        defer rgba_pxs.deinit(gpa);
-        for (0..data.len) |i| {
-            const rgba_act = rgba_pxs.rgbas[i];
-            const rgba_exp = RGBA{
-                .red = data[i],
-                .green = data[i],
-                .blue = data[i],
-            };
-            try std.testing.expectEqualDeep(rgba_exp, rgba_act);
-        }
-    }
+    // const io = std.testing.io;
+    // var clock: std.Io.Clock = .awake;
+    // const t1 = clock.now(io);
+    try base_pxs.convertV(.bgra, gpa);
+    // const gray_pxs = try base_pxs.convertV(.bgra, gpa);
+    // defer gray_pxs.deinit(gpa);
+    // const t2 = t1.untilNow(io, clock);
+    // std.debug.print("{any}\n", .{t2});
 
-    { // rgbs
-        const rgb_pxs = try base_pxs.convertTo(.rgbs, gpa);
-        defer rgb_pxs.deinit(gpa);
-        // rgbs -> grays
-        const gray_pxs = try rgb_pxs.convertTo(.grays, gpa);
-        defer gray_pxs.deinit(gpa);
-        for (0..data.len) |i| {
-            const gray_act = gray_pxs.grays[i];
-            const gray_exp: GRAY = .{ .gray = data[i] };
-            try std.testing.expectEqualDeep(gray_exp, gray_act);
-        }
-        // rgbs -> rgbas
-        const rgba_pxs = try rgb_pxs.convertTo(.rgbas, gpa);
-        defer rgba_pxs.deinit(gpa);
-        for (0..data.len) |i| {
-            const rgba_act = rgba_pxs.rgbas[i];
-            const rgba_exp: RGBA = .{
-                .red = data[i],
-                .green = data[i],
-                .blue = data[i],
-            };
-            try std.testing.expectEqualDeep(rgba_exp, rgba_act);
-        }
-    }
+    // const gray_pxs2 = try base_pxs.convert(.bgra, gpa);
+    // defer gray_pxs2.deinit(gpa);
 
-    { // rgbas
-        const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
-        defer rgba_pxs.deinit(gpa);
-        // rgbas -> grays
-        const gray_pxs = try rgba_pxs.convertTo(.grays, gpa);
-        defer gray_pxs.deinit(gpa);
-        for (0..data.len) |i| {
-            const gray_act = gray_pxs.grays[i];
-            const gray_exp: GRAY = .{ .gray = data[i] };
-            try std.testing.expectEqual(gray_exp, gray_act);
-        }
-        // rgbas -> rgbs
-        const rgb_pxs = try rgba_pxs.convertTo(.rgbs, gpa);
-        defer rgb_pxs.deinit(gpa);
-        for (0..data.len) |i| {
-            const rgb_act = rgb_pxs.rgbs[i];
-            const rgb_exp: RGB = .{
-                .red = data[i],
-                .green = data[i],
-                .blue = data[i],
-            };
-            try std.testing.expectEqualDeep(rgb_exp, rgb_act);
-        }
-    }
-}
-
-fn checkSupersetEnumContainsSubsetEnum(SupersetEnumType: type, SubsetEnumType: type) bool {
-    if (std.meta.activeTag(@typeInfo(SupersetEnumType)) != .@"enum") return false; // error.InvalidType;
-    if (std.meta.activeTag(@typeInfo(SubsetEnumType)) != .@"enum") return false; // error.InvalidType;
-    const subset_fns = comptime std.meta.fieldNames(SubsetEnumType);
-    inline for (subset_fns) |subset_fn| {
-        const value1 = @intFromEnum(@field(SubsetEnumType, subset_fn));
-        const value2 = @intFromEnum(@field(SupersetEnumType, subset_fn));
-        if (value1 != value2) return false;
-    }
-    return true;
+    // { // grays
+    //     const gray_pxs = try base_pxs.dupe(gpa);
+    //     defer gray_pxs.deinit(gpa);
+    //     // grays -> rgbs
+    //     const rgb_pxs = try gray_pxs.convertTo(.rgbs, gpa);
+    //     defer rgb_pxs.deinit(gpa);
+    //     for (0..data.len) |i| {
+    //         const rgb_act = rgb_pxs.rgbs[i];
+    //         const rgb_exp = RGB{
+    //             .red = data[i],
+    //             .green = data[i],
+    //             .blue = data[i],
+    //         };
+    //         try std.testing.expectEqualDeep(rgb_exp, rgb_act);
+    //     }
+    //     // grays -> rgbas
+    //     const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
+    //     defer rgba_pxs.deinit(gpa);
+    //     for (0..data.len) |i| {
+    //         const rgba_act = rgba_pxs.rgbas[i];
+    //         const rgba_exp = RGBA{
+    //             .red = data[i],
+    //             .green = data[i],
+    //             .blue = data[i],
+    //         };
+    //         try std.testing.expectEqualDeep(rgba_exp, rgba_act);
+    //     }
+    // }
+    //
+    // { // rgbs
+    //     const rgb_pxs = try base_pxs.convertTo(.rgbs, gpa);
+    //     defer rgb_pxs.deinit(gpa);
+    //     // rgbs -> grays
+    //     const gray_pxs = try rgb_pxs.convertTo(.gs, gpa);
+    //     defer gray_pxs.deinit(gpa);
+    //     for (0..data.len) |i| {
+    //         const gray_act = gray_pxs.grays[i];
+    //         const gray_exp: G = .{ .gray = data[i] };
+    //         try std.testing.expectEqualDeep(gray_exp, gray_act);
+    //     }
+    //     // rgbs -> rgbas
+    //     const rgba_pxs = try rgb_pxs.convertTo(.rgbas, gpa);
+    //     defer rgba_pxs.deinit(gpa);
+    //     for (0..data.len) |i| {
+    //         const rgba_act = rgba_pxs.rgbas[i];
+    //         const rgba_exp: RGBA = .{
+    //             .red = data[i],
+    //             .green = data[i],
+    //             .blue = data[i],
+    //         };
+    //         try std.testing.expectEqualDeep(rgba_exp, rgba_act);
+    //     }
+    // }
+    //
+    // { // rgbas
+    //     const rgba_pxs = try base_pxs.convertTo(.rgbas, gpa);
+    //     defer rgba_pxs.deinit(gpa);
+    //     // rgbas -> grays
+    //     const gray_pxs = try rgba_pxs.convertTo(.gs, gpa);
+    //     defer gray_pxs.deinit(gpa);
+    //     for (0..data.len) |i| {
+    //         const gray_act = gray_pxs.grays[i];
+    //         const gray_exp: G = .{ .gray = data[i] };
+    //         try std.testing.expectEqual(gray_exp, gray_act);
+    //     }
+    //     // rgbas -> rgbs
+    //     const rgb_pxs = try rgba_pxs.convertTo(.rgbs, gpa);
+    //     defer rgb_pxs.deinit(gpa);
+    //     for (0..data.len) |i| {
+    //         const rgb_act = rgb_pxs.rgbs[i];
+    //         const rgb_exp: RGB = .{
+    //             .red = data[i],
+    //             .green = data[i],
+    //             .blue = data[i],
+    //         };
+    //         try std.testing.expectEqualDeep(rgb_exp, rgb_act);
+    //     }
+    // }
 }

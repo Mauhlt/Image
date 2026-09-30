@@ -1,8 +1,8 @@
 const std = @import("std");
-const RGB = @import("../../Colors/Pixels.zig").RGB;
-const BGR = @import("../../Colors/Pixels.zig").BGR;
-const RGBA = @import("../../Colors/Pixels.zig").RGBA;
-const BGRA = @import("../../Colors/Pixels.zig").BGRA;
+const RGB = @import("../../Colors/rgb.zig").RGB;
+const BGR = @import("../../Colors/bgr.zig").BGR;
+const RGBA = @import("../../Colors/rgba.zig").RGBA;
+const BGRA = @import("../../Colors/bgra.zig").BGRA;
 
 const VEC_LEN = 64;
 const VEC = @Vector(64, u8);
