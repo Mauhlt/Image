@@ -27,14 +27,32 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     defer scratch.free(argb);
     try vp8l_decode.decodeArgb(scratch, hdr.bitstream, hdr.width, hdr.height, argb);
     switch (inf.tag) {
-        .rgba => for (argb, 0..) |p, i| {
-            out[i * 4 ..][0..4].* = .{ @truncate(p >> 16), @truncate(p >> 8), @truncate(p), @truncate(p >> 24) };
-        },
-        .rgb => for (argb, 0..) |p, i| {
-            out[i * 3 ..][0..3].* = .{ @truncate(p >> 16), @truncate(p >> 8), @truncate(p) };
-        },
+        .rgba => argbToBytes(4, argb, out),
+        .rgb => argbToBytes(3, argb, out),
         else => return Error.UnsupportedPixels,
     }
+}
+
+/// ARGB pixels -> r, g, b(, a) bytes, 16 pixels per shuffle.
+fn argbToBytes(comptime channels: usize, argb: []const u32, out: []u8) void {
+    var i: usize = 0;
+    while (i + 16 <= argb.len) : (i += 16) argbToBytesN(16, channels, argb, out, i);
+    while (i < argb.len) : (i += 1) argbToBytesN(1, channels, argb, out, i);
+}
+
+fn argbToBytesN(comptime n: usize, comptime channels: usize, argb: []const u32, out: []u8, i: usize) void {
+    var px: @Vector(n, u32) = argb[i..][0..n].*;
+    if (@import("builtin").cpu.arch.endian() == .big) px = @byteSwap(px);
+    const mask = comptime blk: {
+        const byte_of = [4]i32{ 2, 1, 0, 3 }; // r, g, b, a in a little-endian ARGB word
+        var m: [n * channels]i32 = undefined;
+        for (0..n) |p| for (0..channels) |c| {
+            m[p * channels + c] = 4 * p + byte_of[c];
+        };
+        break :blk m;
+    };
+    const bytes: @Vector(4 * n, u8) = @bitCast(px);
+    out[i * channels ..][0 .. n * channels].* = @shuffle(u8, bytes, undefined, mask);
 }
 
 fn decodeLossy(scratch: std.mem.Allocator, hdr: Header, inf: Info, out: []u8) !void {
@@ -87,6 +105,20 @@ test {
     _ = @import("vp8.zig");
     _ = @import("alpha.zig");
     _ = @import("yuv.zig");
+}
+
+test "ARGB to rgb / rgba bytes" {
+    var argb: [21]u32 = undefined; // one 16-pixel vector and a tail
+    for (&argb, 0..) |*p, i| p.* = @as(u32, @intCast(i)) *% 0x9E3779B9;
+    var rgba: [21 * 4]u8 = undefined;
+    var rgb: [21 * 3]u8 = undefined;
+    argbToBytes(4, &argb, &rgba);
+    argbToBytes(3, &argb, &rgb);
+    for (argb, 0..) |p, i| {
+        const want = [4]u8{ @truncate(p >> 16), @truncate(p >> 8), @truncate(p), @truncate(p >> 24) };
+        try std.testing.expectEqualSlices(u8, &want, rgba[4 * i ..][0..4]);
+        try std.testing.expectEqualSlices(u8, want[0..3], rgb[3 * i ..][0..3]);
+    }
 }
 
 /// Splits a golden image from golang.org/x/image's testdata: a gray image
