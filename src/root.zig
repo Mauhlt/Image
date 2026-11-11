@@ -201,6 +201,11 @@ test {
     _ = @import("Formats/netpbm.zig");
     _ = @import("Colors/test.zig");
     _ = @import("Formats/qoi/matches.zig");
+    _ = @import("Formats/heic/heif.zig");
+    _ = @import("Formats/heic/hevc/bits.zig");
+    _ = @import("Formats/heic/hevc/tables.zig");
+    _ = @import("Formats/heic/hevc/params.zig");
+    _ = @import("Formats/heic/hevc/cabac.zig");
     inline for (.{ BMP, JPG, PGM, PNG, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
 }
 
