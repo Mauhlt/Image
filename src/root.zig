@@ -1,189 +1,242 @@
+//! Image = decoded pixels + dimensions + the Vulkan format to upload them as.
+//!
+//! Every supported format lives in `Formats/<fmt>/<fmt>.zig` and exposes the same 3 fns:
+//!     info(data: []const u8) !Info                                  -- parse header only
+//!     decodeInto(scratch, data, info: Info, out: []u8) !void        -- decode into caller memory
+//!     encode(img: *const Image, w: *std.Io.Writer, gpa) !void
+//! `decode` / `read` below are thin wrappers that allocate the output for you.
+//! For loading many files at once see `Batch` (one allocation for all pixels).
 const std = @import("std");
 const vk = @import("Vulkan");
-const Pixels = @import("Colors/pixels.zig").Pixels;
+const misc = @import("misc.zig");
 
-const BMP = @import("Formats/bmp/bmp.zig");
-const JPG = @import("Formats/jpg/jpg.zig");
-const PGM = @import("Formats/pgm/pgm.zig");
-const PNG = @import("Formats/png/png.zig");
-const PPM = @import("Formats/ppm/ppm.zig");
-const QOI = @import("Formats/qoi/qoi.zig");
+pub const Pixels = @import("Colors/pixels.zig").Pixels;
+pub const PixelTag = @import("Colors/pixels.zig").PixelTag;
+pub const Info = @import("info.zig");
+pub const Batch = @import("batch.zig");
+/// GPU textures: mipmaps, arrays, cube maps, BCn - see texture.zig
+pub const Texture = @import("texture.zig");
+pub const ImageTag = misc.ImageTag;
+pub const tagFromExt = misc.tagFromExt;
 
-// misc
-const ImageTag = @import("misc.zig").ImageTag;
-const tagFromExt = @import("misc.zig").tagFromExt;
-const mapImageTagFromExt = @import("misc.zig").mapImageTagFromExt;
-const readData = @import("misc.zig").readData;
+pub const BMP = @import("Formats/bmp/bmp.zig");
+pub const JPG = @import("Formats/jpg/jpg.zig");
+pub const PGM = @import("Formats/pgm/pgm.zig");
+pub const PNG = @import("Formats/png/png.zig");
+pub const PPM = @import("Formats/ppm/ppm.zig");
+pub const QOI = @import("Formats/qoi/qoi.zig");
+pub const TGA = @import("Formats/tga/tga.zig");
+pub const WEBP = @import("Formats/webp/webp.zig");
+
+const Image = @This();
 
 width: u32,
 height: u32,
 pixels: Pixels,
 fmt: vk.Format,
 
-pub fn copy(img: *const @This(), gpa: std.mem.Allocator) !@This() {
-    const pixels = blk: switch (img.pixels) {
-        inline else => |data, tag| {
-            const new_data = try gpa.dupe(@TypeOf(data[0]), data);
-            errdefer gpa.free(new_data);
-            break :blk @unionInit(Pixels, @tagName(tag), new_data);
-        }
+/// Codec module for a format, or null if unsupported.
+pub fn Codec(comptime tag: ImageTag) ?type {
+    return switch (tag) {
+        .bmp => BMP,
+        .jpg => JPG,
+        .pgm => PGM,
+        .png => PNG,
+        .ppm => PPM,
+        .qoi => QOI,
+        .tga => TGA,
+        .webp => WEBP,
+        .gif, .heic, .paint, .tif => null,
     };
+}
+
+pub fn isSupported(tag: ImageTag) bool {
+    return switch (tag) {
+        inline else => |t| Codec(t) != null,
+    };
+}
+
+pub fn info(tag: ImageTag, data: []const u8) !Info {
+    switch (tag) {
+        inline else => |t| {
+            const C = Codec(t) orelse return error.Unsupported;
+            return C.info(data);
+        },
+    }
+}
+
+/// Decodes into `out` (length must be `inf.byteLen()`), laid out as `inf.tag` pixels.
+/// `scratch` holds temporaries only and is NOT freed piecewise: pass an arena
+/// (reset it between images to reuse its memory - see `Batch`).
+pub fn decodeInto(
+    tag: ImageTag,
+    scratch: std.mem.Allocator,
+    data: []const u8,
+    inf: Info,
+    out: []u8,
+) !void {
+    if (out.len != try inf.byteLen()) return error.InvalidBufferLen;
+    switch (tag) {
+        inline else => |t| {
+            const C = Codec(t) orelse return error.Unsupported;
+            return C.decodeInto(scratch, data, inf, out);
+        },
+    }
+}
+
+pub fn decode(tag: ImageTag, gpa: std.mem.Allocator, data: []const u8) !Image {
+    const inf = try info(tag, data);
+    const bytes = try gpa.alloc(u8, try inf.byteLen());
+    errdefer gpa.free(bytes);
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    try decodeInto(tag, arena.allocator(), data, inf, bytes);
+    return .{
+        .width = inf.width,
+        .height = inf.height,
+        .pixels = .fromBytes(inf.tag, bytes),
+        .fmt = inf.fmt,
+    };
+}
+
+pub fn encode(img: *const Image, tag: ImageTag, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
+    switch (tag) {
+        inline else => |t| {
+            const C = Codec(t) orelse return error.Unsupported;
+            try C.encode(img, w, gpa);
+            try w.flush();
+        },
+    }
+}
+
+pub fn copy(img: *const Image, gpa: std.mem.Allocator) !Image {
     return .{
         .width = img.width,
         .height = img.height,
-        .pixels = pixels,
+        .pixels = try img.pixels.dupe(gpa),
         .fmt = img.fmt,
     };
 }
 
-pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
+/// Returns a new image with pixels converted to `tag`.
+pub fn convert(img: *const Image, tag: PixelTag, gpa: std.mem.Allocator) !Image {
+    const srgb = std.mem.endsWith(u8, @tagName(img.fmt), "srgb");
+    return .{
+        .width = img.width,
+        .height = img.height,
+        .pixels = try img.pixels.convertV(tag, gpa),
+        .fmt = Info.fmtFor(tag, srgb),
+    };
+}
+
+pub fn deinit(self: Image, gpa: std.mem.Allocator) void {
     self.pixels.deinit(gpa);
 }
 
-pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
+pub fn format(self: *const Image, w: *std.Io.Writer) !void {
     try w.print("\nImage:\n", .{});
     try w.print("Width: {}\n", .{self.width});
     try w.print("Height: {}\n", .{self.height});
-    switch (self.pixels) {
-        inline else => |data| try w.print("# of Pixels: {}\n", .{data.len}),
-    }
+    try w.print("Pixels: {} ({t})\n", .{ self.pixels.count(), self.pixels });
     try w.print("Format: {t}\n", .{self.fmt});
 }
 
-pub fn printPixels(self: *const @This()) !void {
+pub fn printPixels(self: *const Image) void {
     switch (self.pixels) {
-        inline else => |data| {
-            for (data) |datum| std.debug.print("{}\n", .{datum});
-        }
+        inline else => |data| for (data) |datum| std.debug.print("{}\n", .{datum}),
     }
 }
 
-const PathType = enum(u8) {
+pub const PathType = enum(u8) {
     cwd, // path = path from cwd/terminal to file
     dir, // path = path from starting dir to file
     abs, // path = abs path from root to file
 };
 
-const ReadArgs = struct {
+pub const ReadArgs = struct {
     io: std.Io,
     gpa: std.mem.Allocator,
     dir: std.Io.Dir = undefined,
     filepath: []const u8,
     path_type: PathType = .cwd,
-
-    pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-        try w.print("Dir: {}\n", .{self.dir});
-        try w.print("Path: {s}\n", .{self.path});
-        try w.print("Path Type: {t}\n", .{self.path_type});
-    }
 };
 
-pub fn read(args: ReadArgs) !@This() {
-    var file = try switch (args.path_type) {
-        .abs => std.Io.Dir.openFileAbsolute(args.io, args.filepath, .{ .mode = .read_only }),
-        .cwd => std.Io.Dir.cwd().openFile(args.io, args.filepath, .{ .mode = .read_only }),
-        .dir => args.dir.openFile(args.io, args.filepath, .{ .mode = .read_only }),
-    };
-    defer file.close(args.io);
-
-    const data = try readData(args.io, args.gpa, file);
-    defer args.gpa.free(data);
-
-    const ext_str = std.fs.path.extension(args.filepath)[1..];
-    const ext = std.meta.stringToEnum(ImageTag, ext_str) orelse
-        mapImageTagFromExt.get(ext_str) orelse {
-        if (@import("builtin").mode == .debug) {
-            std.debug.print("Invalid Extension: {s}\n", .{ext_str});
-        }
-        return error.InvalidFileExtension;
-    };
-    return switch (ext) {
-        .bmp => BMP.decode(args.gpa, data),
-        // .jpg => JPG.decode(args.gpa, data),
-        .pgm => PGM.decode(args.gpa, data),
-        .png => PNG.decode(args.gpa, data),
-        .ppm => PPM.decode(args.gpa, data),
-        .qoi => QOI.decode(args.gpa, data),
-        else => {
-            std.debug.print("{s}\n", .{@tagName(ext)});
-            return error.Unsupported;
-        },
+pub fn openFile(io: std.Io, dir: std.Io.Dir, path: []const u8, path_type: PathType) !std.Io.File {
+    return switch (path_type) {
+        .abs => std.Io.Dir.openFileAbsolute(io, path, .{ .mode = .read_only }),
+        .cwd => std.Io.Dir.cwd().openFile(io, path, .{ .mode = .read_only }),
+        .dir => dir.openFile(io, path, .{ .mode = .read_only }),
     };
 }
 
-pub fn write(
-    img: *const @This(),
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    filepath: []const u8,
-) !void {
+/// Reads + decodes a file; format is chosen from the extension.
+pub fn read(args: ReadArgs) !Image {
+    const tag = try tagFromExt(args.filepath);
+    if (!isSupported(tag)) return error.Unsupported;
+    var file = try openFile(args.io, args.dir, args.filepath, args.path_type);
+    defer file.close(args.io);
+    var buf: std.ArrayList(u8) = .empty;
+    defer buf.deinit(args.gpa);
+    const data = try misc.readFileInto(args.io, args.gpa, file, &buf);
+    return decode(tag, args.gpa, data);
+}
+
+/// Encodes + writes a file; format is chosen from the extension.
+pub fn write(img: *const Image, io: std.Io, gpa: std.mem.Allocator, filepath: []const u8) !void {
+    const tag = try tagFromExt(filepath);
+    if (!isSupported(tag)) return error.Unsupported;
     var file = try std.Io.Dir.cwd().createFile(io, filepath, .{});
     defer file.close(io);
-
-    var buf: [4096]u8 = undefined;
+    var buf: [64 * 1024]u8 = undefined;
     var writer = file.writer(io, &buf);
-    const io_writer = &writer.interface;
-
-    const image_tag = try tagFromExt(filepath);
-    return switch (image_tag) {
-        .bmp => BMP.encode(img, io_writer),
-        // .jpg => JPG.encode(img, io_writer, gpa),
-        .pgm => PGM.encode(img, io_writer),
-        .png => PNG.encode(img, io_writer, gpa),
-        .ppm => PPM.encode(img, io_writer),
-        .qoi => QOI.encode(img, io_writer),
-        else => unreachable,
-    };
+    try img.encode(tag, &writer.interface, gpa);
 }
 
-fn extractFilename(name: []const u8) ![]const u8 {
-    const ind = std.mem.indexOfScalar(u8, name, '.') orelse return error.InvalidName;
-    return name[0..ind];
+// ───────────────────────────── Tests ─────────────────────────────
+
+test {
+    _ = @import("misc.zig");
+    _ = @import("batch.zig");
+    _ = @import("texture.zig");
+    _ = @import("Formats/netpbm.zig");
+    _ = @import("Colors/test.zig");
+    _ = @import("Formats/qoi/matches.zig");
+    inline for (.{ BMP, JPG, PGM, PNG, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
 }
 
-/// Testing image fn
-fn checkImgsMatch(img1: *const @This(), img2: *const @This()) !void {
-    // check that active tag is equal
-    const tag1 = std.meta.activeTag(img1.pixels);
-    const tag2 = std.meta.activeTag(img2.pixels);
-    std.debug.assert(tag1 == tag2);
-    switch (img1.pixels) {
-        inline else => |data1, tag| {
-            const data2 = @field(img2.pixels, @tagName(tag));
-            try std.testing.expectEqualDeep(data1, data2);
-        },
+/// Test helper: converts both images to `tag` and compares pixels.
+/// `tolerance` = max mean abs error per channel (0 = exact).
+pub fn expectSimilar(gpa: std.mem.Allocator, a: *const Image, b: *const Image, tag: PixelTag, tolerance: f64) !void {
+    try std.testing.expectEqual(a.width, b.width);
+    try std.testing.expectEqual(a.height, b.height);
+    const pa = try a.pixels.convert(tag, gpa);
+    defer pa.deinit(gpa);
+    const pb = try b.pixels.convert(tag, gpa);
+    defer pb.deinit(gpa);
+    const ba = pa.asBytes();
+    const bb = pb.asBytes();
+    if (tolerance == 0) return std.testing.expectEqualSlices(u8, ba, bb);
+    var total: u64 = 0;
+    for (ba, bb) |x, y| total += @abs(@as(i32, x) - y);
+    const mean = @as(f64, @floatFromInt(total)) / @as(f64, @floatFromInt(ba.len));
+    if (mean > tolerance) {
+        std.debug.print("mean abs error {d:.3} > {d:.3}\n", .{ mean, tolerance });
+        return error.TestExpectedSimilar;
     }
+}
+
+fn testRead(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
+    return read(.{ .io = io, .gpa = gpa, .filepath = path }) catch |err| {
+        std.debug.print("failed reading {s}: {t}\n", .{ path, err });
+        return err;
+    };
 }
 
 test "QOI - Basics" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
     const io = threaded.io();
-    // 6 Total
-    const rgb_data = [_]u8{
-        255, 255, 10, // rgb
-        255, 255, 10, //
-        255, 255, 10, // run (1)
-        253, 253, 8, // diff
-        17, 10, 17, // luma
-        255, 255, 10, // index
-        30, 30, 30, // rgb
-    };
-    const rgba_data = [_]u8{
-        255, 255, 10, 0, // rgba
-        255, 255, 10, 0, //
-        255, 255, 10, 0, // run 1
-        253, 253, 8, 0, // diff
-        17, 10, 17, 0, // luma
-        255, 255, 10, 0, // index
-        30, 30, 30, 0, // rgb
-        170, 170, 170, 170, // rgba
-    };
-    const datas = [_][]const u8{
-        rgb_data[0..rgb_data.len],
-        rgba_data[0..rgba_data.len],
-    };
-    const pixel_tags = [_]std.meta.Tag(Pixels){ .rgb, .rgba };
     const read_filepaths = [_][]const u8{
         "src/Data/Read/BasicDecodeRGB.qoi",
         "src/Data/Read/BasicDecodeRGBA.qoi",
@@ -192,64 +245,117 @@ test "QOI - Basics" {
         "src/Data/Write/BasicDecodeRGB.qoi",
         "src/Data/Write/BasicDecodeRGBA.qoi",
     };
-    inline for (comptime 0..2) |i| {
-        const pxs: Pixels = try .init(pixel_tags[i], gpa, datas[i]);
-        defer pxs.deinit(gpa);
-        const img1 = try read(.{
-            .io = io,
-            .filepath = read_filepaths[i],
-            .gpa = gpa,
-        });
+    for (read_filepaths, write_filepaths) |rpath, wpath| {
+        const img1 = try testRead(io, gpa, rpath);
         defer img1.deinit(gpa);
-        // if (@import("builtin").mode == .debug) std.debug.print("{f}\n", .{img1});
-        try img1.write(io, gpa, write_filepaths[i]);
-        const img2 = try read(.{ .io = io, .gpa = gpa, .filepath = write_filepaths[i] });
+        try img1.write(io, gpa, wpath);
+        const img2 = try testRead(io, gpa, wpath);
         defer img2.deinit(gpa);
-        // if (@import("builtin").mode == .debug) std.debug.print("{f}\n", .{img1});
-        try checkImgsMatch(&img1, &img2);
+        try std.testing.expectEqual(std.meta.activeTag(img1.pixels), std.meta.activeTag(img2.pixels));
+        try std.testing.expectEqualSlices(u8, img1.pixels.asBytes(), img2.pixels.asBytes());
     }
 }
 
-test "Images" {
+// Every reference file (written by an independent encoder, Pillow) must decode to the
+// same pixels as the PNG of the same picture.
+test "Images - decode reference files" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
     const io = threaded.io();
-    const read_filepaths = [_][]const u8{
-        // "src/Data/Read/BasicArt.bmp",
-        // "src/Data/Read/BasicArt.jpg",
-        // "src/Data/Read/BasicArt.pgm",
-        // "src/Data/Read/BasicArt.png",
-        // "src/Data/Read/BasicArt.ppm",
-        // "src/Data/Read/BasicArt.qoi",
+
+    const Case = struct { path: []const u8, tag: PixelTag, tol: f64 = 0 };
+    const groups = [_]struct { ref: []const u8, cases: []const Case }{
+        .{ .ref = "src/Data/Read/BasicArt.png", .cases = &.{
+            // these two were exported from a slightly different source (blue off by 1)
+            .{ .path = "src/Data/Read/BasicArt.bmp", .tag = .rgb, .tol = 0.5 },
+            .{ .path = "src/Data/Read/BasicArt.qoi", .tag = .rgb, .tol = 0.5 },
+            .{ .path = "src/Data/Read/BasicArt.ppm", .tag = .rgb },
+            .{ .path = "src/Data/Read/BasicArt.pgm", .tag = .g, .tol = 0.6 }, // gray formula differs by rounding
+            .{ .path = "src/Data/Read/BasicArt.tga", .tag = .rgba },
+            .{ .path = "src/Data/Read/BasicArt.webp", .tag = .rgba },
+            .{ .path = "src/Data/Read/BasicArt.jpg", .tag = .rgb, .tol = 3 },
+        } },
+        .{ .ref = "src/Data/Read/Gradient.png", .cases = &.{
+            .{ .path = "src/Data/Read/Gradient.bmp", .tag = .rgb },
+            .{ .path = "src/Data/Read/Gradient.ppm", .tag = .rgb },
+            .{ .path = "src/Data/Read/Gradient.pgm", .tag = .g, .tol = 0.6 },
+            .{ .path = "src/Data/Read/Gradient.tga", .tag = .rgba },
+            .{ .path = "src/Data/Read/GradientRle.tga", .tag = .rgba },
+            .{ .path = "src/Data/Read/Gradient.webp", .tag = .rgba },
+        } },
+        // JPEGs vs. Pillow's own decode of the same file (IDCT/upsampling differ slightly)
+        .{ .ref = "src/Data/Read/GradientJpg.ref.ppm", .cases = &.{
+            .{ .path = "src/Data/Read/Gradient.jpg", .tag = .rgb, .tol = 2.5 },
+        } },
+        .{ .ref = "src/Data/Read/Gradient444Jpg.ref.ppm", .cases = &.{
+            .{ .path = "src/Data/Read/Gradient444.jpg", .tag = .rgb, .tol = 1 },
+        } },
+        .{ .ref = "src/Data/Read/GradientGrayJpg.ref.ppm", .cases = &.{
+            .{ .path = "src/Data/Read/GradientGray.jpg", .tag = .rgb, .tol = 1 },
+        } },
     };
-    const write_filepaths = [_][]const u8{
-        // "src/Data/Write/BasicArt.bmp",
-        // "src/Data/Write/BasicArt.jpg",
-        // "src/Data/Write/BasicArt.pgm",
-        // "src/Data/Write/BasicArt.png",
-        // "src/Data/Write/BasicArt.ppm",
-        // "src/Data/Write/BasicArt.qoi",
-    };
-    for (read_filepaths) |read_filepath| {
-        const rfilepath = read_filepath;
-        var img1 = try read(.{
-            .gpa = gpa,
-            .io = io,
-            .filepath = rfilepath,
-            .path_type = .cwd,
-        });
-        defer img1.deinit(gpa);
-        if (@import("builtin").mode == .debug) std.debug.print("{f}", .{img1});
-        for (write_filepaths) |wfilepath| {
-            try img1.write(io, gpa, wfilepath);
-            var img2 = try read(.{
-                .io = io,
-                .gpa = gpa,
-                .path_type = .cwd,
-                .filepath = wfilepath,
-            });
-            defer img2.deinit(gpa);
-            try std.testing.expectEqualDeep(img1, img2);
+    for (groups) |group| {
+        const ref = try testRead(io, gpa, group.ref);
+        defer ref.deinit(gpa);
+        for (group.cases) |case| {
+            const img = try testRead(io, gpa, case.path);
+            defer img.deinit(gpa);
+            expectSimilar(gpa, &ref, &img, case.tag, case.tol) catch |err| {
+                std.debug.print("mismatch: {s}\n", .{case.path});
+                return err;
+            };
         }
+    }
+    // progressive JPEG is not supported (yet) - must fail cleanly
+    try std.testing.expectError(error.UnsupportedProgressive, read(.{
+        .io = io,
+        .gpa = gpa,
+        .filepath = "src/Data/Read/GradientProgressive.jpg",
+    }));
+}
+
+// encode -> file -> decode for every writable format.
+test "Images - write round trip" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    const Case = struct { path: []const u8, tag: PixelTag, tol: f64 = 0 };
+    const cases = [_]Case{
+        .{ .path = "src/Data/Write/BasicArt.bmp", .tag = .rgb },
+        .{ .path = "src/Data/Write/BasicArt.png", .tag = .rgba },
+        .{ .path = "src/Data/Write/BasicArt.qoi", .tag = .rgba },
+        .{ .path = "src/Data/Write/BasicArt.ppm", .tag = .rgb },
+        .{ .path = "src/Data/Write/BasicArt.pgm", .tag = .g },
+        .{ .path = "src/Data/Write/BasicArt.tga", .tag = .rgba },
+        .{ .path = "src/Data/Write/BasicArt.webp", .tag = .rgba },
+        .{ .path = "src/Data/Write/BasicArt.jpg", .tag = .rgb, .tol = 2 },
+        .{ .path = "src/Data/Write/Gradient.png", .tag = .rgba },
+        .{ .path = "src/Data/Write/Gradient.tga", .tag = .rgba },
+        .{ .path = "src/Data/Write/Gradient.webp", .tag = .rgba },
+        // noisy image at q85 4:2:0; Pillow's encoder scores 7.72 on the same input
+        .{ .path = "src/Data/Write/Gradient.jpg", .tag = .rgb, .tol = 8 },
+    };
+    for (cases) |case| {
+        const src_path = if (std.mem.indexOf(u8, case.path, "Gradient") != null)
+            "src/Data/Read/Gradient.png"
+        else
+            "src/Data/Read/BasicArt.png";
+        const src = try testRead(io, gpa, src_path);
+        defer src.deinit(gpa);
+        const img1 = try src.convert(case.tag, gpa);
+        defer img1.deinit(gpa);
+        img1.write(io, gpa, case.path) catch |err| {
+            std.debug.print("failed writing {s}: {t}\n", .{ case.path, err });
+            return err;
+        };
+        const img2 = try testRead(io, gpa, case.path);
+        defer img2.deinit(gpa);
+        expectSimilar(gpa, &img1, &img2, case.tag, case.tol) catch |err| {
+            std.debug.print("mismatch: {s}\n", .{case.path});
+            return err;
+        };
     }
 }

@@ -44,4 +44,19 @@ pub fn build(b: *std.Build) void {
     run_mod_tests_release.setCwd(b.path("."));
     const test_release_step = b.step("test-release", "Run tests in ReleaseFast");
     test_release_step.dependOn(&run_mod_tests_release.step);
+
+    // Benchmarks (ReleaseFast)
+    const bench_exe = b.addExecutable(.{
+        .name = "bench",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/bench.zig"),
+            .target = target,
+            .optimize = .ReleaseFast,
+            .imports = &.{.{ .name = "Image", .module = mod_release }},
+        }),
+    });
+    const run_bench = b.addRunArtifact(bench_exe);
+    run_bench.setCwd(b.path("."));
+    const bench_step = b.step("bench", "Decode benchmarks (ReleaseFast)");
+    bench_step.dependOn(&run_bench.step);
 }
