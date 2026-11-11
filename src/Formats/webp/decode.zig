@@ -167,47 +167,65 @@ fn decodeImage(
     }
 
     const total = xsize * ysize;
+    const block_mask = (@as(usize, 1) << prefix_bits) - 1;
     var pos: usize = 0;
+    var x: usize = 0; // pos = y * xsize + x, kept without dividing
+    var y: usize = 0;
     var last_cached: usize = 0; // pixels [last_cached, pos) still need inserting into the cache
     var group = &groups[0];
+    // a local copy, so the reader can stay in registers while pixels are stored
+    var reader = br.*;
     while (pos < total) {
-        const x = pos % xsize;
-        if (prefix_bits > 0 and (x & ((@as(usize, 1) << prefix_bits) - 1)) == 0) {
-            const y = pos / xsize;
+        if (prefix_bits > 0 and x & block_mask == 0) {
             group = &groups[entropy_img[(y >> prefix_bits) * ew + (x >> prefix_bits)]];
         }
-        const s = try group.trees[0].decode(br);
-        if (s < 256) {
-            const r = try group.trees[1].decode(br);
-            const b = try group.trees[2].decode(br);
-            const a = try group.trees[3].decode(br);
-            out[pos] = (@as(u32, a) << 24) | (@as(u32, r) << 16) | (@as(u32, s) << 8) | b;
-            pos += 1;
-        } else if (s < 256 + NUM_LENGTH_CODES) {
-            const length = prefixValue(br, s - 256);
-            const dist_sym = try group.trees[4].decode(br);
-            const dist = distanceFromCode(prefixValue(br, dist_sym), xsize);
+        const s = try group.trees[0].decode(&reader);
+        if (s >= 256 and s < 256 + NUM_LENGTH_CODES) { // backward reference
+            const length = prefixValue(&reader, s - 256);
+            const dist_sym = try group.trees[4].decode(&reader);
+            const dist = distanceFromCode(prefixValue(&reader, dist_sym), xsize);
             if (dist > pos or pos + length > total) return Error.InvalidBackReference;
-            for (0..length) |k| out[pos + k] = out[pos + k - dist]; // may overlap
+            if (dist >= length) {
+                @memcpy(out[pos..][0..length], out[pos - dist ..][0..length]);
+            } else {
+                for (0..length) |k| out[pos + k] = out[pos + k - dist]; // overlapping: repeats
+            }
             pos += length;
+            x += length;
+            if (x >= xsize) {
+                y += x / xsize;
+                x %= xsize;
+            }
+            std.debug.assert(y * xsize + x == pos);
             // the group can change inside a copy; re-pick for the next symbol
             if (prefix_bits > 0 and pos < total) {
-                const nx = pos % xsize;
-                const ny = pos / xsize;
-                group = &groups[entropy_img[(ny >> prefix_bits) * ew + (nx >> prefix_bits)]];
+                group = &groups[entropy_img[(y >> prefix_bits) * ew + (x >> prefix_bits)]];
             }
         } else {
-            const idx = s - 256 - NUM_LENGTH_CODES;
-            if (idx >= cache_size) return Error.InvalidColorCacheIndex;
-            // cache must be up to date before a lookup
-            while (last_cached < pos) : (last_cached += 1) cache[cacheIndex(out[last_cached], cache_bits)] = out[last_cached];
-            out[pos] = cache[idx];
+            if (s < 256) {
+                const r = try group.trees[1].decode(&reader);
+                const b = try group.trees[2].decode(&reader);
+                const a = try group.trees[3].decode(&reader);
+                out[pos] = (@as(u32, a) << 24) | (@as(u32, r) << 16) | (@as(u32, s) << 8) | b;
+            } else {
+                const idx = s - 256 - NUM_LENGTH_CODES;
+                if (idx >= cache_size) return Error.InvalidColorCacheIndex;
+                // cache must be up to date before a lookup
+                while (last_cached < pos) : (last_cached += 1) cache[cacheIndex(out[last_cached], cache_bits)] = out[last_cached];
+                out[pos] = cache[idx];
+            }
             pos += 1;
+            x += 1;
+            if (x == xsize) {
+                x = 0;
+                y += 1;
+            }
         }
         if (cache_bits > 0) {
             while (last_cached < pos) : (last_cached += 1) cache[cacheIndex(out[last_cached], cache_bits)] = out[last_cached];
         }
     }
+    br.* = reader;
     try br.check();
 }
 

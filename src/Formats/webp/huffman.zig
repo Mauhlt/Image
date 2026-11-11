@@ -11,18 +11,21 @@ pub const CODE_LENGTH_ORDER = [CODE_LENGTH_CODES]u8{ 17, 18, 0, 1, 2, 3, 4, 5, 1
 
 // ───────────────────────────── Decode ─────────────────────────────
 
+/// Two-level lookup tables (as zlib and libwebp do): the next ROOT_BITS stream
+/// bits index the root table; codes longer than that continue in a sub-table
+/// for their first ROOT_BITS bits, indexed by the following bits.
 pub const Tree = struct {
-    /// indexed by the next ROOT_BITS stream bits: (len << 16) | symbol, len 0 = longer code
-    root: [1 << ROOT_BITS]u32 = @splat(0),
-    /// number of codes of each length
-    counts: [MAX_LEN + 1]u16 = @splat(0),
-    /// symbols sorted by (length, value)
-    symbols: []u16 = &.{},
+    /// root table, then the sub-tables. An entry is (len << 16) | value:
+    /// in the root, len <= ROOT_BITS gives the code length and symbol, and a
+    /// larger len links to a sub-table of 2^(len - ROOT_BITS) entries at
+    /// `value`; sub-table entries hold the remaining length and the symbol.
+    /// len 0: no code starts with these bits.
+    table: []u32 = &.{},
     /// set when the code has a single symbol (0 bits per symbol)
     single: ?u16 = null,
 
     pub fn fromLengths(scratch: std.mem.Allocator, lengths: []const u8) !Tree {
-        var t: Tree = .{};
+        var counts: [MAX_LEN + 1]u16 = @splat(0);
         var n_used: usize = 0;
         var last: u16 = 0;
         for (lengths, 0..) |len, s| {
@@ -30,78 +33,88 @@ pub const Tree = struct {
             if (len != 0) {
                 n_used += 1;
                 last = @intCast(s);
-                t.counts[len] += 1;
+                counts[len] += 1;
             }
         }
         if (n_used == 0) return Error.InvalidHuffmanCode;
-        if (n_used == 1) {
-            t.single = last;
-            return t;
-        }
+        if (n_used == 1) return .{ .single = last };
         // over-subscription check
         var left: i32 = 1;
         for (1..MAX_LEN + 1) |len| {
-            left = (left << 1) - t.counts[len];
+            left = (left << 1) - counts[len];
             if (left < 0) return Error.InvalidHuffmanCode;
         }
 
-        var offs: [MAX_LEN + 2]u16 = @splat(0);
-        for (1..MAX_LEN + 1) |len| offs[len + 1] = offs[len] + t.counts[len];
-        t.symbols = try scratch.alloc(u16, n_used);
-        var next_code: [MAX_LEN + 1]u16 = @splat(0);
+        // canonical first code of each length
+        var first_code: [MAX_LEN + 1]u16 = @splat(0);
         var code: u16 = 0;
         for (1..MAX_LEN + 1) |len| {
-            code = (code + t.counts[len - 1]) << 1;
-            next_code[len] = code;
+            first_code[len] = code;
+            code = (code + counts[len]) << 1;
         }
-        next_code[1] = 0;
-        // recompute properly: canonical first code of each length
-        code = 0;
-        for (1..MAX_LEN + 1) |len| {
-            next_code[len] = code;
-            code = (code + t.counts[len]) << 1;
+
+        // sub-table sizes: the longest code under each root prefix
+        var sub_bits: [1 << ROOT_BITS]u8 = @splat(0);
+        var next_code = first_code;
+        for (lengths) |len| if (len > ROOT_BITS) {
+            const prefix = reversedCode(next_code[len], len) & ((1 << ROOT_BITS) - 1);
+            next_code[len] += 1;
+            sub_bits[prefix] = @max(sub_bits[prefix], len - ROOT_BITS);
+        };
+        var size: usize = 1 << ROOT_BITS;
+        for (sub_bits) |b| {
+            if (b > 0) size += @as(usize, 1) << @intCast(b);
         }
+        const table = try scratch.alloc(u32, size);
+        @memset(table, 0);
+        size = 1 << ROOT_BITS;
+        for (sub_bits, 0..) |b, prefix| if (b > 0) {
+            table[prefix] = (@as(u32, ROOT_BITS + b) << 16) | @as(u32, @intCast(size));
+            size += @as(usize, 1) << @intCast(b);
+        };
+
+        next_code = first_code;
         for (lengths, 0..) |len, s| {
             if (len == 0) continue;
-            t.symbols[offs[len]] = @intCast(s);
-            offs[len] += 1;
-            const c = next_code[len];
+            const rev = reversedCode(next_code[len], len);
             next_code[len] += 1;
             if (len <= ROOT_BITS) {
-                const rev: u32 = @bitReverse(@as(u8, @truncate(c << @intCast(ROOT_BITS - len))));
-                const step = @as(u32, 1) << @intCast(len);
-                var i = rev;
-                while (i < (1 << ROOT_BITS)) : (i += step) t.root[i] = (@as(u32, len) << 16) | @as(u32, @intCast(s));
+                fill(table[0 .. 1 << ROOT_BITS], rev, len, (@as(u32, len) << 16) | @as(u32, @intCast(s)));
+            } else {
+                const link = table[rev & ((1 << ROOT_BITS) - 1)];
+                const sub = table[link & 0xFFFF ..][0 .. @as(usize, 1) << @intCast((link >> 16) - ROOT_BITS)];
+                const rest = len - ROOT_BITS;
+                fill(sub, rev >> ROOT_BITS, rest, (@as(u32, rest) << 16) | @as(u32, @intCast(s)));
             }
         }
-        return t;
+        return .{ .table = table };
+    }
+
+    /// The code's bits in stream order (its first bit, the MSB, at bit 0).
+    fn reversedCode(code: u16, len: u8) u32 {
+        return @bitReverse(code) >> @intCast(16 - len);
+    }
+
+    /// Every entry of `t` whose low `len` index bits are `index`.
+    fn fill(t: []u32, index: u32, len: u8, entry: u32) void {
+        var i: usize = index;
+        while (i < t.len) : (i += @as(usize, 1) << @intCast(len)) t[i] = entry;
     }
 
     pub fn decode(self: *const Tree, br: *BitReader) Error!u16 {
         if (self.single) |s| return s;
-        const entry = self.root[br.peek(ROOT_BITS)];
-        if (entry >> 16 != 0) {
-            br.consume(@intCast(entry >> 16));
-            return @truncate(entry);
-        }
-        // slow path: walk canonical codes bit by bit (MSB of code = first stream bit)
         const bits = br.peek(MAX_LEN);
-        var code: i32 = 0;
-        var first: i32 = 0;
-        var index: i32 = 0;
-        for (1..MAX_LEN + 1) |len| {
-            code |= @intCast((bits >> @intCast(len - 1)) & 1);
-            const count: i32 = self.counts[len];
-            if (code - count < first) {
-                br.consume(@intCast(len));
-                return self.symbols[@intCast(index + (code - first))];
-            }
-            index += count;
-            first += count;
-            first <<= 1;
-            code <<= 1;
-        }
-        return Error.InvalidHuffmanCode;
+        var entry = self.table[bits & ((1 << ROOT_BITS) - 1)];
+        var len = entry >> 16;
+        if (len > ROOT_BITS) {
+            const sub_mask = (@as(u32, 1) << @intCast(len - ROOT_BITS)) - 1;
+            entry = self.table[(entry & 0xFFFF) + ((bits >> ROOT_BITS) & sub_mask)];
+            len = entry >> 16;
+            if (len == 0) return Error.InvalidHuffmanCode;
+            len += ROOT_BITS;
+        } else if (len == 0) return Error.InvalidHuffmanCode;
+        br.consume(@intCast(len));
+        return @truncate(entry);
     }
 };
 
@@ -127,7 +140,7 @@ pub fn readTree(scratch: std.mem.Allocator, br: *BitReader, alphabet_size: usize
         const n_codes = br.readBits(4) + 4;
         for (0..n_codes) |i| cl_lengths[CODE_LENGTH_ORDER[i]] = @intCast(br.readBits(3));
         const cl_tree: Tree = try .fromLengths(scratch, &cl_lengths);
-        defer scratch.free(cl_tree.symbols);
+        defer scratch.free(cl_tree.table);
 
         var max_symbol = alphabet_size;
         if (br.readBit()) {

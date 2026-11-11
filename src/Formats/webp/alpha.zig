@@ -37,20 +37,25 @@ pub fn decode(scratch: std.mem.Allocator, chunk: []const u8, width: usize, heigh
 /// above; other pixels use the filter's predictor.
 pub fn unfilter(filter: Filter, a: []u8, w: usize, h: usize) void {
     if (filter == .none) return;
-    for (0..h) |y| for (0..w) |x| {
-        const i = y * w + x;
-        const pred: u8 = if (y == 0)
-            (if (x == 0) 0 else a[i - 1])
-        else if (x == 0)
-            a[i - w]
-        else switch (filter) {
-            .horizontal => a[i - 1],
-            .vertical => a[i - w],
-            .gradient => @intCast(std.math.clamp(@as(i32, a[i - 1]) + a[i - w] - a[i - w - 1], 0, 255)),
+    for (1..w) |x| a[x] +%= a[x - 1];
+    for (1..h) |y| {
+        const prev = a[(y - 1) * w ..][0..w];
+        const row = a[y * w ..][0..w];
+        row[0] +%= prev[0];
+        switch (filter) {
+            .horizontal => for (1..w) |x| {
+                row[x] +%= row[x - 1];
+            },
+            // no dependency along the row: this loop vectorizes
+            .vertical => for (row[1..], prev[1..]) |*v, above| {
+                v.* +%= above;
+            },
+            .gradient => for (1..w) |x| {
+                row[x] +%= @intCast(std.math.clamp(@as(i32, row[x - 1]) + prev[x] - prev[x - 1], 0, 255));
+            },
             .none => unreachable,
-        };
-        a[i] +%= pred;
-    };
+        }
+    }
 }
 
 test "unfilter inverts each filter" {
