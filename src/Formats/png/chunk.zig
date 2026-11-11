@@ -1,5 +1,6 @@
 const std = @import("std");
 const Error = @import("../error.zig").Error;
+const Crc32 = @import("crc.zig").Crc32;
 
 pub const Tag = enum(u32) {
     unsupported,
@@ -61,7 +62,7 @@ pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
 }
 
 pub fn updateCrc(self: *const @This()) u32 {
-    var h = std.hash.Crc32.init();
+    var h: Crc32 = .{};
     switch (self.tag) {
         .unsupported => {
             h.update(self.data[0..4]);
