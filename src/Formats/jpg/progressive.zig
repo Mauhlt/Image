@@ -81,11 +81,18 @@ pub fn decode(scratch: std.mem.Allocator, data: []const u8, first: Header, plane
         const g = grids[i];
         const p = planes[i];
         for (0..g.blocks.len / g.stride) |by| for (0..g.stride) |bx| {
-            const block = &g.blocks[by * g.stride + bx];
-            var coeffs: [64]f32 = undefined;
-            for (&coeffs, block, qt) |*f, q, t| f.* = @floatFromInt(@as(i32, q) * @as(i32, t));
+            const block: @Vector(64, i16) = g.blocks[by * g.stride + bx];
+            const q: @Vector(64, u16) = qt.*;
+            const coeffs: [64]f32 = @as(@Vector(64, f32), @floatFromInt(@as(@Vector(64, i32), block) * @as(@Vector(64, i32), q)));
+            const dst = p.data[by * 8 * p.stride + bx * 8 ..];
+            var ac = block;
+            ac[0] = 0;
+            if (!@reduce(.Or, ac != @as(@Vector(64, i16), @splat(0)))) { // flat block
+                jpg.storeFlat(dct.inverseDc(coeffs[0]), dst, p.stride);
+                continue;
+            }
             const samples = dct.inverse(&coeffs);
-            jpg.storeBlock(&samples, p.data[by * 8 * p.stride + bx * 8 ..], p.stride);
+            jpg.storeBlock(&samples, dst, p.stride);
         };
     }
 }
@@ -141,17 +148,15 @@ fn decodeSequential(hdr: *const Header, c: Component, scan: *Scan, ci: usize, bl
     const ac = &hdr.ac_tables[c.ta].?;
     var k: usize = 1;
     while (k < 64) {
-        const rs = try scan.br.decodeSymbol(ac);
-        const run = rs >> 4;
-        const size = rs & 0xF;
-        if (size == 0) {
-            if (run != 15) break; // EOB
+        const sym = try scan.br.decodeAc(ac);
+        if (sym.value == 0) {
+            if (sym.run != 15) break; // EOB
             k += 16; // ZRL
             continue;
         }
-        k += run;
+        k += sym.run;
         if (k > 63) return Error.InvalidHuffmanCode;
-        block[ZIGZAG[k]] = @truncate(scan.br.receiveExtend(@intCast(size)));
+        block[ZIGZAG[k]] = @truncate(sym.value);
         k += 1;
     }
 }
@@ -171,21 +176,19 @@ fn decodeAcFirst(hdr: *const Header, c: Component, scan: *Scan, block: *Block) !
     const ac = &hdr.ac_tables[c.ta].?;
     var k: usize = hdr.ss;
     while (k <= hdr.se) {
-        const rs = try scan.br.decodeSymbol(ac);
-        const run = rs >> 4;
-        const size = rs & 0xF;
-        if (size == 0) {
-            if (run < 15) {
+        const sym = try scan.br.decodeAc(ac);
+        if (sym.value == 0) {
+            if (sym.run < 15) {
                 // EOBn: this block and the next 2^run - 1 + extra blocks end here
-                scan.eobrun = (@as(u32, 1) << @intCast(run)) - 1 + scan.br.readBits(@intCast(run));
+                scan.eobrun = (@as(u32, 1) << sym.run) - 1 + scan.br.readBits(sym.run);
                 return;
             }
             k += 16; // ZRL
             continue;
         }
-        k += run;
+        k += sym.run;
         if (k > hdr.se) return Error.InvalidHuffmanCode;
-        block[ZIGZAG[k]] = @truncate(scan.br.receiveExtend(@intCast(size)) << @intCast(hdr.al));
+        block[ZIGZAG[k]] = @truncate(sym.value << @intCast(hdr.al));
         k += 1;
     }
 }

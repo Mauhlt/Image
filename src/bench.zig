@@ -17,7 +17,7 @@ pub fn main(init: std.process.Init) !void {
     const files = [_][]const u8{
         "src/Data/Read/BasicArt.bmp",  "src/Data/Read/BasicArt.ppm", "src/Data/Read/BasicArt.tga",
         "src/Data/Read/BasicArt.qoi",  "src/Data/Read/BasicArt.png", "src/Data/Read/BasicArt.webp",
-        "src/Data/Read/BasicArt.jpg",
+        "src/Data/Read/BasicArt.jpg",  "src/Data/Read/IjgProgressive.jpg",
     };
     for (files) |path| {
         const tag = try Image.tagFromExt(path);
