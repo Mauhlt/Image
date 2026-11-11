@@ -9,6 +9,7 @@ const Error = @import("../error.zig").Error;
 const Chunk = @import("chunk.zig");
 const Header = @import("header.zig");
 const FilterMethod = Header.FilterMethod;
+const filter = @import("filter.zig");
 const Image = @import("../../root.zig");
 const Info = @import("../../info.zig");
 const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
@@ -22,6 +23,9 @@ const Parsed = struct {
     palette: []const u8 = &.{}, // rgb triplets
     trns: []const u8 = &.{},
     idat_len: usize = 0,
+    /// Offset of the first IDAT chunk in the file; the others follow it directly.
+    idat_start: usize = 0,
+    idat_chunks: usize = 0,
 
     fn tag(self: *const Parsed) PixelTag {
         const has_trns = self.trns.len > 0;
@@ -35,8 +39,8 @@ const Parsed = struct {
     }
 };
 
-/// Walks the chunks; if `idat_out` is given, concatenates IDAT payloads into it.
-fn parse(data: []const u8, idat_out: ?[]u8) !Parsed {
+/// Walks and validates (CRCs included) the chunks.
+fn parse(data: []const u8) !Parsed {
     if (data.len < SIG.len or !std.mem.eql(u8, data[0..SIG.len], &SIG)) return Error.UnexpectedSignature;
     var i: usize = SIG.len;
     const hdr_chunk: Chunk = try .decode(data[i..]);
@@ -51,6 +55,7 @@ fn parse(data: []const u8, idat_out: ?[]u8) !Parsed {
     while (i < data.len) {
         const chunk: Chunk = try .decode(data[i..]);
         try chunk.validateCrc();
+        const chunk_start = i;
         i += chunk.sizeOf();
         if (chunk.tag != .IDAT and idat_state == .inside) idat_state = .after;
         switch (chunk.tag) {
@@ -67,13 +72,11 @@ fn parse(data: []const u8, idat_out: ?[]u8) !Parsed {
             },
             .IDAT => {
                 if (idat_state == .after) return Error.InvalidChunkOrder;
+                if (idat_state == .before) p.idat_start = chunk_start;
                 idat_state = .inside;
                 // a zero-length IDAT is legal and simply contributes nothing
-                if (idat_out) |out| {
-                    if (p.idat_len + chunk.data.len > out.len) return Error.InvalidDataLen;
-                    @memcpy(out[p.idat_len..][0..chunk.data.len], chunk.data);
-                }
                 p.idat_len += chunk.data.len;
+                p.idat_chunks += 1;
             },
             .IEND => {
                 seen_iend = true;
@@ -103,17 +106,42 @@ fn parse(data: []const u8, idat_out: ?[]u8) !Parsed {
 }
 
 pub fn info(data: []const u8) !Info {
-    const p = try parse(data, null);
+    const p = try parse(data);
     const tag = p.tag();
     // PNG samples are sRGB unless stated otherwise (gAMA/iCCP); treat as sRGB
     return .{ .width = p.hdr.width, .height = p.hdr.height, .tag = tag, .fmt = Info.fmtFor(tag, true) };
 }
 
 pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
-    const first = try parse(data, null);
-    const idat = try scratch.alloc(u8, first.idat_len);
-    defer scratch.free(idat);
-    const p = try parse(data, idat);
+    return decodeWith(Simd, scratch, data, inf, out);
+}
+
+/// The kernels `decodeWith` uses: `defilterPass` and an `Expander` type.
+/// Tests swap in scalar.zig's oracle.
+const Simd = struct {
+    const defilterPass = filter.defilterPass;
+    const Expander = @import("expand.zig").Expander;
+};
+
+/// The IDAT payloads as one zlib stream: a single IDAT is used in place, several
+/// are concatenated into `scratch`.
+fn idatStream(scratch: std.mem.Allocator, data: []const u8, p: *const Parsed) ![]const u8 {
+    const first: Chunk = try .decode(data[p.idat_start..]);
+    if (p.idat_chunks == 1) return first.data;
+    const idat = try scratch.alloc(u8, p.idat_len);
+    var i = p.idat_start;
+    var len: usize = 0;
+    for (0..p.idat_chunks) |_| {
+        const chunk: Chunk = try .decode(data[i..]);
+        @memcpy(idat[len..][0..chunk.data.len], chunk.data);
+        len += chunk.data.len;
+        i += chunk.sizeOf();
+    }
+    return idat;
+}
+
+fn decodeWith(comptime Rows: type, scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
+    const p = try parse(data);
     const hdr = &p.hdr;
     if (hdr.width != inf.width or hdr.height != inf.height or p.tag() != inf.tag) return Error.InvalidHeader;
 
@@ -131,39 +159,57 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     const raw = try scratch.alloc(u8, raw_len);
     defer scratch.free(raw);
     {
-        const window = try scratch.alloc(u8, std.compress.flate.max_window_len);
-        defer scratch.free(window);
+        const idat = try idatStream(scratch, data, &p);
+        defer if (p.idat_chunks > 1) scratch.free(idat);
         var reader: std.Io.Reader = .fixed(idat);
-        var decompress: std.compress.flate.Decompress = .init(&reader, .zlib, window);
-        decompress.reader.readSliceAll(raw) catch return Error.DecompressionFailed;
+        // no window buffer: inflate straight into `raw`, which also serves as the
+        // history, instead of through a 64 KiB window that is then copied out
+        var decompress: std.compress.flate.Decompress = .init(&reader, .zlib, &.{});
+        var writer: std.Io.Writer = .fixed(raw);
+        decompress.reader.streamExact(&writer, raw.len) catch return Error.DecompressionFailed;
     }
 
     // defilter in place, then scatter each row into its pass's pixel positions
-    const bpp = @max(1, hdr.bitsPerPixel() / 8);
     const zero_row = try scratch.alloc(u8, hdr.rowBytes());
     defer scratch.free(zero_row);
     @memset(zero_row, 0);
-    const out_bpp = inf.tag.bytesPerPixel();
-    const out_stride = @as(usize, hdr.width) * out_bpp;
+    var sink: RowSink(Rows.Expander) = .{
+        .expander = .init(hdr, p.palette, p.trns),
+        .out = out,
+        .out_bpp = inf.tag.bytesPerPixel(),
+        .out_stride = @as(usize, hdr.width) * inf.tag.bytesPerPixel(),
+    };
+    const bpp = @max(1, hdr.bitsPerPixel() / 8);
     var start: usize = 0;
     for (passes) |pass| {
         const w, const h = pass.size(hdr.width, hdr.height);
         if (w == 0) continue; // an empty pass has no rows, not even filter bytes
         const row_bytes = hdr.rowBytesFor(w);
+        sink.pass = pass;
+        sink.width = w;
         // each pass starts afresh: its first row is filtered against zeros
-        var prev: []const u8 = zero_row[0..row_bytes];
-        for (0..h) |py| {
-            const filter = std.enums.fromInt(FilterMethod, raw[start]) orelse return Error.UnsupportedFilterMethod;
-            const row = raw[start + 1 ..][0..row_bytes];
-            start += row_bytes + 1;
-            defilterRow(filter, row, prev, bpp);
-            prev = row;
-            const y = pass.y0 + py * pass.dy;
-            const row_start = y * out_stride + pass.x0 * out_bpp;
-            const row_end = row_start + (w - 1) * pass.dx * out_bpp;
-            expandRow(&p, row, w, out[row_start .. row_end + out_bpp], pass.dx * out_bpp);
-        }
+        try Rows.defilterPass(raw[start..][0 .. h * (row_bytes + 1)], row_bytes, h, bpp, zero_row, &sink);
+        start += h * (row_bytes + 1);
     }
+}
+
+/// Receives defiltered rows of the current pass and expands them into place.
+fn RowSink(comptime Expander: type) type {
+    return struct {
+        expander: Expander,
+        out: []u8,
+        out_bpp: usize,
+        out_stride: usize,
+        pass: Pass = undefined,
+        width: usize = undefined,
+
+        pub fn row(s: *const @This(), py: usize, data: []const u8) void {
+            const y = s.pass.y0 + py * s.pass.dy;
+            const row_start = y * s.out_stride + s.pass.x0 * s.out_bpp;
+            const row_end = row_start + (s.width - 1) * s.pass.dx * s.out_bpp;
+            s.expander.expand(data, s.width, s.out[row_start .. row_end + s.out_bpp], s.pass.dx * s.out_bpp);
+        }
+    };
 }
 
 /// One Adam7 pass: the pixels at (x0 + i*dx, y0 + j*dy).
@@ -193,140 +239,6 @@ const adam7 = [7]Pass{
     .{ .x0 = 1, .y0 = 0, .dx = 2, .dy = 2 },
     .{ .x0 = 0, .y0 = 1, .dx = 1, .dy = 2 },
 };
-
-/// Converts one defiltered scanline of `width` pixels into 8-bit output pixels,
-/// `stride` bytes apart in `out` (wider than a pixel for interlace passes).
-fn expandRow(p: *const Parsed, row: []const u8, width: usize, out: []u8, stride: usize) void {
-    const hdr = &p.hdr;
-    const depth: usize = @intFromEnum(hdr.bit_depth);
-    const channels = hdr.color_type.channels();
-
-    // fast path: 8-bit, no tRNS expansion, same layout, contiguous
-    if (depth == 8 and hdr.color_type != .i and p.trns.len == 0 and stride == channels) {
-        @memcpy(out, row[0..out.len]);
-        return;
-    }
-
-    for (0..width) |x| {
-        var o = x * stride;
-        // read `channels` samples, scaled to 8-bit (except palette indices)
-        var s: [4]u16 = undefined;
-        for (0..channels) |c| s[c] = sample(row, x * channels + c, depth);
-        switch (hdr.color_type) {
-            .i => {
-                const idx: usize = s[0];
-                const pal = if (idx * 3 + 3 <= p.palette.len) p.palette[idx * 3 ..][0..3].* else [3]u8{ 0, 0, 0 };
-                out[o..][0..3].* = pal;
-                o += 3;
-                if (p.trns.len > 0) {
-                    out[o] = if (idx < p.trns.len) p.trns[idx] else 255;
-                    o += 1;
-                }
-            },
-            .g => {
-                const raw = s[0];
-                out[o] = scale8(raw, depth);
-                o += 1;
-                if (p.trns.len >= 2) {
-                    const key = std.mem.readInt(u16, p.trns[0..2], .big);
-                    out[o] = if (raw == key) 0 else 255;
-                    o += 1;
-                }
-            },
-            .rgb => {
-                for (0..3) |c| out[o + c] = scale8(s[c], depth);
-                o += 3;
-                if (p.trns.len >= 6) {
-                    const match = s[0] == std.mem.readInt(u16, p.trns[0..2], .big) and
-                        s[1] == std.mem.readInt(u16, p.trns[2..4], .big) and
-                        s[2] == std.mem.readInt(u16, p.trns[4..6], .big);
-                    out[o] = if (match) 0 else 255;
-                    o += 1;
-                }
-            },
-            .ga, .rgba => {
-                for (0..channels) |c| out[o + c] = scale8(s[c], depth);
-                o += channels;
-            },
-        }
-    }
-}
-
-/// Reads sample `i` of `depth` bits from a big-endian, MSB-first packed row.
-fn sample(row: []const u8, i: usize, depth: usize) u16 {
-    return switch (depth) {
-        16 => std.mem.readInt(u16, row[i * 2 ..][0..2], .big),
-        8 => row[i],
-        else => blk: {
-            const bit = i * depth;
-            const shift: u3 = @intCast(8 - depth - (bit % 8));
-            const mask: u8 = @intCast((@as(u16, 1) << @intCast(depth)) - 1);
-            break :blk (row[bit / 8] >> shift) & mask;
-        },
-    };
-}
-
-fn scale8(v: u16, depth: usize) u8 {
-    return switch (depth) {
-        16 => @intCast(v >> 8),
-        8 => @intCast(v),
-        4 => @intCast(v * 0x11),
-        2 => @intCast(v * 0x55),
-        1 => @intCast(v * 0xFF),
-        else => unreachable,
-    };
-}
-
-fn paethPredictor(a: u8, b: u8, c: u8) u8 {
-    const p = @as(i16, a) + b - c;
-    const pa = @abs(p - a);
-    const pb = @abs(p - b);
-    const pc = @abs(p - c);
-    if (pa <= pb and pa <= pc) return a;
-    if (pb <= pc) return b;
-    return c;
-}
-
-fn defilterRow(filter: FilterMethod, row: []u8, prev: []const u8, bpp: usize) void {
-    switch (filter) {
-        .none => {},
-        .sub => for (bpp..row.len) |i| {
-            row[i] +%= row[i - bpp];
-        },
-        .up => for (row, prev) |*r, p| {
-            r.* +%= p;
-        },
-        .avg => {
-            for (0..bpp) |i| row[i] +%= prev[i] / 2;
-            for (bpp..row.len) |i| row[i] +%= @intCast((@as(u16, row[i - bpp]) + prev[i]) / 2);
-        },
-        .paeth => {
-            for (0..bpp) |i| row[i] +%= prev[i]; // paeth(0, b, 0) == b
-            for (bpp..row.len) |i| row[i] +%= paethPredictor(row[i - bpp], prev[i], prev[i - bpp]);
-        },
-    }
-}
-
-fn filterRow(out: []u8, filter: FilterMethod, row: []const u8, prev: []const u8, bpp: usize) void {
-    switch (filter) {
-        .none => @memcpy(out, row),
-        .sub => {
-            @memcpy(out[0..bpp], row[0..bpp]);
-            for (bpp..row.len) |i| out[i] = row[i] -% row[i - bpp];
-        },
-        .up => for (out, row, prev) |*o, r, p| {
-            o.* = r -% p;
-        },
-        .avg => {
-            for (0..bpp) |i| out[i] = row[i] -% prev[i] / 2;
-            for (bpp..row.len) |i| out[i] = row[i] -% @as(u8, @intCast((@as(u16, row[i - bpp]) + prev[i]) / 2));
-        },
-        .paeth => {
-            for (0..bpp) |i| out[i] = row[i] -% prev[i];
-            for (bpp..row.len) |i| out[i] = row[i] -% paethPredictor(row[i - bpp], prev[i], prev[i - bpp]);
-        },
-    }
-}
 
 /// Cheap predictor of how well a filtered row compresses (smaller = better).
 fn sumAbs(row: []const u8) u64 {
@@ -365,7 +277,7 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !voi
         const dst = filtered[y * (row_bytes + 1) ..][0 .. row_bytes + 1];
         var best_sum: u64 = std.math.maxInt(u64);
         for (std.enums.values(FilterMethod)) |f| {
-            filterRow(cand, f, row, prev, bpp);
+            filter.filterRow(cand, f, row, prev, bpp);
             const sum = sumAbs(cand);
             if (sum < best_sum) {
                 best_sum = sum;
@@ -398,26 +310,6 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !voi
     };
     try w.writeAll(&SIG);
     for (&chunks) |*c| try c.encode(w);
-}
-
-test "png sub-byte samples" {
-    // 4-bit row: 0xAB 0xC0 -> samples A, B, C
-    const row = [_]u8{ 0xAB, 0xC0 };
-    try std.testing.expectEqual(@as(u16, 0xA), sample(&row, 0, 4));
-    try std.testing.expectEqual(@as(u16, 0xB), sample(&row, 1, 4));
-    try std.testing.expectEqual(@as(u16, 0xC), sample(&row, 2, 4));
-    try std.testing.expectEqual(@as(u8, 0xFF), scale8(1, 1));
-}
-
-test "png filters invert" {
-    const prev = [_]u8{ 10, 200, 30, 40, 50, 60 };
-    const row = [_]u8{ 1, 2, 250, 4, 5, 255 };
-    for (std.enums.values(FilterMethod)) |f| {
-        var tmp: [6]u8 = undefined;
-        filterRow(&tmp, f, &row, &prev, 3);
-        defilterRow(f, &tmp, &prev, 3);
-        try std.testing.expectEqualSlices(u8, &row, &tmp);
-    }
 }
 
 // ─────────────────────────── Fixture tests ───────────────────────────
@@ -517,6 +409,177 @@ fn decodeRebuilt(gpa: std.mem.Allocator, png: []const u8, edit: Rebuild) !Image 
     const data = try edit.apply(gpa, png);
     defer gpa.free(data);
     return Image.decode(.png, gpa, data);
+}
+
+test {
+    _ = filter;
+    _ = @import("crc.zig");
+    _ = @import("expand.zig");
+    _ = @import("scalar.zig");
+}
+
+/// The original scalar row kernels, for checking the SIMD ones end to end.
+const Oracle = struct {
+    const scalar = @import("scalar.zig");
+    const defilterPass = scalar.defilterPass;
+    const Expander = scalar.Expander;
+};
+
+/// Decodes `data` with the SIMD kernels and with the scalar oracle; both must agree.
+fn expectMatchesOracle(gpa: std.mem.Allocator, data: []const u8) !void {
+    const inf = try info(data);
+    const want = try gpa.alloc(u8, try inf.byteLen());
+    defer gpa.free(want);
+    const got = try gpa.alloc(u8, want.len);
+    defer gpa.free(got);
+    try decodeWith(Oracle, gpa, data, inf, want);
+    try decodeInto(gpa, data, inf, got);
+    try std.testing.expectEqualSlices(u8, want, got);
+}
+
+test "png decoder matches the scalar oracle on every fixture" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    inline for (.{
+        "basi0g01", "basi0g02", "basi0g04", "basi0g08", "basi0g16", "basi2c08", "basi2c16",
+        "basi3p01", "basi3p02", "basi3p04", "basi3p08", "basi4a08", "basi4a16", "basi6a08",
+        "basi6a16", "basn0g01", "basn0g02", "basn0g04", "basn0g08", "basn0g16", "basn2c08",
+        "basn2c16", "basn3p01", "basn3p02", "basn3p04", "basn3p08", "basn4a08", "basn4a16",
+        "basn6a08", "basn6a16", "s01i3p01", "s01n3p01", "s02i3p01", "s02n3p01", "s03i3p01",
+        "s03n3p01", "s04i3p01", "s04n3p01", "s05i3p02", "s05n3p02", "s06i3p02", "s06n3p02",
+        "s07i3p02", "s07n3p02", "s08i3p02", "s08n3p02", "s09i3p02", "s09n3p02", "s33i3p04",
+        "s33n3p04", "s34i3p04", "s34n3p04", "s35i3p04", "s35n3p04", "s36i3p04", "s36n3p04",
+        "s37i3p04", "s37n3p04", "s38i3p04", "s38n3p04", "s39i3p04", "s39n3p04", "tbbn0g04",
+        "tbbn3p08", "tbrn2c08", "tbwn0g16", "tm3n3p02",
+    }) |name| {
+        const data = try readFixture(io, gpa, name ++ ".png");
+        defer gpa.free(data);
+        expectMatchesOracle(gpa, data) catch |err| {
+            std.debug.print("mismatch: {s}\n", .{name});
+            return err;
+        };
+    }
+    // the library's encoder picks a filter per row, unlike most fixtures above
+    const art = try std.Io.Dir.cwd().readFileAlloc(io, "src/Data/Read/BasicArt.png", gpa, .unlimited);
+    defer gpa.free(art);
+    try expectMatchesOracle(gpa, art);
+    const art16 = try readFixture(io, gpa, "BasicArt16i.png");
+    defer gpa.free(art16);
+    try expectMatchesOracle(gpa, art16);
+}
+
+test "png 16-bit Adam7 BasicArt matches the 8-bit original" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const art16_data = try readFixture(io, gpa, "BasicArt16i.png");
+    defer gpa.free(art16_data);
+    const art16 = try Image.decode(.png, gpa, art16_data);
+    defer art16.deinit(gpa);
+    const art_data = try std.Io.Dir.cwd().readFileAlloc(io, "src/Data/Read/BasicArt.png", gpa, .unlimited);
+    defer gpa.free(art_data);
+    const art = try Image.decode(.png, gpa, art_data);
+    defer art.deinit(gpa);
+    // the high byte of v * 257 is v
+    try expectSamePixels(&art, &art16);
+    // and the same again with the zlib stream split over many IDATs
+    const split = try decodeRebuilt(gpa, art16_data, .{ .idat_split = 1000 });
+    defer split.deinit(gpa);
+    try expectSamePixels(&art, &split);
+}
+
+test "png decoder matches the scalar oracle on random images" {
+    // Any bytes are a valid filtered stream, so random rows with random filter
+    // types reach every filter, bit depth, color type, tRNS and Adam7 pass shape.
+    const gpa = std.testing.allocator;
+    var rng: std.Random.DefaultPrng = .init(0xC0FFEE);
+    const random = rng.random();
+    const Kind = struct { ct: Header.ColorType, depths: []const u8 };
+    const kinds = [_]Kind{
+        .{ .ct = .g, .depths = &.{ 1, 2, 4, 8, 16 } },
+        .{ .ct = .rgb, .depths = &.{ 8, 16 } },
+        .{ .ct = .i, .depths = &.{ 1, 2, 4, 8 } },
+        .{ .ct = .ga, .depths = &.{ 8, 16 } },
+        .{ .ct = .rgba, .depths = &.{ 8, 16 } },
+    };
+    const sizes = [_][2]u32{ .{ 1, 1 }, .{ 3, 5 }, .{ 7, 2 }, .{ 13, 9 }, .{ 33, 17 }, .{ 70, 11 } };
+    var palette: [3 * 180]u8 = undefined; // short: high 8-bit indices fall off the end
+    random.bytes(&palette);
+    var trns_buf: [120]u8 = undefined;
+    random.bytes(&trns_buf);
+    for (kinds) |kind| for (kind.depths) |depth| for (sizes) |size| {
+        for (std.enums.values(Header.InterlaceMethod)) |interlace| for (0..2) |with_trns| {
+            const hdr: Header = .{
+                .width = size[0],
+                .height = size[1],
+                .bit_depth = @enumFromInt(depth),
+                .color_type = kind.ct,
+                .compression_method = .none,
+                .filter_method = .none,
+                .interlace_method = interlace,
+            };
+            // small sample values so the tRNS key (zero) actually occurs
+            const trns: []const u8 = if (with_trns == 0) &.{} else switch (kind.ct) {
+                .g => &.{ 0, 0 },
+                .rgb => &.{ 0, 0, 0, 0, 0, 0 },
+                .i => &trns_buf,
+                .ga, .rgba => continue,
+            };
+            const data = try randomPng(gpa, random, &hdr, &palette, trns);
+            defer gpa.free(data);
+            expectMatchesOracle(gpa, data) catch |err| {
+                std.debug.print("{t} depth {} {}x{} {t} trns {}\n", .{ kind.ct, depth, size[0], size[1], interlace, trns.len });
+                return err;
+            };
+        };
+    };
+}
+
+/// A PNG whose filtered scanlines are random bytes behind random filter types.
+fn randomPng(gpa: std.mem.Allocator, random: std.Random, hdr: *const Header, palette: []const u8, trns: []const u8) ![]u8 {
+    const passes: []const Pass = switch (hdr.interlace_method) {
+        .none => &.{.{ .x0 = 0, .y0 = 0, .dx = 1, .dy = 1 }},
+        .adam7 => &adam7,
+    };
+    var raw: std.ArrayList(u8) = .empty;
+    defer raw.deinit(gpa);
+    for (passes) |pass| {
+        const w, const h = pass.size(hdr.width, hdr.height);
+        if (w == 0) continue;
+        for (0..h) |_| {
+            try raw.append(gpa, random.uintLessThan(u8, 5));
+            const row = try raw.addManyAsSlice(gpa, hdr.rowBytesFor(w));
+            random.bytes(row);
+            // mostly-small samples, so tRNS keys of zero match some pixels
+            for (row) |*b| {
+                if (random.boolean()) b.* &= 0x01;
+            }
+        }
+    }
+    var zlib: std.Io.Writer.Allocating = try .initCapacity(gpa, raw.items.len + 128);
+    defer zlib.deinit();
+    {
+        const window = try gpa.alloc(u8, std.compress.flate.max_window_len);
+        defer gpa.free(window);
+        var comp: std.compress.flate.Compress = try .init(&zlib.writer, window, .zlib, .fastest);
+        try comp.writer.writeAll(raw.items);
+        try comp.finish();
+    }
+    var ihdr: [13]u8 = undefined;
+    try hdr.encode(&ihdr);
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    const w = &aw.writer;
+    try w.writeAll(&SIG);
+    try writeChunk(w, .{ .name = "IHDR", .data = &ihdr });
+    if (hdr.color_type == .i) try writeChunk(w, .{ .name = "PLTE", .data = palette });
+    if (trns.len > 0) try writeChunk(w, .{ .name = "tRNS", .data = trns });
+    try writeChunk(w, .{ .name = "IDAT", .data = zlib.written() });
+    try writeChunk(w, .{ .name = "IEND", .data = &.{} });
+    return aw.toOwnedSlice();
 }
 
 test "png adam7 matches non-interlaced twins" {

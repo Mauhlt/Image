@@ -28,7 +28,7 @@ pub const BitTags = enum(u2) {
     run = 3,
 };
 
-fn hashRGB(rgb: RGB) u8 {
+pub fn hashRGB(rgb: RGB) u8 {
     return (rgb.r *% 3 +% //
         rgb.g *% 5 +% //
         rgb.b *% 7 +% //
@@ -36,7 +36,7 @@ fn hashRGB(rgb: RGB) u8 {
         @as(u8, 63);
 }
 
-fn hashRGBA(rgba: RGBA) u8 {
+pub fn hashRGBA(rgba: RGBA) u8 {
     return (rgba.r *% 3 +% //
         rgba.g *% 5 +% //
         rgba.b *% 7 +% //
@@ -64,8 +64,8 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     if (!std.mem.eql(u8, data[data.len - END_MARKER.len ..], &END_MARKER)) return Error.InvalidEndMarker;
     const body = data[Header.SIZE .. data.len - END_MARKER.len];
     switch (inf.tag) {
-        .rgb => try decodeRgb(body, @ptrCast(out)),
-        .rgba => try decodeRgba(body, @ptrCast(out)),
+        .rgb => try decodeOps(3, body, out),
+        .rgba => try decodeOps(4, body, out),
         else => return Error.UnsupportedPixels,
     }
 }
@@ -88,153 +88,125 @@ pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !voi
     try w.writeAll(&END_MARKER);
 }
 
-fn decodeRgb(data: []const u8, out: []RGB) !void {
-    const n_pixels = out.len;
-    var prev: RGB = .{
-        .r = 0,
-        .g = 0,
-        .b = 0,
-    };
-    var px: RGB = .{
-        .r = 0,
-        .g = 0,
-        .b = 0,
-    };
-    var table: [HASH_TABLE_SIZE]RGB = @splat(.{
-        .r = 0,
-        .g = 0,
-        .b = 0,
-    });
-    var i: usize = 0; // data idx
-    var j: usize = 0; // rgbs idx
-    while (i < data.len) : (i += 1) {
-        const byte1 = data[i];
-        switch (@as(ByteTags, @enumFromInt(byte1))) {
-            .rgb => {
-                if (i + 3 >= data.len) return Error.OutOfBounds;
-                px.r = data[i + 1];
-                px.g = data[i + 2];
-                px.b = data[i + 3];
-                i += 3;
-            },
-            .rgba => return Error.InvalidChannels,
-            else => switch (@as(BitTags, @enumFromInt(byte1 >> 6))) {
-                .run => {
-                    const run = (byte1 & 0x3F) + 1;
-                    if (j + run > n_pixels) return Error.OutOfBounds;
-                    @memset(out[j..][0..run], prev);
-                    j += run;
-                    continue;
-                },
+/// Decodes the op stream `data` into `out`, `ch` bytes per pixel.
+/// Most of the image goes through ops with no bounds checks at all: an op is
+/// only started there while the longest op (5 bytes) fits in the input and the
+/// longest run (62 pixels), plus the overshoot of whole-vector stores, fits in
+/// the output. The tail runs the same ops with every check, so malformed
+/// streams fail exactly as before.
+fn decodeOps(comptime ch: usize, data: []const u8, out: []u8) !void {
+    const n = out.len / ch;
+    // Plain locals, one per channel: LLVM keeps them in registers, so diff and
+    // luma are a single add per channel on the pixel-to-pixel chain. (Held in a
+    // struct or a [4]u8 they were spilled and reloaded on every pixel.)
+    // An rgb stream never changes alpha, so its hash sees 255 there.
+    var r: u8 = 0;
+    var g: u8 = 0;
+    var b: u8 = 0;
+    var a: u8 = 255;
+    // packed as in memory (r | g << 8 | ...), so an entry is one load or store;
+    // the spec starts the index at all zeros, this decoder always started it at
+    // opaque black, which is kept so output stays identical
+    var index: [64]u32 = @splat(0xFF00_0000);
+    var i: usize = 0; // next op byte
+    var j: usize = 0; // next pixel
+    // the longest run, plus 16 pixels for vector stores past a pixel or run
+    // (at most 31 bytes)
+    const margin = 62 + 16;
+    inline for (.{ false, true }) |checked| {
+        while (if (checked) i < data.len else i + 5 <= data.len and j + margin <= n) {
+            const b1 = data[i];
+            if (b1 >= @intFromEnum(ByteTags.rgb)) {
+                if (b1 == @intFromEnum(ByteTags.rgba)) {
+                    if (ch == 3) return Error.InvalidChannels;
+                    if (checked and i + 4 >= data.len) return Error.OutOfBounds;
+                    a = data[i + 4];
+                } else if (checked and i + 3 >= data.len) return Error.OutOfBounds;
+                r = data[i + 1];
+                g = data[i + 2];
+                b = data[i + 3];
+                i += if (b1 == @intFromEnum(ByteTags.rgba)) 5 else 4;
+            } else switch (@as(BitTags, @enumFromInt(b1 >> 6))) {
                 .index => {
-                    const index = byte1 & 0x3F;
-                    px = table[index];
+                    const e = index[b1]; // the tag bits are 0: b1 is the index
+                    r = @truncate(e);
+                    g = @truncate(e >> 8);
+                    b = @truncate(e >> 16);
+                    a = @truncate(e >> 24);
+                    i += 1;
                 },
                 .diff => {
-                    px.r = prev.r +% ((byte1 >> 4) & 0x03) -% 2;
-                    px.g = prev.g +% ((byte1 >> 2) & 0x03) -% 2;
-                    px.b = prev.b +% (byte1 & 0x03) -% 2;
+                    r = r +% ((b1 >> 4) & 3) -% 2;
+                    g = g +% ((b1 >> 2) & 3) -% 2;
+                    b = b +% (b1 & 3) -% 2;
+                    i += 1;
                 },
                 .luma => {
+                    if (checked and i + 1 >= data.len) return Error.OutOfBounds;
+                    const b2 = data[i + 1];
+                    const dg = b1 & 0x3F;
+                    r = r +% (b2 >> 4) +% dg -% 40;
+                    g = g +% dg -% 32;
+                    b = b +% (b2 & 0x0F) +% dg -% 40;
+                    i += 2;
+                },
+                .run => {
+                    const run: usize = (b1 & 0x3F) + 1;
+                    if (checked and j + run > n) return Error.OutOfBounds;
+                    fillRun(ch, checked, out[j * ch ..], pack(r, g, b, a), run);
+                    j += run;
                     i += 1;
-                    if (i >= data.len) return Error.OutOfBounds;
-                    const byte2 = data[i];
-                    const drgb: RGB = .{
-                        .r = ((byte2 & 0xF0) >> 4) +% (byte1 & 0x3F),
-                        .g = (byte1 & 0x3F),
-                        .b = (byte2 & 0x0F) +% (byte1 & 0x3F),
-                    };
-                    px.r = prev.r +% drgb.r -% 40;
-                    px.g = prev.g +% drgb.g -% 32;
-                    px.b = prev.b +% drgb.b -% 40;
+                    continue; // a run repeats the previous pixel: the index already has it
                 },
             }
+            const word = pack(r, g, b, a);
+            index[(r *% 3 +% g *% 5 +% b *% 7 +% a *% 11) & 63] = word;
+            if (checked) {
+                if (j >= n) return Error.OutOfBounds;
+                var bytes: [4]u8 = undefined;
+                std.mem.writeInt(u32, &bytes, word, .little);
+                out[j * ch ..][0..ch].* = bytes[0..ch].*;
+            } else {
+                // all 4 bytes even for rgb: one store, the extra byte is rewritten next
+                std.mem.writeInt(u32, out[j * ch ..][0..4], word, .little);
+            }
+            j += 1;
         }
-        prev = px;
-        table[hashRGB(px)] = px;
-        if (j >= n_pixels) return Error.OutOfBounds;
-        out[j] = px;
-        j += 1;
     }
-    if (j != n_pixels) return Error.InvalidNumOfPixels;
+    if (j != n) return Error.InvalidNumOfPixels;
 }
 
-fn decodeRgba(data: []const u8, out: []RGBA) !void {
-    const n_pixels = out.len;
-    var prev: RGBA = .{
-        .r = 0,
-        .g = 0,
-        .b = 0,
-    };
-    var px: RGBA = .{
-        .r = 0,
-        .g = 0,
-        .b = 0,
-    };
-    var table: [HASH_TABLE_SIZE]RGBA = @splat(.{
-        .r = 0,
-        .g = 0,
-        .b = 0,
-    });
-    var i: usize = 0; // data idx
-    var j: usize = 0; // rgbas idx
-    while (i < data.len) : (i += 1) {
-        const byte1 = data[i];
-        switch (@as(ByteTags, @enumFromInt(byte1))) {
-            .rgb => {
-                if (i + 3 >= data.len) return Error.OutOfBounds;
-                px.r = data[i + 1];
-                px.g = data[i + 2];
-                px.b = data[i + 3];
-                i += 3;
-            },
-            .rgba => {
-                if (i + 4 >= data.len) return Error.OutOfBounds;
-                px.r = data[i + 1];
-                px.g = data[i + 2];
-                px.b = data[i + 3];
-                px.a = data[i + 4];
-                i += 4;
-            },
-            else => switch (@as(BitTags, @enumFromInt(byte1 >> 6))) {
-                .run => {
-                    const run = (byte1 & 0x3F) + 1;
-                    if (j + run > n_pixels) return Error.OutOfBounds;
-                    @memset(out[j..][0..run], prev);
-                    j += run;
-                    continue;
-                },
-                .index => {
-                    const index = byte1 & 0x3F;
-                    px = table[index];
-                },
-                .diff => {
-                    px.r = prev.r +% ((byte1 >> 4) & 0x03) -% 2;
-                    px.g = prev.g +% ((byte1 >> 2) & 0x03) -% 2;
-                    px.b = prev.b +% (byte1 & 0x03) -% 2;
-                },
-                .luma => {
-                    i += 1;
-                    if (i >= data.len) return Error.OutOfBounds;
-                    const byte2 = data[i];
-                    const drgb: RGB = .{
-                        .r = ((byte2 & 0xF0) >> 4) +% (byte1 & 0x3F),
-                        .g = byte1 & 0x3F,
-                        .b = ((byte2 & 0x0F)) +% (byte1 & 0x3F),
-                    };
-                    px.r = prev.r +% drgb.r -% 40;
-                    px.g = prev.g +% drgb.g -% 32;
-                    px.b = prev.b +% drgb.b -% 40;
-                },
-            }
-        }
-        prev = px;
-        table[hashRGBA(px)] = px;
-        if (j >= n_pixels) return Error.OutOfBounds;
-        out[j] = px;
-        j += 1;
+/// r | g << 8 | b << 16 | a << 24: the channels in memory order
+fn pack(r: u8, g: u8, b: u8, a: u8) u32 {
+    return @as(u32, r) | @as(u32, g) << 8 | @as(u32, b) << 16 | @as(u32, a) << 24;
+}
+
+/// Writes `run` copies of pixel `word` at the start of `at`. Unchecked, this
+/// stores whole vectors of the repeating pattern, overshooting the run by up to
+/// 31 bytes that later pixels overwrite.
+inline fn fillRun(comptime ch: usize, comptime checked: bool, at: []u8, word: u32, run: usize) void {
+    if (checked) {
+        var bytes: [4]u8 = undefined;
+        std.mem.writeInt(u32, &bytes, word, .little);
+        for (0..run) |k| at[k * ch ..][0..ch].* = bytes[0..ch].*;
+        return;
     }
-    if (j != n_pixels) return Error.InvalidNumOfPixels;
+    // The pattern is built in general registers and stored as a typed vector:
+    // LLVM turns a byte shuffle, or a byte array built from integers, back into
+    // one store per byte.
+    if (ch == 4) {
+        const v: @Vector(8, u32) = @splat(std.mem.nativeToLittle(u32, word));
+        var k: usize = 0;
+        while (k < run * 4) : (k += 32) std.mem.bytesAsValue(@Vector(8, u32), at[k..][0..32]).* = v;
+        return;
+    }
+    // 16 bytes of the pattern hold 5 rgb pixels and a byte
+    const p: u64 = word & 0xFF_FFFF;
+    const lo = p | p << 24 | p << 48; // r g b r g b r g
+    const hi = p >> 16 | p << 8 | p << 32 | p << 56; // b r g b r g b r
+    const v: @Vector(2, u64) = .{ std.mem.nativeToLittle(u64, lo), std.mem.nativeToLittle(u64, hi) };
+    var k: usize = 0;
+    while (k < run * 3) : (k += 15) std.mem.bytesAsValue(@Vector(2, u64), at[k..][0..16]).* = v;
 }
 
 fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
@@ -388,5 +360,94 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             try w.writeByte(px.b);
             try w.writeByte(px.a);
         }
+    }
+}
+
+/// Runs the oracle and `decodeOps` on the same stream: both must fail with the
+/// same error, or both succeed with the same pixels.
+fn expectMatchesOracle(gpa: std.mem.Allocator, comptime ch: usize, body: []const u8, n_pixels: usize) !void {
+    const scalar = @import("scalar.zig");
+    const want = try gpa.alloc(u8, n_pixels * ch);
+    defer gpa.free(want);
+    const got = try gpa.alloc(u8, n_pixels * ch);
+    defer gpa.free(got);
+    const want_result = if (ch == 3) scalar.decodeRgb(body, @ptrCast(want)) else scalar.decodeRgba(body, @ptrCast(want));
+    const got_result = decodeOps(ch, body, got);
+    if (want_result) |_| {
+        try got_result;
+        try std.testing.expectEqualSlices(u8, want, got);
+    } else |err| try std.testing.expectError(err, got_result);
+}
+
+test "qoi decoder matches the scalar oracle on the fixtures" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    inline for (.{ "BasicArt.qoi", "BasicDecodeRGB.qoi", "BasicDecodeRGBA.qoi" }) |name| {
+        const data = try std.Io.Dir.cwd().readFileAlloc(io, "src/Data/Read/" ++ name, gpa, .unlimited);
+        defer gpa.free(data);
+        const inf = try info(data);
+        const body = data[Header.SIZE .. data.len - END_MARKER.len];
+        switch (inf.tag) {
+            .rgb => try expectMatchesOracle(gpa, 3, body, inf.width * inf.height),
+            .rgba => try expectMatchesOracle(gpa, 4, body, inf.width * inf.height),
+            else => unreachable,
+        }
+    }
+}
+
+test "qoi decoder matches the scalar oracle on random op streams" {
+    // Random ops of every kind, then the pixel count is perturbed and the stream
+    // sometimes cut mid-op, so the fast loop, the checked tail and every error
+    // (overflowing run or pixel, truncated op, short image, rgba op in rgb) occur.
+    const gpa = std.testing.allocator;
+    var rng: std.Random.DefaultPrng = .init(0x901);
+    const random = rng.random();
+    var stream: std.ArrayList(u8) = .empty;
+    defer stream.deinit(gpa);
+    for (0..400) |round| {
+        stream.clearRetainingCapacity();
+        const n_ops = random.uintLessThan(usize, if (round % 4 == 0) 40 else 1500);
+        var n_pixels: usize = 0;
+        for (0..n_ops) |_| switch (random.uintLessThan(u8, 12)) {
+            0, 1 => try stream.append(gpa, random.uintLessThan(u8, 64)), // index
+            2, 3 => try stream.append(gpa, 0x40 | random.uintLessThan(u8, 64)), // diff
+            4, 5 => try stream.appendSlice(gpa, &.{ 0x80 | random.uintLessThan(u8, 64), random.int(u8) }), // luma
+            6, 7, 8 => {
+                const run = random.uintLessThan(u8, 62); // 0..61, i.e. 1..62 pixels
+                try stream.append(gpa, 0xC0 | run);
+                n_pixels += run;
+            },
+            9, 10 => try stream.appendSlice(gpa, &.{ 0xFE, random.int(u8), random.int(u8), random.int(u8) }),
+            else => try stream.appendSlice(gpa, &.{ 0xFF, random.int(u8), random.int(u8), random.int(u8), random.int(u8) }),
+        };
+        n_pixels += n_ops;
+        var body = stream.items;
+        if (random.uintLessThan(u8, 8) == 0 and body.len > 0) body = body[0 .. body.len - 1 - random.uintLessThan(usize, @min(body.len, 4))];
+        const n = switch (random.uintLessThan(u8, 6)) {
+            0 => n_pixels -| random.uintLessThan(usize, 70),
+            1 => n_pixels + random.uintLessThan(usize, 70),
+            else => n_pixels,
+        };
+        try expectMatchesOracle(gpa, 4, body, n);
+        // rgb streams: the same, with and without the rgba ops it must reject
+        try expectMatchesOracle(gpa, 3, body, n);
+        var rgb_only: std.ArrayList(u8) = .empty;
+        defer rgb_only.deinit(gpa);
+        var k: usize = 0;
+        var rgb_pixels = n;
+        while (k < body.len) {
+            const len: usize = switch (body[k]) {
+                0xFF => 5,
+                0xFE => 4,
+                0x80...0xBF => 2,
+                else => 1,
+            };
+            if (k + len > body.len) break;
+            if (body[k] == 0xFF) rgb_pixels -|= 1 else try rgb_only.appendSlice(gpa, body[k..][0..len]);
+            k += len;
+        }
+        try expectMatchesOracle(gpa, 3, rgb_only.items, rgb_pixels);
     }
 }
