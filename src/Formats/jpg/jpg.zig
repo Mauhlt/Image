@@ -9,7 +9,6 @@ const std = @import("std");
 const Error = @import("../error.zig").Error;
 const Image = @import("../../root.zig");
 const Info = @import("../../info.zig");
-const color = @import("../../Colors/misc.zig");
 
 const Header = @import("header.zig");
 const BitReader = @import("bitreader.zig");
@@ -19,6 +18,9 @@ const huffman = @import("huffman.zig");
 const dct = @import("dct.zig");
 const misc = @import("misc.zig");
 const progressive = @import("progressive.zig");
+const Upsampler = @import("upsample.zig").Upsampler;
+const ycbcr = @import("ycbcr.zig");
+const V = @import("upsample.zig").V;
 const ZIGZAG = misc.ZIGZAG;
 const ceilDiv = misc.ceilDiv;
 
@@ -51,7 +53,8 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
         const stride = mcus_x * c.h * 8;
         const rows = mcus_y * c.v * 8;
         planes[i] = .{
-            .data = try scratch.alloc(u8, stride * rows),
+            // slack so vector loads at the right edge stay in bounds (see Upsampler)
+            .data = try scratch.alloc(u8, stride * rows + V),
             .stride = stride,
             .w = ceilDiv(@as(usize, hdr.width) * c.h, hdr.h_max),
             .h = ceilDiv(@as(usize, hdr.height) * c.v, hdr.v_max),
@@ -130,56 +133,42 @@ fn decodeBlock(
     coeffs[0] = @floatFromInt(pred.* * @as(i32, qt[0]));
 
     var k: usize = 1;
+    var any_ac = false;
     while (k < 64) {
-        const rs = try br.decodeSymbol(ac);
-        const run = rs >> 4;
-        const size = rs & 0xF;
-        if (size == 0) {
-            if (run != 15) break; // EOB
+        const sym = try br.decodeAc(ac);
+        if (sym.value == 0) {
+            if (sym.run != 15) break; // EOB
             k += 16; // ZRL
             continue;
         }
-        k += run;
+        k += sym.run;
         if (k > 63) return Error.InvalidHuffmanCode;
         const nat = ZIGZAG[k];
-        coeffs[nat] = @floatFromInt(br.receiveExtend(@intCast(size)) * @as(i32, qt[nat]));
+        coeffs[nat] = @floatFromInt(sym.value * @as(i32, qt[nat]));
+        any_ac = true;
         k += 1;
     }
 
+    // Flat blocks (no AC) are common, and their inverse is one value.
+    if (!any_ac) return storeFlat(dct.inverseDc(coeffs[0]), dst, stride);
     const samples = dct.inverse(&coeffs);
     storeBlock(&samples, dst, stride);
 }
 
 /// Level-shifts, rounds and clamps an IDCT'd block into an 8x8 area of a plane.
 pub fn storeBlock(samples: *const [64]f32, dst: []u8, stride: usize) void {
-    for (0..8) |y| {
-        const row: @Vector(8, f32) = samples[y * 8 ..][0..8].*;
-        const v = @round(row + @as(@Vector(8, f32), @splat(128)));
-        const clamped = @min(@max(v, @as(@Vector(8, f32), @splat(0))), @as(@Vector(8, f32), @splat(255)));
-        dst[y * stride ..][0..8].* = @as(@Vector(8, u8), @intFromFloat(clamped));
-    }
+    for (0..8) |y| dst[y * stride ..][0..8].* = toPixels(samples[y * 8 ..][0..8].*);
 }
 
-/// Bilinear sampling positions for upsampling a plane to full resolution
-/// (matches libjpeg's "fancy" upsampling for 2x factors).
-const Taps = struct { i0: []u32, i1: []u32, w: []f32 };
+/// storeBlock for a block whose 64 samples all equal `sample`.
+pub fn storeFlat(sample: f32, dst: []u8, stride: usize) void {
+    const row = toPixels(@splat(sample));
+    for (0..8) |y| dst[y * stride ..][0..8].* = row;
+}
 
-fn makeTaps(scratch: std.mem.Allocator, n_out: usize, n_in: usize, factor: u8, max: u8) !Taps {
-    const t: Taps = .{
-        .i0 = try scratch.alloc(u32, n_out),
-        .i1 = try scratch.alloc(u32, n_out),
-        .w = try scratch.alloc(f32, n_out),
-    };
-    const ratio = @as(f32, @floatFromInt(factor)) / @as(f32, @floatFromInt(max));
-    const last: f32 = @floatFromInt(n_in - 1);
-    for (0..n_out) |i| {
-        const pos = @min(@max((@as(f32, @floatFromInt(i)) + 0.5) * ratio - 0.5, 0), last);
-        const p0 = @floor(pos);
-        t.i0[i] = @intFromFloat(p0);
-        t.i1[i] = @intFromFloat(@min(p0 + 1, last));
-        t.w[i] = pos - p0;
-    }
-    return t;
+fn toPixels(row: @Vector(8, f32)) @Vector(8, u8) {
+    const v = @round(row + @as(@Vector(8, f32), @splat(128)));
+    return @intFromFloat(@min(@max(v, @as(@Vector(8, f32), @splat(0))), @as(@Vector(8, f32), @splat(255))));
 }
 
 fn writePixels(scratch: std.mem.Allocator, hdr: *const Header, planes: *const [4]Plane, inf: Info, out: []u8) !void {
@@ -193,51 +182,12 @@ fn writePixels(scratch: std.mem.Allocator, hdr: *const Header, planes: *const [4
     }
     if (inf.tag != .rgb) return Error.UnsupportedPixels;
 
-    // full resolution rows for each component
-    var rows: [3][]u8 = undefined;
-    var x_taps: [3]?Taps = @splat(null);
-    var y_taps: [3]?Taps = @splat(null);
-    for (0..3) |i| {
-        const c = hdr.components[i];
-        rows[i] = try scratch.alloc(u8, width);
-        if (c.h != hdr.h_max) x_taps[i] = try makeTaps(scratch, width, planes[i].w, c.h, hdr.h_max);
-        if (c.v != hdr.v_max) y_taps[i] = try makeTaps(scratch, height, planes[i].h, c.v, hdr.v_max);
+    var ups: [3]Upsampler = undefined;
+    for (&ups, hdr.components[0..3], planes[0..3]) |*u, c, p| {
+        u.* = try .init(scratch, p, width, height, c.h, hdr.h_max, c.v, hdr.v_max);
     }
-
     for (0..height) |y| {
-        for (0..3) |i| {
-            const p = planes[i];
-            const row = rows[i];
-            if (x_taps[i] == null and y_taps[i] == null) {
-                @memcpy(row, p.data[y * p.stride ..][0..width]);
-                continue;
-            }
-            const y0, const y1, const wy = if (y_taps[i]) |t| .{ t.i0[y], t.i1[y], t.w[y] } else .{ y, y, @as(f32, 0) };
-            const r0 = p.data[y0 * p.stride ..][0..p.w];
-            const r1 = p.data[y1 * p.stride ..][0..p.w];
-            for (0..width) |x| {
-                var a0: f32 = undefined;
-                var a1: f32 = undefined;
-                if (x_taps[i]) |t| {
-                    const wx = t.w[x];
-                    a0 = std.math.lerp(@as(f32, @floatFromInt(r0[t.i0[x]])), @as(f32, @floatFromInt(r0[t.i1[x]])), wx);
-                    a1 = std.math.lerp(@as(f32, @floatFromInt(r1[t.i0[x]])), @as(f32, @floatFromInt(r1[t.i1[x]])), wx);
-                } else {
-                    a0 = @floatFromInt(r0[x]);
-                    a1 = @floatFromInt(r1[x]);
-                }
-                row[x] = @intFromFloat(@round(std.math.lerp(a0, a1, wy)));
-            }
-        }
-        const dst = out[y * width * 3 ..][0 .. width * 3];
-        for (0..width) |x| {
-            const yy = rows[0][x];
-            const cb = rows[1][x];
-            const cr = rows[2][x];
-            dst[x * 3 + 0] = color.red(yy, cr);
-            dst[x * 3 + 1] = color.green(yy, cb, cr);
-            dst[x * 3 + 2] = color.blue(yy, cb);
-        }
+        ycbcr.toRgbRow(ups[0].rowAt(y), ups[1].rowAt(y), ups[2].rowAt(y), out[y * width * 3 ..][0 .. width * 3]);
     }
 }
 
@@ -430,6 +380,8 @@ test {
     _ = @import("bitreader.zig");
     _ = @import("bitwriter.zig");
     _ = @import("dct.zig");
+    _ = @import("upsample.zig");
+    _ = @import("ycbcr.zig");
 }
 
 test "zigzag is a permutation" {
@@ -492,6 +444,47 @@ test "encode/decode gradient 33x17 (non-MCU-aligned), both subsamplings, gray" {
     defer out.deinit(gpa);
     try std.testing.expect(out.pixels == .g);
     try Image.expectSimilar(gpa, &gray, &out, .g, 3);
+}
+
+// Pixel hashes recorded from the original scalar decoder (float matrix IDCT, per-pixel
+// float upsampling and colour conversion). The vectorized decoder must stay bit-exact.
+test "decode output is unchanged from the scalar decoder" {
+    const gpa = std.testing.allocator;
+    const Case = struct { data: []const u8, hash: u64 };
+    const cases = [_]Case{
+        .{ .data = @embedFile("../../Data/Read/BasicArt.jpg"), .hash = 0x4e299d90afb0efb1 },
+        .{ .data = @embedFile("../../Data/Read/Gradient.jpg"), .hash = 0x11742cd3833068c4 },
+        .{ .data = @embedFile("../../Data/Read/Gradient444.jpg"), .hash = 0x9da620d26fbed0e7 },
+        .{ .data = @embedFile("../../Data/Read/GradientGray.jpg"), .hash = 0x25eaf70a0c5ae94e },
+        .{ .data = @embedFile("../../Data/Read/GradientProgressive.jpg"), .hash = 0x11742cd3833068c4 },
+        .{ .data = @embedFile("../../Data/Read/IjgBaseline.jpg"), .hash = 0x2d02aa2124e9011e },
+        .{ .data = @embedFile("../../Data/Read/IjgProgressive.jpg"), .hash = 0x2d02aa2124e9011e },
+    };
+    for (cases, 0..) |case, i| {
+        const img = try Image.decode(.jpg, gpa, case.data);
+        defer img.deinit(gpa);
+        const hash = std.hash.Wyhash.hash(0, img.pixels.asBytes());
+        if (hash != case.hash) std.debug.print("fixture {}: 0x{x:0>16}\n", .{ i, hash });
+        try std.testing.expectEqual(case.hash, hash);
+    }
+
+    // Our own encoder's output at an odd size exercises the partial-vector edges.
+    const W = 37;
+    const H = 23;
+    var data: [W * H * 3]u8 = undefined;
+    for (0..H) |y| for (0..W) |x| {
+        data[(y * W + x) * 3 ..][0..3].* = .{ @truncate(x * 7 + y), @truncate(y * 13 ^ x), @truncate((x + y) * 5) };
+    };
+    const src: Image = .{ .width = W, .height = H, .fmt = .r8g8b8_srgb, .pixels = try .init(.rgb, gpa, &data) };
+    defer src.deinit(gpa);
+    const encoded = [_]u64{ 0x2d176a5c95fbbae2, 0x8f6d283ce6f3251e };
+    for ([_]Subsampling{ .s420, .s444 }, encoded, 0..) |sub, expected, i| {
+        const img = try roundTrip(gpa, &src, .{ .quality = 75, .subsampling = sub });
+        defer img.deinit(gpa);
+        const hash = std.hash.Wyhash.hash(0, img.pixels.asBytes());
+        if (hash != expected) std.debug.print("encoded {}: 0x{x:0>16}\n", .{ i, hash });
+        try std.testing.expectEqual(expected, hash);
+    }
 }
 
 test "decode rejects bad data" {
