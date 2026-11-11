@@ -23,6 +23,7 @@ pub fn main(init: std.process.Init) !void {
         "src/Data/Read/vp8/blue-purple-pink-large.normal-filter.lossy.webp",
         "src/Data/Read/vp8/blue-purple-pink-large.simple-filter.lossy.webp",
         "src/Data/Read/vp8/yellow_rose.lossy-with-alpha.webp",
+        "src/Data/Read/png/BasicArt16i.png", // 16-bit rgba, Adam7
     };
     for (files) |path| {
         const tag = try Image.tagFromExt(path);
