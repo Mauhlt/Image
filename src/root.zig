@@ -14,8 +14,6 @@ pub const Pixels = @import("Colors/pixels.zig").Pixels;
 pub const PixelTag = @import("Colors/pixels.zig").PixelTag;
 pub const Info = @import("info.zig");
 pub const Batch = @import("batch.zig");
-/// 3D/4D scalar volumes (NRRD, NIfTI, DICOM series) - see volume.zig
-pub const Volume = @import("volume.zig");
 /// GPU textures: mipmaps, arrays, cube maps, BCn - see texture.zig
 pub const Texture = @import("texture.zig");
 pub const ImageTag = misc.ImageTag;
@@ -210,7 +208,6 @@ test {
     _ = @import("texture.zig");
     _ = @import("Formats/netpbm.zig");
     _ = @import("Colors/test.zig");
-    _ = Volume;
     _ = @import("Formats/qoi/matches.zig");
     _ = @import("Formats/heic/heif.zig");
     _ = @import("Formats/heic/hevc/bits.zig");
