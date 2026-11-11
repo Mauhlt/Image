@@ -105,9 +105,8 @@ fn decodeOps(comptime ch: usize, data: []const u8, out: []u8) !void {
     var b: u8 = 0;
     var a: u8 = 255;
     // packed as in memory (r | g << 8 | ...), so an entry is one load or store;
-    // the spec starts the index at all zeros, this decoder always started it at
-    // opaque black, which is kept so output stays identical
-    var index: [64]u32 = @splat(0xFF00_0000);
+    // the spec starts the index at all zeros (transparent black)
+    var index: [64]u32 = @splat(0);
     var i: usize = 0; // next op byte
     var j: usize = 0; // next pixel
     // the longest run, plus 16 pixels for vector stores past a pixel or run
@@ -225,6 +224,9 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         .g = 0,
         .b = 0,
     });
+    // A decoder starts the index at transparent black, which an opaque rgb pixel
+    // never equals: only slots this encoder has written may be referenced.
+    var filled: u64 = 0;
 
     var i: usize = 0;
     const len = rgbs.len;
@@ -241,12 +243,13 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         }
 
         const index = hashRGB(px);
-        if (table[index].eql(px)) {
+        if (filled >> @intCast(index) & 1 == 1 and table[index].eql(px)) {
             const byte = (@as(u8, @intFromEnum(BitTags.index)) << 6) | index;
             try w.writeByte(byte);
             continue;
         }
         table[index] = px;
+        filled |= @as(u64, 1) << @intCast(index);
 
         const drgb: RGB = .{
             .r = px.r -% prev.r +% 2,
@@ -297,6 +300,7 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
         .r = 0,
         .g = 0,
         .b = 0,
+        .a = 0, // the spec starts the index at all zeros
     });
     var i: usize = 0;
 
@@ -449,5 +453,60 @@ test "qoi decoder matches the scalar oracle on random op streams" {
             k += len;
         }
         try expectMatchesOracle(gpa, 3, rgb_only.items, rgb_pixels);
+    }
+}
+
+test "qoi index starts as transparent black, as the spec says" {
+    // rgba: an index op into an untouched slot gives (0, 0, 0, 0)
+    var px4: [4]u8 = undefined;
+    try decodeOps(4, &.{0x00}, &px4);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 0 }, &px4);
+
+    // rgb: that pixel's alpha 0 carries into the hash of the next one, so
+    // (10, 20, 30) lands in slot 20 (not 9) and index op 20 finds it
+    const body = [_]u8{ 0x00, 0xFE, 10, 20, 30, 0x14 };
+    var px3: [9]u8 = undefined;
+    try decodeOps(3, &body, &px3);
+    try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0, 10, 20, 30, 10, 20, 30 }, &px3);
+    try expectMatchesOracle(std.testing.allocator, 3, &body, 3);
+}
+
+test "qoi encoder output decodes with spec index semantics" {
+    // a small palette makes index ops common; opaque and transparent black are
+    // the colours a wrongly initialised index confuses
+    const gpa = std.testing.allocator;
+    const scalar = @import("scalar.zig");
+    var prng: std.Random.DefaultPrng = .init(7);
+    const random = prng.random();
+    const palette = [_]RGBA{
+        .{ .r = 0, .g = 0, .b = 0, .a = 255 }, .{ .r = 0, .g = 0, .b = 0, .a = 0 },
+        .{ .r = 200, .g = 10, .b = 10 },       .{ .r = 10, .g = 200, .b = 10, .a = 128 },
+        .{ .r = 1, .g = 2, .b = 3 },
+    };
+    for (0..50) |_| {
+        const n = random.intRangeAtMost(usize, 1, 300);
+        const rgba = try gpa.alloc(RGBA, n);
+        defer gpa.free(rgba);
+        const rgb = try gpa.alloc(RGB, n);
+        defer gpa.free(rgb);
+        for (rgba, rgb) |*a, *b| {
+            a.* = palette[random.uintLessThan(usize, palette.len)];
+            b.* = .{ .r = a.r, .g = a.g, .b = a.b };
+        }
+
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+        try encodeRgb(&aw.writer, rgb);
+        const got3 = try gpa.alloc(RGB, n);
+        defer gpa.free(got3);
+        try scalar.decodeRgb(aw.written(), got3);
+        try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(rgb), std.mem.sliceAsBytes(got3));
+
+        aw.clearRetainingCapacity();
+        try encodeRgba(&aw.writer, rgba);
+        const got4 = try gpa.alloc(RGBA, n);
+        defer gpa.free(got4);
+        try scalar.decodeRgba(aw.written(), got4);
+        try std.testing.expectEqualSlices(u8, std.mem.sliceAsBytes(rgba), std.mem.sliceAsBytes(got4));
     }
 }
