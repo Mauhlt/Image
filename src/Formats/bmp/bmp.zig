@@ -89,11 +89,14 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     const out_stride = width * out_bpp;
 
     // RLE expands to one index per pixel first: its codes may cross rows (delta)
+    var written: ?[]u8 = null; // RLE: which pixels the stream set
     const rle_indices: ?[]u8 = switch (hdr.compression) {
         .rle4, .rle8 => blk: {
             const idx = try scratch.alloc(u8, width * height);
             @memset(idx, 0);
-            try rle.decode(if (hdr.compression == .rle4) .rle4 else .rle8, hdr.rleData(data), width, height, idx);
+            written = try scratch.alloc(u8, width * height);
+            @memset(written.?, 0);
+            try rle.decode(if (hdr.compression == .rle4) .rle4 else .rle8, hdr.rleData(data), width, height, idx, written);
             break :blk idx;
         },
         else => null,
@@ -123,6 +126,22 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
                 try palette.writeRow(indices, dst, inf.tag);
             },
         }
+    }
+    if (written) |w| blackenSkipped(w, out, width, height, hdr.is_top_down, out_bpp);
+}
+
+/// RLE pixels the stream never set (delta, early end of line / bitmap) become
+/// opaque black, matching Windows' decoder. `written` is in file row order.
+fn blackenSkipped(written: []const u8, out: []u8, width: usize, height: usize, top_down: bool, bpp: usize) void {
+    for (0..height) |y| {
+        const src_row = if (top_down) y else height - 1 - y;
+        const w = written[src_row * width ..][0..width];
+        const dst = out[y * width * bpp ..][0 .. width * bpp];
+        for (w, 0..) |set, x| if (set == 0) {
+            const px = dst[x * bpp ..][0..bpp];
+            @memset(px, 0);
+            if (bpp == 4) px[3] = 255;
+        };
     }
 }
 
@@ -275,20 +294,14 @@ test "bmp matches Windows' decoder" {
     }
 }
 
-test "bmp rle: skipped pixels are palette index 0" {
+test "bmp rle: skipped pixels are black, like Windows" {
     const gpa = std.testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
-    // Windows' WIC decoder leaves skipped pixels black instead; everywhere else we must agree
+    // both files skip pixels (delta codes / early end of line)
     inline for (.{ "pal8rletrns.bmp", "pal4rlecut.bmp" }) |name| {
-        const data = try std.Io.Dir.cwd().readFileAlloc(io, test_dir ++ name, gpa, .unlimited);
-        defer gpa.free(data);
-        const hdr: Header = try .decode(data);
-        const bgr0 = hdr.paletteColor(0);
-        const index0: [3]u8 = .{ bgr0[2], bgr0[1], bgr0[0] };
-
-        const ours = try Image.decode(.bmp, gpa, data);
+        const ours = try testRead(io, gpa, test_dir ++ name);
         defer ours.deinit(gpa);
         const pa = try ours.pixels.convert(.rgb, gpa);
         defer pa.deinit(gpa);
@@ -296,17 +309,7 @@ test "bmp rle: skipped pixels are palette index 0" {
         defer wic.deinit(gpa);
         const pw = try wic.pixels.convert(.rgb, gpa);
         defer pw.deinit(gpa);
-
-        var skipped: usize = 0;
-        for (0..pa.count()) |i| {
-            const o = pa.asBytes()[i * 3 ..][0..3];
-            const w = pw.asBytes()[i * 3 ..][0..3];
-            if (std.mem.eql(u8, o, w)) continue;
-            try std.testing.expectEqualSlices(u8, &.{ 0, 0, 0 }, w);
-            try std.testing.expectEqualSlices(u8, &index0, o);
-            skipped += 1;
-        }
-        try std.testing.expect(skipped > 0);
+        try std.testing.expectEqualSlices(u8, pw.asBytes(), pa.asBytes());
     }
 }
 
@@ -387,11 +390,14 @@ fn decodeReference(scratch: std.mem.Allocator, data: []const u8, inf: Info, out:
     const width: usize = hdr.width;
     const height: usize = hdr.height;
     const out_bpp = inf.tag.bytesPerPixel();
+    var written: ?[]u8 = null; // RLE: which pixels the stream set
     const rle_indices: ?[]u8 = switch (hdr.compression) {
         .rle4, .rle8 => blk: {
             const idx = try scratch.alloc(u8, width * height);
             @memset(idx, 0);
-            try rle.decode(if (hdr.compression == .rle4) .rle4 else .rle8, hdr.rleData(data), width, height, idx);
+            written = try scratch.alloc(u8, width * height);
+            @memset(written.?, 0);
+            try rle.decode(if (hdr.compression == .rle4) .rle4 else .rle8, hdr.rleData(data), width, height, idx, written);
             break :blk idx;
         },
         else => null,
@@ -431,6 +437,7 @@ fn decodeReference(scratch: std.mem.Allocator, data: []const u8, inf: Info, out:
             if (inf.tag == .g) dst[x] = e[0] else dst[x * 3 ..][0..3].* = e.*;
         };
     }
+    if (written) |w| blackenSkipped(w, out, width, height, hdr.is_top_down, out_bpp);
 }
 
 test "bmp table/vector decoder matches the pixel-at-a-time reference" {
