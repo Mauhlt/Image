@@ -11,9 +11,11 @@ const RGBA = @import("../../Colors/rgba.zig").RGBA;
 
 pub fn decodeRgb(data: []const u8, out: []RGB) !void {
     const n_pixels = out.len;
-    var prev: RGB = .{ .r = 0, .g = 0, .b = 0 };
-    var px: RGB = .{ .r = 0, .g = 0, .b = 0 };
-    var table: [64]RGB = @splat(.{ .r = 0, .g = 0, .b = 0 });
+    // alpha is tracked even for rgb: an index op can bring in the initial
+    // transparent black, and the hash of every later pixel then sees alpha 0
+    var prev: RGBA = .{ .r = 0, .g = 0, .b = 0 };
+    var px: RGBA = .{ .r = 0, .g = 0, .b = 0 };
+    var table: [64]RGBA = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0 });
     var i: usize = 0; // data idx
     var j: usize = 0; // rgbs idx
     while (i < data.len) : (i += 1) {
@@ -31,7 +33,7 @@ pub fn decodeRgb(data: []const u8, out: []RGB) !void {
                 .run => {
                     const run = (byte1 & 0x3F) + 1;
                     if (j + run > n_pixels) return Error.OutOfBounds;
-                    @memset(out[j..][0..run], prev);
+                    @memset(out[j..][0..run], RGB{ .r = prev.r, .g = prev.g, .b = prev.b });
                     j += run;
                     continue;
                 },
@@ -60,9 +62,9 @@ pub fn decodeRgb(data: []const u8, out: []RGB) !void {
             },
         }
         prev = px;
-        table[hashRGB(px)] = px;
+        table[hashRGBA(px)] = px;
         if (j >= n_pixels) return Error.OutOfBounds;
-        out[j] = px;
+        out[j] = .{ .r = px.r, .g = px.g, .b = px.b };
         j += 1;
     }
     if (j != n_pixels) return Error.InvalidNumOfPixels;
@@ -72,7 +74,7 @@ pub fn decodeRgba(data: []const u8, out: []RGBA) !void {
     const n_pixels = out.len;
     var prev: RGBA = .{ .r = 0, .g = 0, .b = 0 };
     var px: RGBA = .{ .r = 0, .g = 0, .b = 0 };
-    var table: [64]RGBA = @splat(.{ .r = 0, .g = 0, .b = 0 });
+    var table: [64]RGBA = @splat(.{ .r = 0, .g = 0, .b = 0, .a = 0 });
     var i: usize = 0; // data idx
     var j: usize = 0; // rgbas idx
     while (i < data.len) : (i += 1) {
