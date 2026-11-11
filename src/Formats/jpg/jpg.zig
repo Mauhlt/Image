@@ -39,6 +39,19 @@ pub const Plane = struct {
     stride: usize, // allocated width (multiple of 8)
     w: usize, // meaningful width  = ceil(width * h / h_max)
     h: usize, // meaningful height = ceil(height * v / v_max)
+
+    /// The plane of a component with sampling factors `h`x`v` in a frame of `mcus_x`
+    /// by `mcus_y` MCUs. Rows hold whole blocks, and the buffer has `V` bytes of slack
+    /// so vector loads at the right edge of the last row stay in bounds (see Upsampler).
+    pub fn alloc(scratch: std.mem.Allocator, width: usize, height: usize, mcus_x: usize, mcus_y: usize, h: u8, h_max: u8, v: u8, v_max: u8) !Plane {
+        const stride = mcus_x * h * 8;
+        return .{
+            .data = try scratch.alloc(u8, stride * mcus_y * v * 8 + V),
+            .stride = stride,
+            .w = ceilDiv(width * h, h_max),
+            .h = ceilDiv(height * v, v_max),
+        };
+    }
 };
 
 pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
@@ -50,15 +63,7 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
 
     var planes: [4]Plane = undefined;
     for (hdr.components[0..hdr.n_components], 0..) |c, i| {
-        const stride = mcus_x * c.h * 8;
-        const rows = mcus_y * c.v * 8;
-        planes[i] = .{
-            // slack so vector loads at the right edge stay in bounds (see Upsampler)
-            .data = try scratch.alloc(u8, stride * rows + V),
-            .stride = stride,
-            .w = ceilDiv(@as(usize, hdr.width) * c.h, hdr.h_max),
-            .h = ceilDiv(@as(usize, hdr.height) * c.v, hdr.v_max),
-        };
+        planes[i] = try .alloc(scratch, hdr.width, hdr.height, mcus_x, mcus_y, c.h, hdr.h_max, c.v, hdr.v_max);
     }
     defer for (planes[0..hdr.n_components]) |p| scratch.free(p.data);
 
@@ -166,6 +171,7 @@ pub fn storeFlat(sample: f32, dst: []u8, stride: usize) void {
     for (0..8) |y| dst[y * stride ..][0..8].* = row;
 }
 
+/// One row of an 8x8 block: the width is the block's, not a tuning choice.
 fn toPixels(row: @Vector(8, f32)) @Vector(8, u8) {
     const v = @round(row + @as(@Vector(8, f32), @splat(128)));
     return @intFromFloat(@min(@max(v, @as(@Vector(8, f32), @splat(0))), @as(@Vector(8, f32), @splat(255))));
@@ -182,10 +188,20 @@ fn writePixels(scratch: std.mem.Allocator, hdr: *const Header, planes: *const [4
     }
     if (inf.tag != .rgb) return Error.UnsupportedPixels;
 
-    var ups: [3]Upsampler = undefined;
-    for (&ups, hdr.components[0..3], planes[0..3]) |*u, c, p| {
-        u.* = try .init(scratch, p, width, height, c.h, hdr.h_max, c.v, hdr.v_max);
+    var h: [3]u8 = undefined;
+    var v: [3]u8 = undefined;
+    for (hdr.components[0..3], &h, &v) |c, *hh, *vv| {
+        hh.* = c.h;
+        vv.* = c.v;
     }
+    return planesToRgb(scratch, planes[0..3], h, hdr.h_max, v, hdr.v_max, width, height, out);
+}
+
+/// Upsamples the Y, Cb and Cr planes (sampling factors `h`, `v`) to `width` x `height`
+/// and converts them to interleaved RGB in `out`.
+fn planesToRgb(scratch: std.mem.Allocator, planes: *const [3]Plane, h: [3]u8, h_max: u8, v: [3]u8, v_max: u8, width: usize, height: usize, out: []u8) !void {
+    var ups: [3]Upsampler = undefined;
+    for (&ups, planes, h, v) |*u, p, hh, vv| u.* = try .init(scratch, p, width, height, hh, h_max, vv, v_max);
     for (0..height) |y| {
         ycbcr.toRgbRow(ups[0].rowAt(y), ups[1].rowAt(y), ups[2].rowAt(y), out[y * width * 3 ..][0 .. width * 3]);
     }
@@ -485,6 +501,90 @@ test "decode output is unchanged from the scalar decoder" {
         if (hash != expected) std.debug.print("encoded {}: 0x{x:0>16}\n", .{ i, hash });
         try std.testing.expectEqual(expected, hash);
     }
+}
+
+/// Widths around every vector edge: below, at and just past one vector (`V` u16 lanes
+/// in the upsampler, `V` pixels in ycbcr, `2V` bytes per upsampled row), and several
+/// vectors plus a tail.
+const edge_widths = [_]usize{ 1, 2, 3, 7, 15, 17, 33, 65, 127, V - 1, V, V + 1, 2 * V - 1, 2 * V, 2 * V + 1, 2 * V + 3, 4 * V + 5 };
+
+test "upsampling + color conversion at vector edges, every sampling mode, vs scalar" {
+    const color = @import("../../Colors/misc.zig");
+    var arena: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena.deinit();
+    const scratch = arena.allocator();
+    var prng: std.Random.DefaultPrng = .init(7);
+    const random = prng.random();
+    // luma factors (chroma is 1x1): 4:4:4, 4:2:2, 4:4:0, 4:2:0, and float-tap ratios
+    const modes = [_][2]u8{ .{ 1, 1 }, .{ 2, 1 }, .{ 1, 2 }, .{ 2, 2 }, .{ 4, 1 }, .{ 3, 2 } };
+    for (edge_widths) |width| for ([_]usize{ 1, 2, 3, 9, 17 }) |height| for (modes) |m| {
+        const h_max, const v_max = m;
+        const mcus_x = ceilDiv(width, 8 * @as(usize, h_max));
+        const mcus_y = ceilDiv(height, 8 * @as(usize, v_max));
+        const h = [3]u8{ h_max, 1, 1 };
+        const v = [3]u8{ v_max, 1, 1 };
+        var planes: [3]Plane = undefined;
+        for (&planes, h, v) |*p, hh, vv| {
+            // exactly the decoder's allocation, so Debug bounds checks catch any over-read
+            p.* = try .alloc(scratch, width, height, mcus_x, mcus_y, hh, h_max, vv, v_max);
+            random.bytes(p.data);
+        }
+        const out = try scratch.alloc(u8, width * height * 3);
+        try planesToRgb(scratch, &planes, h, h_max, v, v_max, width, height, out);
+
+        for (0..height) |y| for (0..width) |x| {
+            var s: [3]u8 = undefined;
+            for (&s, planes, h, v) |*e, p, hh, vv| e.* = scalarSample(p, x, y, hh, h_max, vv, v_max);
+            const want = [3]u8{ color.red(s[0], s[2]), color.green(s[0], s[1], s[2]), color.blue(s[0], s[1]) };
+            const got = out[(y * width + x) * 3 ..][0..3];
+            if (!std.mem.eql(u8, &want, got)) {
+                std.debug.print("width {} height {} mode {any} at ({}, {})\n", .{ width, height, m, x, y });
+                return error.TestExpectedEqual;
+            }
+        };
+        _ = arena.reset(.retain_capacity);
+    };
+}
+
+/// Bilinear (libjpeg "fancy") sample of plane `p` at full-resolution pixel (x, y), in f32.
+fn scalarSample(p: Plane, x: usize, y: usize, h: u8, h_max: u8, v: u8, v_max: u8) u8 {
+    const x0, const x1, const wx = scalarTap(x, p.w, h, h_max);
+    const y0, const y1, const wy = scalarTap(y, p.h, v, v_max);
+    const a0 = std.math.lerp(planeAt(p, x0, y0), planeAt(p, x1, y0), wx);
+    const a1 = std.math.lerp(planeAt(p, x0, y1), planeAt(p, x1, y1), wx);
+    return @intFromFloat(@round(std.math.lerp(a0, a1, wy)));
+}
+
+fn scalarTap(i: usize, n_in: usize, f: u8, max: u8) struct { usize, usize, f32 } {
+    if (f == max) return .{ i, i, 0 };
+    const ratio = @as(f32, @floatFromInt(f)) / @as(f32, @floatFromInt(max));
+    const last: f32 = @floatFromInt(n_in - 1);
+    const pos = @min(@max((@as(f32, @floatFromInt(i)) + 0.5) * ratio - 0.5, 0), last);
+    const p0 = @floor(pos);
+    return .{ @intFromFloat(p0), @intFromFloat(@min(p0 + 1, last)), pos - p0 };
+}
+
+fn planeAt(p: Plane, x: usize, y: usize) f32 {
+    return @floatFromInt(p.data[y * p.stride + x]);
+}
+
+test "encode/decode round trip at vector-edge widths" {
+    const gpa = std.testing.allocator;
+    for (edge_widths) |W| for ([_]usize{ 1, 9 }) |H| {
+        const data = try gpa.alloc(u8, W * H * 3);
+        defer gpa.free(data);
+        for (0..H) |y| for (0..W) |x| {
+            data[(y * W + x) * 3 ..][0..3].* = .{ @truncate(x * 3 + 40), @truncate(y * 11 + 60), @truncate((x + y) * 2 + 80) };
+        };
+        const img: Image = .{ .width = @intCast(W), .height = @intCast(H), .fmt = .r8g8b8_srgb, .pixels = try .init(.rgb, gpa, data) };
+        defer img.deinit(gpa);
+        for ([_]Subsampling{ .s420, .s444 }) |sub| {
+            const out = try roundTrip(gpa, &img, .{ .quality = 95, .subsampling = sub });
+            defer out.deinit(gpa);
+            try std.testing.expectEqual(img.width, out.width);
+            try Image.expectSimilar(gpa, &img, &out, .rgb, 12);
+        }
+    };
 }
 
 test "decode rejects bad data" {

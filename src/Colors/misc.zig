@@ -1,6 +1,15 @@
 const std = @import("std");
 
-pub const N = std.simd.suggestVectorLength(u8) orelse 64;
+/// SIMD tuning width in bytes (u8 lanes): the target's suggested vector length, or the
+/// `-Dvector-bytes` build option. Kernels whose width is only a performance choice
+/// derive it from this; widths the algorithm dictates stay literal.
+pub const N: usize = switch (@import("build_options").vector_bytes) {
+    0 => std.simd.suggestVectorLength(u8) orelse 64,
+    else => |n| n,
+};
+comptime {
+    if (N < 16 or !std.math.isPowerOfTwo(N)) @compileError("vector width must be a power of two >= 16 bytes");
+}
 const U8 = @Vector(N, u8); // based on NI
 const T: type = i32;
 const TV: type = @Vector(N, T);

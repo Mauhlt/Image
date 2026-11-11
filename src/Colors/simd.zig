@@ -60,7 +60,7 @@ pub inline fn permute(
         const first = g * P * in_bpp;
         // the last 3-byte group would read past the end: load it 4 bytes earlier
         const at = @min(first, n * in_bpp - 16);
-        const v: @Vector(16, u8) = src[at..][0..16].*;
+        const v: @Vector(16, u8) = src[at..][0..16].*; // fixed: pshufb / tbl shuffle within 16 bytes
         const group_bytes = P * out_bpp;
         inline for (0..(group_bytes + 15) / 16) |piece| {
             const len = @min(16, group_bytes - piece * 16);
@@ -98,11 +98,78 @@ test permute {
     for (0..32) |p| try std.testing.expectEqualSlices(u8, &.{ src[p * 3 + 1], 9 }, ga[p * 2 ..][0..2]);
 }
 
+/// `std.simd.interlace` (element i of every vector, then element i + 1, ...). std
+/// builds its masks at comptime under the default branch quota, which 64-byte vectors
+/// (AVX-512) of 3 or 4 channels exceed; those take one big shuffle instead. Smaller
+/// ones keep std's, which LLVM lowers better (rgba -> rgb ~25% faster with AVX2).
+pub inline fn interlace(vecs: anytype) @Vector(vecs.len * vecLen(@TypeOf(vecs[0])), vecChild(@TypeOf(vecs[0]))) {
+    const V = @TypeOf(vecs[0]);
+    const K = vecs.len;
+    const L = comptime vecLen(V);
+    if (K * L <= max_std_lanes) return std.simd.interlace(vecs);
+    const arr: [K]V = vecs;
+    const joined: @Vector(K * L, vecChild(V)) = @bitCast(arr);
+    const mask = comptime blk: {
+        @setEvalBranchQuota(10 * K * L + 1000);
+        var m: [K * L]i32 = undefined;
+        for (0..L) |p| for (0..K) |c| {
+            m[p * K + c] = c * L + p;
+        };
+        break :blk m;
+    };
+    return @shuffle(vecChild(V), joined, undefined, mask);
+}
+
+/// `std.simd.deinterlace`: the inverse of `interlace`, without its branch-quota limit.
+pub inline fn deinterlace(comptime K: usize, interlaced: anytype) [K]@Vector(vecLen(@TypeOf(interlaced)) / K, vecChild(@TypeOf(interlaced))) {
+    if (comptime vecLen(@TypeOf(interlaced)) <= max_std_lanes) return std.simd.deinterlace(K, interlaced);
+    const T = vecChild(@TypeOf(interlaced));
+    const L = comptime vecLen(@TypeOf(interlaced)) / K;
+    var out: [K]@Vector(L, T) = undefined;
+    inline for (&out, 0..) |*o, c| {
+        const mask = comptime blk: {
+            @setEvalBranchQuota(10 * L + 1000);
+            var m: [L]i32 = undefined;
+            for (&m, 0..) |*e, p| e.* = p * K + c;
+            break :blk m;
+        };
+        o.* = @shuffle(T, interlaced, undefined, mask);
+    }
+    return out;
+}
+
+/// The widest interlace std's masks stay within the default branch quota for.
+const max_std_lanes = 128;
+
+fn vecLen(comptime V: type) usize {
+    return @typeInfo(V).vector.len;
+}
+
+fn vecChild(comptime V: type) type {
+    return @typeInfo(V).vector.child;
+}
+
+test "interlace and deinterlace match std.simd" {
+    inline for (.{ 2, 3, 4 }) |K| inline for (.{ 4, 16, 32, 64 }) |L| {
+        var vecs: [K]@Vector(L, u8) = undefined;
+        for (&vecs, 0..) |*v, c| {
+            var a: [L]u8 = undefined;
+            for (&a, 0..) |*e, p| e.* = @intCast((c * 97 + p * 7) % 256);
+            v.* = a;
+        }
+        const ours = interlace(vecs);
+        // the reference, element by element (std's own can't build 64 x 3 or 4 masks)
+        const flat: [K * L]u8 = ours;
+        for (0..L) |p| for (0..K) |c| try std.testing.expectEqual(@as([L]u8, vecs[c])[p], flat[p * K + c]);
+        try std.testing.expectEqual(vecs, deinterlace(K, ours));
+    };
+}
+
 pub const MinMax = struct { min: u8, max: u8 };
 
 /// Smallest and largest byte of a non-empty slice.
 pub fn minMax(bytes: []const u8) MinMax {
-    const L = 32;
+    const L = @import("misc.zig").N;
     var lo: @Vector(L, u8) = @splat(255);
     var hi: @Vector(L, u8) = @splat(0);
     var i: usize = 0;
@@ -146,6 +213,25 @@ test minMax {
     try std.testing.expectEqual(@as(u8, 200), minMax(&bytes).max);
     try std.testing.expectEqual(@as(u8, 1), minMax(&bytes).min);
     try std.testing.expectEqual(@as(u8, 9), minMax(&.{9}).max);
+}
+
+test "minMax at vector-edge lengths vs scalar" {
+    const N = @import("misc.zig").N;
+    var prng: std.Random.DefaultPrng = .init(3);
+    const rand = prng.random();
+    var buf: [4 * N + 8]u8 = undefined;
+    for ([_]usize{ 1, 2, 7, 15, 17, 33, 65, N - 1, N, N + 1, 2 * N - 1, 2 * N, 2 * N + 3, 4 * N + 7 }) |len| {
+        // the extremes at every position: vector body, last lane, tail
+        for (0..len) |at| {
+            const bytes = buf[0..len];
+            for (bytes) |*b| b.* = rand.intRangeAtMost(u8, 40, 200);
+            bytes[at] = rand.uintAtMost(u8, 39);
+            bytes[len - 1 - at] = rand.intRangeAtMost(u8, 201, 255);
+            var want: MinMax = .{ .min = 255, .max = 0 };
+            for (bytes) |b| want = .{ .min = @min(want.min, b), .max = @max(want.max, b) };
+            try std.testing.expectEqual(want, minMax(bytes));
+        }
+    }
 }
 
 test lookup {

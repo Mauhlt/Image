@@ -4,14 +4,15 @@
 //! The reference is bilinear interpolation in f32 (`Taps`). For the common 2x
 //! factors every weight is 0, 1/4 or 3/4, so those float lerps are exact and the
 //! result is round(n / 16) for an integer n (n / 4 when only one axis is halved);
-//! `half` computes the same n with u16 vectors, 16 samples at a time, and rounds
+//! `half` computes the same n with u16 vectors, `V` samples at a time, and rounds
 //! with (n + 8) >> 4 (or (n + 2) >> 2).
 const std = @import("std");
 const Plane = @import("jpg.zig").Plane;
 
-/// Lanes per vector. Plane rows and the rows handed out here are readable this far
-/// past their meaningful width, so loops never need a scalar tail.
-pub const V = 16;
+/// Lanes per vector: one register of u16 (16 with AVX2, 8 with SSE/NEON, 32 with
+/// AVX-512). Plane rows (`jpg.decodeInto`) and the rows handed out here are readable
+/// this far past their meaningful width, so loops never need a scalar tail.
+pub const V = @import("../../Colors/misc.zig").N / 2;
 
 const U8x = @Vector(V, u8);
 const U16x = @Vector(V, u16);
@@ -110,7 +111,7 @@ pub const Upsampler = struct {
                         a0 = @floatFromInt(r0[x]);
                         a1 = @floatFromInt(r1[x]);
                     }
-                    out.* =@intFromFloat(@round(std.math.lerp(a0, a1, wy)));
+                    out.* = @intFromFloat(@round(std.math.lerp(a0, a1, wy)));
                 }
                 return self.row;
             },
@@ -161,7 +162,7 @@ test "integer 2x upsampling matches the float taps exactly" {
     const random = prng.random();
 
     // odd and even sizes, narrower and wider than a vector, every 1x/2x combination
-    for ([_]usize{ 1, 2, 3, 16, 17, 31, 32, 33, 70 }) |width| for ([_]usize{ 1, 2, 5, 8 }) |height| {
+    for ([_]usize{ 1, 2, 3, 7, 15, 16, 17, 31, 32, 33, 65, 70, 127, V - 1, V, V + 1, 2 * V + 1, 4 * V + 3 }) |width| for ([_]usize{ 1, 2, 5, 8 }) |height| {
         for ([_][2]u8{ .{ 1, 2 }, .{ 2, 2 } }) |hf| for ([_][2]u8{ .{ 1, 2 }, .{ 2, 2 } }) |vf| {
             if (hf[0] == hf[1] and vf[0] == vf[1]) continue;
             const pw = std.math.divCeil(usize, width * hf[0], hf[1]) catch unreachable;
