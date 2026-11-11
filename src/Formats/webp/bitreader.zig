@@ -9,6 +9,16 @@ acc: u64 = 0,
 count: u7 = 0,
 
 fn fill(self: *@This()) void {
+    if (self.pos + 8 <= self.data.len) {
+        // as many whole bytes as fit, in one load. The bits of the partial
+        // byte above them are that byte's real bits, so the next fill can OR
+        // it in again unchanged.
+        self.acc |= std.mem.readInt(u64, self.data[self.pos..][0..8], .little) << @intCast(self.count);
+        const n = (63 - self.count) >> 3;
+        self.pos += n;
+        self.count += n * 8;
+        return;
+    }
     while (self.count <= 56) {
         const byte: u64 = if (self.pos < self.data.len) self.data[self.pos] else 0;
         self.pos += 1;

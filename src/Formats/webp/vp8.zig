@@ -43,42 +43,70 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Planes {
 
 // ─────────────────────────── Boolean decoder (7) ───────────────────────────
 
+/// Reads ahead up to 7 bytes at a time (as libwebp's VP8GetBit does); the
+/// value being decoded is the 8-bit window of `value` starting at bit `bits`.
 const BoolDecoder = struct {
     buf: []const u8 = &.{},
     pos: usize = 0,
+    value: u64 = 0,
+    /// buffered bits below the window; negative when the window is incomplete
+    bits: i32 = -8,
     range_m1: u32 = 254,
-    bits: u32 = 0,
-    n_bits: u8 = 0,
+    /// set when the data ran out (the missing bytes read as zeros)
     eof: bool = false,
 
     const uniform: u8 = 128;
 
     fn readBit(self: *BoolDecoder, prob: u8) bool {
-        if (self.n_bits < 8) {
-            if (self.pos >= self.buf.len) {
-                self.eof = true;
-                return false;
-            }
-            self.bits |= @as(u32, self.buf[self.pos]) << @intCast(8 - self.n_bits);
-            self.pos += 1;
-            self.n_bits += 8;
-        }
-        const split = ((self.range_m1 * prob) >> 8) + 1;
-        const bit = self.bits >= split << 8;
-        if (bit) {
-            self.range_m1 -= split;
-            self.bits -= split << 8;
+        return self.decodeBit(prob, false);
+    }
+
+    /// `v` with a sign read from the stream. Signs are unpredictable, so this
+    /// decodes without branches.
+    fn readSigned(self: *BoolDecoder, v: i32) i32 {
+        return if (self.decodeBit(uniform, true)) -v else v;
+    }
+
+    inline fn decodeBit(self: *BoolDecoder, prob: u8, comptime branchless: bool) bool {
+        if (self.bits < 0) self.load();
+        const pos: u6 = @intCast(self.bits);
+        const split = (self.range_m1 * prob) >> 8;
+        const bit = self.value >> pos > split;
+        var range: u32 = undefined; // the new range, not minus one
+        if (branchless) {
+            range = if (bit) self.range_m1 - split else split + 1;
+            self.value -= @as(u64, split + 1) * @intFromBool(bit) << pos;
+        } else if (bit) {
+            range = self.range_m1 - split;
+            self.value -= @as(u64, split + 1) << pos;
         } else {
-            self.range_m1 = split - 1;
+            range = split + 1;
         }
-        if (self.range_m1 < 127) {
-            // renormalize so that range_m1 is back in 127..254
-            const shift = lut_shift[self.range_m1];
-            self.range_m1 = lut_range_m1[self.range_m1];
-            self.bits <<= @intCast(shift);
-            self.n_bits -= shift;
-        }
+        // renormalize so that the range is back in 128..255
+        const shift: u5 = @intCast(7 - std.math.log2_int(u32, range));
+        self.range_m1 = (range << shift) - 1;
+        self.bits -= shift;
         return bit;
+    }
+
+    fn load(self: *BoolDecoder) void {
+        if (self.pos + 8 <= self.buf.len) {
+            const next = std.mem.readInt(u64, self.buf[self.pos..][0..8], .big);
+            self.value = (self.value << 56) | (next >> 8);
+            self.pos += 7;
+            self.bits += 56;
+        } else {
+            // the last bytes one at a time, exactly when needed
+            var byte: u8 = 0;
+            if (self.pos < self.buf.len) {
+                byte = self.buf[self.pos];
+                self.pos += 1;
+            } else {
+                self.eof = true;
+            }
+            self.value = (self.value << 8) | byte;
+            self.bits += 8;
+        }
     }
 
     fn readUint(self: *BoolDecoder, prob: u8, n: u5) u32 {
@@ -99,18 +127,6 @@ const BoolDecoder = struct {
     fn readOptionalInt(self: *BoolDecoder, prob: u8, n: u5) i32 {
         return if (self.readBit(prob)) self.readInt(prob, n) else 0;
     }
-
-    /// For range_m1 < 127: the shift that renormalizes it, and the new range_m1.
-    const lut_shift = blk: {
-        var t: [127]u8 = undefined;
-        for (&t, 0..) |*s, r| s.* = 7 - std.math.log2_int(u8, @as(u8, @intCast(r + 1)));
-        break :blk t;
-    };
-    const lut_range_m1 = blk: {
-        var t: [127]u8 = undefined;
-        for (&t, 0..) |*v, r| v.* = @intCast(((r + 1) << lut_shift[r]) - 1);
-        break :blk t;
-    };
 };
 
 // ────────────────────────────── Decoder state ──────────────────────────────
@@ -513,7 +529,7 @@ const Decoder = struct {
     /// Parses one 4x4 block's tokens into `coeff[base..][0..16]` (dequantized).
     /// `ctx` = number of neighbours (left + above) with nonzero coefficients.
     /// Returns 1 if any coefficient was nonzero.
-    fn parseResiduals4(d: *Decoder, r: *BoolDecoder, plane: usize, ctx: u8, quant: [2]u16, skip_dc: bool, base: usize) u8 {
+    fn parseResiduals4(d: *Decoder, noalias r: *BoolDecoder, plane: usize, ctx: u8, quant: [2]u16, skip_dc: bool, base: usize) u8 {
         const prob = &d.token_prob[plane];
         var n: usize = @intFromBool(skip_dc);
         var p = &prob[bands[n]][ctx];
@@ -551,8 +567,7 @@ const Decoder = struct {
                 p = &prob[bands[n]][2];
             }
             const z = zigzag[n - 1];
-            var c: i32 = @as(i32, @intCast(v)) * quant[@intFromBool(z > 0)];
-            if (r.readBit(BoolDecoder.uniform)) c = -c;
+            const c = r.readSigned(@as(i32, @intCast(v)) * quant[@intFromBool(z > 0)]);
             d.coeff[base + z] = @truncate(c);
             if (n == 16 or !r.readBit(p[0])) return 1; // EOB
         }
@@ -561,7 +576,11 @@ const Decoder = struct {
 
     /// Returns whether the macroblock had no nonzero coefficients.
     fn parseResiduals(d: *Decoder, mbx: usize, mby: usize) bool {
-        const part = &d.parts[mby & (d.n_parts - 1)];
+        // a local copy, so the decoder state can stay in registers while
+        // coefficients are stored
+        var local = d.parts[mby & (d.n_parts - 1)];
+        defer d.parts[mby & (d.n_parts - 1)] = local;
+        const part = &local;
         const q = d.quant[d.segment];
         var plane: usize = plane_y1_sans_y2;
         const up = &d.up_mb[mbx];
@@ -651,39 +670,32 @@ const Decoder = struct {
 
     /// Adds a 4x4 block's inverse transform, if it has any coefficients.
     fn addResidual4(d: *Decoder, y: usize, x: usize, base: usize, mask: u32) void {
+        var res: [4]Row4 = undefined;
         if (d.nz_ac_mask & mask != 0) {
-            d.inverseDct4(y, x, base);
+            res = inverseDct4(d.coeff[base..][0..16]);
         } else if (d.nz_dc_mask & mask != 0) {
-            const dc = (@as(i32, d.coeff[base]) + 4) >> 3;
-            for (0..4) |j| for (0..4) |i| {
-                d.ybr[y + j][x + i] = clip8(@as(i32, d.ybr[y + j][x + i]) + dc);
-            };
+            res = @splat(@splat((@as(i32, d.coeff[base]) + 4) >> 3));
+        } else return;
+        for (res, d.ybr[y..][0..4]) |r, *row| {
+            const pred: Row4 = @as(@Vector(4, u8), row[x..][0..4].*);
+            // with comptime-known bounds, @min/@max narrow the type to u8
+            row[x..][0..4].* = @min(@max(pred + r, @as(Row4, @splat(0))), @as(Row4, @splat(255)));
         }
     }
 
     // ───────────────────────── Transforms (14.3, 14.4) ─────────────────────────
 
-    fn inverseDct4(d: *Decoder, y: usize, x: usize, base: usize) void {
-        const c1 = 85627; // 65536 * cos(pi/8) * sqrt(2)
-        const c2 = 35468; // 65536 * sin(pi/8) * sqrt(2)
-        var m: [4][4]i32 = undefined;
-        for (0..4) |i| {
-            const in = d.coeff[base + i ..];
-            const a = @as(i32, in[0]) + in[8];
-            const b = @as(i32, in[0]) - in[8];
-            const c = ((@as(i32, in[4]) * c2) >> 16) - ((@as(i32, in[12]) * c1) >> 16);
-            const e = ((@as(i32, in[4]) * c1) >> 16) + ((@as(i32, in[12]) * c2) >> 16);
-            m[i] = .{ a + e, b + c, b - c, a - e };
-        }
-        for (0..4) |j| {
-            const dc = m[0][j] + 4;
-            const a = dc + m[2][j];
-            const b = dc - m[2][j];
-            const c = ((m[1][j] * c2) >> 16) - ((m[3][j] * c1) >> 16);
-            const e = ((m[1][j] * c1) >> 16) + ((m[3][j] * c2) >> 16);
-            const row = &d.ybr[y + j];
-            for ([4]i32{ a + e, b + c, b - c, a - e }, 0..) |r, i| row[x + i] = clip8(@as(i32, row[x + i]) + (r >> 3));
-        }
+    /// The residual rows of a 4x4 block: both passes of the transform work on
+    /// all four columns (then rows) at once, with a transpose after each.
+    fn inverseDct4(in: *const [16]i16) [4]Row4 {
+        var r: [4]Row4 = undefined;
+        for (&r, 0..) |*row, i| row.* = @as(@Vector(4, i16), in[4 * i ..][0..4].*);
+        // vertical pass: one vector per output row, a column per lane
+        r = transpose4(idct4(r[0], r[1], r[2], r[3]));
+        // horizontal pass: one vector per output column, a row per lane
+        r = transpose4(idct4(r[0] + @as(Row4, @splat(4)), r[1], r[2], r[3]));
+        for (&r) |*row| row.* >>= @splat(3);
+        return r;
     }
 
     /// Spreads the 16 luma DCs (Y2 block) into the DC slot of each luma block.
@@ -840,127 +852,306 @@ const Decoder = struct {
 
     // ───────────────────────────── Loop filter (15) ─────────────────────────────
 
+    // Every edge is filtered on 16 lines at once: a macroblock's 16 luma lines,
+    // or the 8 U and 8 V lines of a chroma edge together. Each line only reads
+    // and writes its own pixels, so this is exactly the per-line filter.
+
     fn simpleFilter(d: *Decoder) void {
+        const y = d.planes.y;
         const ys = d.planes.y_stride;
         for (0..d.mb_h) |mby| for (0..d.mb_w) |mbx| {
             const f = d.mb_filter[d.mb_w * mby + mbx];
             if (f.level == 0) continue;
-            const l: i32 = f.level;
+            const l: i16 = f.level;
             const yi = (mby * ys + mbx) * 16;
-            if (mbx > 0) filter2(d.planes.y, l + 4, yi, ys, 1);
-            if (f.inner) for ([_]usize{ 4, 8, 12 }) |o| filter2(d.planes.y, l, yi + o, ys, 1);
-            if (mby > 0) filter2(d.planes.y, l + 4, yi, 1, ys);
-            if (f.inner) for ([_]usize{ 4, 8, 12 }) |o| filter2(d.planes.y, l, yi + ys * o, 1, ys);
+            if (mbx > 0) simpleEdge(.vertical, lumaLines(.vertical, y, yi, ys), ys, l + 4);
+            if (f.inner) for ([_]usize{ 4, 8, 12 }) |o| simpleEdge(.vertical, lumaLines(.vertical, y, yi + o, ys), ys, l);
+            if (mby > 0) simpleEdge(.horizontal, lumaLines(.horizontal, y, yi, ys), ys, l + 4);
+            if (f.inner) for ([_]usize{ 4, 8, 12 }) |o| simpleEdge(.horizontal, lumaLines(.horizontal, y, yi + ys * o, ys), ys, l);
         };
     }
 
     fn normalFilter(d: *Decoder) void {
-        const ys = d.planes.y_stride;
-        const cs = d.planes.uv_stride;
         const p = &d.planes;
+        const ys = p.y_stride;
+        const cs = p.uv_stride;
         for (0..d.mb_h) |mby| for (0..d.mb_w) |mbx| {
             const f = d.mb_filter[d.mb_w * mby + mbx];
             if (f.level == 0) continue;
-            const l: i32 = f.level;
-            const il: i32 = f.ilevel;
-            const hl: i32 = f.hlevel;
+            const mb_edge: Thresholds = .{ .level = @as(i16, f.level) + 4, .ilevel = f.ilevel, .hlevel = f.hlevel };
+            var inner = mb_edge;
+            inner.level = f.level;
             const yi = (mby * ys + mbx) * 16;
             const ci = (mby * cs + mbx) * 8;
             // vertical edges (filtering across columns), then horizontal ones
             if (mbx > 0) {
-                filter246(p.y, 16, l + 4, il, hl, yi, ys, 1, false);
-                filter246(p.u, 8, l + 4, il, hl, ci, cs, 1, false);
-                filter246(p.v, 8, l + 4, il, hl, ci, cs, 1, false);
+                normalEdge(.vertical, false, lumaLines(.vertical, p.y, yi, ys), ys, mb_edge);
+                normalEdge(.vertical, false, chromaLines(p, ci), cs, mb_edge);
             }
             if (f.inner) {
-                for ([_]usize{ 4, 8, 12 }) |o| filter246(p.y, 16, l, il, hl, yi + o, ys, 1, true);
-                filter246(p.u, 8, l, il, hl, ci + 4, cs, 1, true);
-                filter246(p.v, 8, l, il, hl, ci + 4, cs, 1, true);
+                for ([_]usize{ 4, 8, 12 }) |o| normalEdge(.vertical, true, lumaLines(.vertical, p.y, yi + o, ys), ys, inner);
+                normalEdge(.vertical, true, chromaLines(p, ci + 4), cs, inner);
             }
             if (mby > 0) {
-                filter246(p.y, 16, l + 4, il, hl, yi, 1, ys, false);
-                filter246(p.u, 8, l + 4, il, hl, ci, 1, cs, false);
-                filter246(p.v, 8, l + 4, il, hl, ci, 1, cs, false);
+                normalEdge(.horizontal, false, lumaLines(.horizontal, p.y, yi, ys), ys, mb_edge);
+                normalEdge(.horizontal, false, chromaLines(p, ci), cs, mb_edge);
             }
             if (f.inner) {
-                for ([_]usize{ 4, 8, 12 }) |o| filter246(p.y, 16, l, il, hl, yi + ys * o, 1, ys, true);
-                filter246(p.u, 8, l, il, hl, ci + cs * 4, 1, cs, true);
-                filter246(p.v, 8, l, il, hl, ci + cs * 4, 1, cs, true);
+                for ([_]usize{ 4, 8, 12 }) |o| normalEdge(.horizontal, true, lumaLines(.horizontal, p.y, yi + ys * o, ys), ys, inner);
+                normalEdge(.horizontal, true, chromaLines(p, ci + cs * 4), cs, inner);
             }
         };
     }
 };
 
-/// Simple filter: adjusts the 2 pixels either side of an edge (15.2).
-/// `along` steps along the edge, `across` steps across it.
-fn filter2(pix: []u8, level: i32, start: usize, along: usize, across: usize) void {
-    var index = start;
-    for (0..16) |_| {
-        defer index += along;
-        const p1: i32 = pix[index - 2 * across];
-        const p0: i32 = pix[index - across];
-        const q0: i32 = pix[index];
-        const q1: i32 = pix[index + across];
-        if ((@abs(p0 - q0) << 1) + (@abs(p1 - q1) >> 1) > level) continue;
-        const a = 3 * (q0 - p0) + clamp127(p1 - q1);
-        pix[index - across] = clip8(p0 + clamp15((a + 3) >> 3));
-        pix[index] = clip8(q0 - clamp15((a + 4) >> 3));
+// ─────────────────────── Loop filter kernels (15.2, 15.3) ───────────────────────
+
+/// One sample per line of an edge. i16 holds every intermediate value exactly
+/// (the largest is 27 * 127 + 63 in the 6-pixel filter).
+const Lanes = @Vector(16, i16);
+
+/// A vertical edge separates columns (its lines are rows), a horizontal edge
+/// separates rows.
+const EdgeDir = enum { vertical, horizontal };
+
+/// 8 of the 16 lines of an edge: line k crosses it just before `pix[i + k * along]`
+/// (the first pixel past the edge, q0), with `along` 1 for a horizontal edge
+/// and the stride for a vertical one.
+const Half = struct { pix: []u8, i: usize };
+
+const Thresholds = struct { level: i16, ilevel: i16, hlevel: i16 };
+
+fn lumaLines(comptime dir: EdgeDir, y: []u8, i: usize, stride: usize) [2]Half {
+    const second = if (dir == .vertical) i + 8 * stride else i + 8;
+    return .{ .{ .pix = y, .i = i }, .{ .pix = y, .i = second } };
+}
+
+fn chromaLines(p: *const Planes, i: usize) [2]Half {
+    return .{ .{ .pix = p.u, .i = i }, .{ .pix = p.v, .i = i } };
+}
+
+const Bytes = @Vector(16, u8);
+
+/// Loads the 4 pixels on either side of an edge: result[j] holds, for all 16
+/// lines, the pixel j - 4 steps across the edge (p3 p2 p1 p0 q0 q1 q2 q3).
+fn loadEdge(comptime dir: EdgeDir, lines: [2]Half, stride: usize) [8]Lanes {
+    var px: [8]Bytes = undefined;
+    switch (dir) {
+        .horizontal => for (&px, 0..) |*row, j| {
+            const lo: @Vector(8, u8) = lineStart(lines[0], j * stride, stride)[0..8].*;
+            const hi: @Vector(8, u8) = lineStart(lines[1], j * stride, stride)[0..8].*;
+            row.* = @bitCast([2]@Vector(8, u8){ lo, hi });
+        },
+        .vertical => {
+            // lines are rows: transpose 16 rows of 8 pixels into 8 columns
+            var rows: [16]@Vector(8, u8) = undefined;
+            for (&rows, 0..) |*r, n| r.* = lineStart(lines[n / 8], (n % 8) * stride, 1)[0..8].*;
+            px = transpose16x8(rows);
+        },
+    }
+    var out: [8]Lanes = undefined;
+    for (&out, px) |*o, p| o.* = p;
+    return out;
+}
+
+/// Stores what loadEdge loaded; every value must already be clipped to 0..255.
+fn storeEdge(comptime dir: EdgeDir, lines: [2]Half, stride: usize, e: [8]Lanes) void {
+    var px: [8]Bytes = undefined;
+    // not @intCast: Zig 0.18-dev narrows signed vectors to u8 with signed
+    // saturation, turning 128..255 into 127
+    for (&px, e) |*p, v| p.* = @truncate(@as(@Vector(16, u16), @bitCast(v)));
+    switch (dir) {
+        .horizontal => for (px, 0..) |row, j| {
+            const halves: [2][8]u8 = @bitCast(row);
+            lineStart(lines[0], j * stride, stride)[0..8].* = halves[0];
+            lineStart(lines[1], j * stride, stride)[0..8].* = halves[1];
+        },
+        .vertical => for (transpose8x16(px), 0..) |r, n| {
+            lineStart(lines[n / 8], (n % 8) * stride, 1)[0..8].* = r;
+        },
     }
 }
 
-/// Normal filter (15.3): 2, 4 (inner edges) or 6 (macroblock edges) pixels.
-fn filter246(pix: []u8, n: usize, level: i32, ilevel: i32, hlevel: i32, start: usize, along: usize, across: usize, four_not_six: bool) void {
-    var index = start;
-    for (0..n) |_| {
-        defer index += along;
-        const p3: i32 = pix[index - 4 * across];
-        const p2: i32 = pix[index - 3 * across];
-        const p1: i32 = pix[index - 2 * across];
-        const p0: i32 = pix[index - across];
-        const q0: i32 = pix[index];
-        const q1: i32 = pix[index + across];
-        const q2: i32 = pix[index + 2 * across];
-        const q3: i32 = pix[index + 3 * across];
-        if ((@abs(p0 - q0) << 1) + (@abs(p1 - q1) >> 1) > level) continue;
-        if (@abs(p3 - p2) > ilevel or @abs(p2 - p1) > ilevel or @abs(p1 - p0) > ilevel or
-            @abs(q1 - q0) > ilevel or @abs(q2 - q1) > ilevel or @abs(q3 - q2) > ilevel) continue;
-        if (@abs(p1 - p0) > hlevel or @abs(q1 - q0) > hlevel) {
-            // high edge variance: only the 2 pixels at the edge
-            const a = 3 * (q0 - p0) + clamp127(p1 - q1);
-            pix[index - across] = clip8(p0 + clamp15((a + 3) >> 3));
-            pix[index] = clip8(q0 - clamp15((a + 4) >> 3));
-        } else if (four_not_six) {
-            const a = 3 * (q0 - p0);
-            const a1 = clamp15((a + 4) >> 3);
-            const a2 = clamp15((a + 3) >> 3);
-            const a3 = (a1 + 1) >> 1;
-            pix[index - 2 * across] = clip8(p1 + a3);
-            pix[index - across] = clip8(p0 + a2);
-            pix[index] = clip8(q0 - a1);
-            pix[index + across] = clip8(q1 - a3);
-        } else {
-            const a = clamp127(3 * (q0 - p0) + clamp127(p1 - q1));
-            const a1 = (27 * a + 63) >> 7;
-            const a2 = (18 * a + 63) >> 7;
-            const a3 = (9 * a + 63) >> 7;
-            pix[index - 3 * across] = clip8(p2 + a3);
-            pix[index - 2 * across] = clip8(p1 + a2);
-            pix[index - across] = clip8(p0 + a1);
-            pix[index] = clip8(q0 - a1);
-            pix[index + across] = clip8(q1 - a2);
-            pix[index + 2 * across] = clip8(q2 - a3);
+/// The pixels of `h` from p3 onwards (`across` steps before q0), `offset` further on.
+fn lineStart(h: Half, offset: usize, across: usize) []u8 {
+    return h.pix[h.i + offset - 4 * across ..];
+}
+
+/// Interleaves the low (or high) halves of `a` and `b` in units of `bits`:
+/// one punpckl / punpckh instruction on x86.
+fn zip(comptime bits: u16, comptime high: bool, a: Bytes, b: Bytes) Bytes {
+    const n = 128 / bits;
+    const T = @Int(.unsigned, bits);
+    const mask = comptime blk: {
+        var m: [n]i32 = undefined;
+        const first = if (high) n / 2 else 0;
+        for (0..n / 2) |i| {
+            m[2 * i] = first + i;
+            m[2 * i + 1] = ~@as(i32, first + i);
+        }
+        break :blk m;
+    };
+    return @bitCast(@shuffle(T, @as(@Vector(n, T), @bitCast(a)), @as(@Vector(n, T), @bitCast(b)), mask));
+}
+
+/// 16 rows of 8 bytes -> 8 columns of 16, the classic 3-step unpack network
+/// (bytes, then 16-bit then 32-bit pairs) followed by joining the two halves.
+fn transpose16x8(rows: [16]@Vector(8, u8)) [8]Bytes {
+    var z: [2][4]Bytes = undefined; // per half of 8 rows: two columns each
+    for (&z, 0..) |*zh, half| {
+        const r = rows[8 * half ..][0..8];
+        var x: [4]Bytes = undefined; // rows 2i and 2i + 1 interleaved
+        for (&x, 0..) |*xi, i| xi.* = zip(8, false, widen(r[2 * i]), widen(r[2 * i + 1]));
+        // y[0] / y[1]: columns 0..3 / 4..7 of rows 0..3; y[2] / y[3] of rows 4..7
+        const y = [4]Bytes{ zip(16, false, x[0], x[1]), zip(16, true, x[0], x[1]), zip(16, false, x[2], x[3]), zip(16, true, x[2], x[3]) };
+        zh.* = .{ zip(32, false, y[0], y[2]), zip(32, true, y[0], y[2]), zip(32, false, y[1], y[3]), zip(32, true, y[1], y[3]) };
+    }
+    var cols: [8]Bytes = undefined;
+    for (0..4) |i| {
+        cols[2 * i] = zip(64, false, z[0][i], z[1][i]);
+        cols[2 * i + 1] = zip(64, true, z[0][i], z[1][i]);
+    }
+    return cols;
+}
+
+/// The inverse of transpose16x8, with the same network.
+fn transpose8x16(cols: [8]Bytes) [16][8]u8 {
+    var rows: [16][8]u8 = undefined;
+    inline for (0..2) |half| {
+        var x: [4]Bytes = undefined; // columns 2i and 2i + 1 interleaved, for this half's rows
+        for (&x, 0..) |*xi, i| xi.* = zip(8, half == 1, cols[2 * i], cols[2 * i + 1]);
+        // y[0] / y[1]: bytes 0..3 of rows 0..3 / 4..7; y[2] / y[3]: bytes 4..7
+        const y = [4]Bytes{ zip(16, false, x[0], x[1]), zip(16, true, x[0], x[1]), zip(16, false, x[2], x[3]), zip(16, true, x[2], x[3]) };
+        const z = [4]Bytes{ zip(32, false, y[0], y[2]), zip(32, true, y[0], y[2]), zip(32, false, y[1], y[3]), zip(32, true, y[1], y[3]) };
+        for (z, 0..) |zi, i| {
+            const pair: [2][8]u8 = @bitCast(zi);
+            rows[8 * half + 2 * i] = pair[0];
+            rows[8 * half + 2 * i + 1] = pair[1];
         }
     }
+    return rows;
+}
+
+/// 8 bytes in the low half of a vector; zip(.., false, ..) ignores the rest.
+fn widen(v: @Vector(8, u8)) Bytes {
+    return @bitCast([2]@Vector(8, u8){ v, v });
+}
+
+/// Simple filter (15.2): the 2 pixels either side of a luma edge.
+fn simpleEdge(comptime dir: EdgeDir, lines: [2]Half, stride: usize, level: i16) void {
+    var e = loadEdge(dir, lines, stride);
+    const p1, const p0, const q0, const q1 = e[2..6].*;
+    const on = edgeActivity(p1, p0, q0, q1) <= splat(level);
+    const new_p0, const new_q0 = commonAdjust(p1, p0, q0, q1);
+    e[3] = @select(i16, on, new_p0, p0);
+    e[4] = @select(i16, on, new_q0, q0);
+    storeEdge(dir, lines, stride, e);
+}
+
+/// Normal filter (15.3): up to 4 (inner edges) or 6 (macroblock edges) pixels.
+fn normalEdge(comptime dir: EdgeDir, comptime inner: bool, lines: [2]Half, stride: usize, t: Thresholds) void {
+    var e = loadEdge(dir, lines, stride);
+    const p3, const p2, const p1, const p0, const q0, const q1, const q2, const q3 = e;
+    const interior = @max(@max(absDiff(p3, p2), absDiff(p2, p1)), @max(absDiff(p1, p0), absDiff(q1, q0)), @max(absDiff(q2, q1), absDiff(q3, q2)));
+    const on = (edgeActivity(p1, p0, q0, q1) <= splat(t.level)) & (interior <= splat(t.ilevel));
+    // high edge variance: only p0 and q0 change, as in the simple filter
+    const hev = @max(absDiff(p1, p0), absDiff(q1, q0)) > splat(t.hlevel);
+    const hev_p0, const hev_q0 = commonAdjust(p1, p0, q0, q1);
+    // otherwise p1 .. q1 (inner edges) or p2 .. q2 (macroblock edges)
+    var new: [6]Lanes = undefined;
+    if (inner) {
+        const a = splat(3) * (q0 - p0);
+        const a1 = clamp(-16, 15, (a + splat(4)) >> @splat(3));
+        const a2 = clamp(-16, 15, (a + splat(3)) >> @splat(3));
+        const a3 = (a1 + splat(1)) >> @splat(1);
+        new = .{ p2, p1 + a3, p0 + a2, q0 - a1, q1 - a3, q2 };
+    } else {
+        const a = clamp(-128, 127, splat(3) * (q0 - p0) + clamp(-128, 127, p1 - q1));
+        const a1 = (splat(27) * a + splat(63)) >> @splat(7);
+        const a2 = (splat(18) * a + splat(63)) >> @splat(7);
+        const a3 = (splat(9) * a + splat(63)) >> @splat(7);
+        new = .{ p2 + a3, p1 + a2, p0 + a1, q0 - a1, q1 - a2, q2 - a3 };
+    }
+    const full = on & !hev;
+    e[1] = @select(i16, full, clip8v(new[0]), p2);
+    e[2] = @select(i16, full, clip8v(new[1]), p1);
+    e[3] = @select(i16, on, @select(i16, hev, hev_p0, clip8v(new[2])), p0);
+    e[4] = @select(i16, on, @select(i16, hev, hev_q0, clip8v(new[3])), q0);
+    e[5] = @select(i16, full, clip8v(new[4]), q1);
+    e[6] = @select(i16, full, clip8v(new[5]), q2);
+    storeEdge(dir, lines, stride, e);
+}
+
+/// The filters' edge-difference measure, compared against the edge limit.
+fn edgeActivity(p1: Lanes, p0: Lanes, q0: Lanes, q1: Lanes) Lanes {
+    return (absDiff(p0, q0) << @splat(1)) + (absDiff(p1, q1) >> @splat(1));
+}
+
+/// The adjustment of p0 and q0 shared by the simple filter and the normal
+/// filter's high-edge-variance case; results are clipped.
+fn commonAdjust(p1: Lanes, p0: Lanes, q0: Lanes, q1: Lanes) [2]Lanes {
+    const a = splat(3) * (q0 - p0) + clamp(-128, 127, p1 - q1);
+    return .{
+        clip8v(p0 + clamp(-16, 15, (a + splat(3)) >> @splat(3))),
+        clip8v(q0 - clamp(-16, 15, (a + splat(4)) >> @splat(3))),
+    };
+}
+
+fn absDiff(a: Lanes, b: Lanes) Lanes {
+    return @max(a - b, b - a);
+}
+
+fn clamp(comptime lo: i16, comptime hi: i16, x: Lanes) Lanes {
+    return @min(@max(x, splat(lo)), splat(hi));
+}
+
+fn clip8v(x: Lanes) Lanes {
+    return clamp(0, 255, x);
+}
+
+fn splat(x: i16) Lanes {
+    return @splat(x);
 }
 
 fn clip8(x: i32) u8 {
     return @intCast(std.math.clamp(x, 0, 255));
 }
-fn clamp15(x: i32) i32 {
-    return std.math.clamp(x, -16, 15);
+
+// ───────────────────────── Inverse DCT helpers (14.3) ─────────────────────────
+
+const Row4 = @Vector(4, i32);
+
+/// One 1-D pass of the inverse DCT on four independent lanes.
+fn idct4(in0: Row4, in1: Row4, in2: Row4, in3: Row4) [4]Row4 {
+    const a = in0 + in2;
+    const b = in0 - in2;
+    const c = mulSin(in1) - mulCos(in3);
+    const e = mulCos(in1) + mulSin(in3);
+    return .{ a + e, b + c, b - c, a - e };
 }
-fn clamp127(x: i32) i32 {
-    return std.math.clamp(x, -128, 127);
+
+/// (x * 65536 * cos(pi/8) * sqrt(2)) >> 16, i.e. (x * 85627) >> 16, computed
+/// as libwebp does so that the product fits in 32 bits.
+fn mulCos(x: Row4) Row4 {
+    return ((x * @as(Row4, @splat(20091))) >> @splat(16)) + x;
+}
+
+/// (x * 65536 * sin(pi/8) * sqrt(2)) >> 16
+fn mulSin(x: Row4) Row4 {
+    return (x * @as(Row4, @splat(35468))) >> @splat(16);
+}
+
+fn transpose4(m: [4]Row4) [4]Row4 {
+    const lo01 = @shuffle(i32, m[0], m[1], [4]i32{ 0, ~@as(i32, 0), 1, ~@as(i32, 1) });
+    const hi01 = @shuffle(i32, m[0], m[1], [4]i32{ 2, ~@as(i32, 2), 3, ~@as(i32, 3) });
+    const lo23 = @shuffle(i32, m[2], m[3], [4]i32{ 0, ~@as(i32, 0), 1, ~@as(i32, 1) });
+    const hi23 = @shuffle(i32, m[2], m[3], [4]i32{ 2, ~@as(i32, 2), 3, ~@as(i32, 3) });
+    return .{
+        @shuffle(i32, lo01, lo23, [4]i32{ 0, 1, ~@as(i32, 0), ~@as(i32, 1) }),
+        @shuffle(i32, lo01, lo23, [4]i32{ 2, 3, ~@as(i32, 2), ~@as(i32, 3) }),
+        @shuffle(i32, hi01, hi23, [4]i32{ 0, 1, ~@as(i32, 0), ~@as(i32, 1) }),
+        @shuffle(i32, hi01, hi23, [4]i32{ 2, 3, ~@as(i32, 2), ~@as(i32, 3) }),
+    };
 }
 
 /// Four 0/1 flags <-> bits.
@@ -1006,12 +1197,71 @@ const ac_table = [128]u16{
     213, 217, 221, 225, 229, 234, 239, 245, 249, 254, 259, 264, 269, 274, 279, 284,
 };
 
-test "bool decoder renormalization tables match the reference" {
-    // spot checks against golang.org/x/image/vp8 lutShift / lutRangeM1
-    try std.testing.expectEqual(@as(u8, 7), BoolDecoder.lut_shift[0]);
-    try std.testing.expectEqual(@as(u8, 6), BoolDecoder.lut_shift[1]);
-    try std.testing.expectEqual(@as(u8, 1), BoolDecoder.lut_shift[126]);
-    try std.testing.expectEqual(@as(u8, 127), BoolDecoder.lut_range_m1[0]);
-    try std.testing.expectEqual(@as(u8, 191), BoolDecoder.lut_range_m1[2]);
-    try std.testing.expectEqual(@as(u8, 253), BoolDecoder.lut_range_m1[126]);
+test "bool decoder reads what the RFC 6386 (7.3) encoder wrote" {
+    const gpa = std.testing.allocator;
+    var out: std.ArrayList(u8) = .empty;
+    defer out.deinit(gpa);
+    const Encoder = struct {
+        out: *std.ArrayList(u8),
+        range: u32 = 255,
+        bottom: u32 = 0,
+        bit_count: u5 = 24,
+
+        fn addOne(e: *@This()) void {
+            var i = e.out.items.len;
+            while (i > 0 and e.out.items[i - 1] == 255) : (i -= 1) e.out.items[i - 1] = 0;
+            e.out.items[i - 1] += 1;
+        }
+
+        fn write(e: *@This(), prob: u8, bit: bool) !void {
+            const split = 1 + (((e.range - 1) * prob) >> 8);
+            if (bit) {
+                e.bottom +%= split;
+                e.range -= split;
+            } else {
+                e.range = split;
+            }
+            while (e.range < 128) {
+                e.range <<= 1;
+                if (e.bottom & (1 << 31) != 0) e.addOne();
+                e.bottom <<= 1;
+                e.bit_count -= 1;
+                if (e.bit_count == 0) {
+                    try e.out.append(std.testing.allocator, @intCast(e.bottom >> 24));
+                    e.bottom &= (1 << 24) - 1;
+                    e.bit_count = 8;
+                }
+            }
+        }
+
+        fn flush(e: *@This()) !void {
+            for (0..32) |_| try e.write(128, false);
+        }
+    };
+    var prng: std.Random.DefaultPrng = .init(3);
+    const rand = prng.random();
+    const n = 20000;
+    var probs: [n]u8 = undefined;
+    var bits: [n]bool = undefined;
+    var enc: Encoder = .{ .out = &out };
+    for (&probs, &bits, 0..) |*p, *b, i| {
+        // every third one a sign, read by readSigned
+        p.* = if (i % 3 == 0) BoolDecoder.uniform else rand.intRangeAtMost(u8, 1, 255);
+        // mostly the likely value, as real streams are
+        b.* = rand.intRangeAtMost(u8, 0, 255) >= p.*;
+        try enc.write(p.*, b.*);
+    }
+    try enc.flush();
+
+    var dec: BoolDecoder = .{ .buf = out.items };
+    for (probs, bits, 0..) |p, b, i| {
+        if (i % 3 == 0) {
+            try std.testing.expectEqual(@as(i32, if (b) -5 else 5), dec.readSigned(5));
+        } else {
+            try std.testing.expectEqual(b, dec.readBit(p));
+        }
+    }
+    try std.testing.expect(!dec.eof);
+    while (!dec.eof) _ = dec.readBit(BoolDecoder.uniform);
+    try std.testing.expectEqual(out.items.len, dec.pos);
 }

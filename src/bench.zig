@@ -17,7 +17,12 @@ pub fn main(init: std.process.Init) !void {
     const files = [_][]const u8{
         "src/Data/Read/BasicArt.bmp",  "src/Data/Read/BasicArt.ppm", "src/Data/Read/BasicArt.tga",
         "src/Data/Read/BasicArt.qoi",  "src/Data/Read/BasicArt.png", "src/Data/Read/BasicArt.webp",
-        "src/Data/Read/BasicArt.jpg",  "src/Data/Read/IjgProgressive.jpg",
+        "src/Data/Read/BasicArt.jpg",
+        "src/Data/Read/IjgProgressive.jpg",
+        // lossy WebP (smaller images): normal and simple loop filter, fancy upsampling + alpha
+        "src/Data/Read/vp8/blue-purple-pink-large.normal-filter.lossy.webp",
+        "src/Data/Read/vp8/blue-purple-pink-large.simple-filter.lossy.webp",
+        "src/Data/Read/vp8/yellow_rose.lossy-with-alpha.webp",
     };
     for (files) |path| {
         const tag = try Image.tagFromExt(path);
