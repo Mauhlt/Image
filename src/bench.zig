@@ -37,6 +37,7 @@ pub fn main(init: std.process.Init) !void {
         const mpix = @as(f64, @floatFromInt(try inf.nPixels())) / 1e6;
         std.debug.print("{s:<34} {d:>10.2} {d:>12.1}\n", .{ path, ms, mpix / (ms / 1000) });
     }
+    try @import("bench_raster.zig").run(io, gpa);
 
     // Game path: bake once (offline), then load the GPU-ready texture at runtime
     {
