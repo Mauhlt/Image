@@ -5,9 +5,12 @@ pub const ImageTag = enum {
     gif,
     heic,
     jpg,
+    pam,
     paint,
+    pbm,
     pgm,
     png,
+    pnm,
     ppm,
     qoi,
     tif,
@@ -24,7 +27,6 @@ pub const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "tiff", .tif },
     .{ "hif", .heic },
     .{ "dib", .bmp },
-    .{ "pnm", .ppm },
 });
 
 /// "foo/bar.JPEG" -> .jpg
@@ -74,5 +76,8 @@ test "tagFromExt" {
     try std.testing.expectEqual(ImageTag.jpg, try tagFromExt("a/b.JPEG"));
     try std.testing.expectEqual(ImageTag.png, try tagFromExt("x.png"));
     try std.testing.expectEqual(ImageTag.bmp, try tagFromExt("x.dib"));
+    try std.testing.expectEqual(ImageTag.pbm, try tagFromExt("x.PBM"));
+    try std.testing.expectEqual(ImageTag.pam, try tagFromExt("x.pam"));
+    try std.testing.expectEqual(ImageTag.pnm, try tagFromExt("x.pnm"));
     try std.testing.expectError(error.InvalidFileExtension, tagFromExt("noext"));
 }
