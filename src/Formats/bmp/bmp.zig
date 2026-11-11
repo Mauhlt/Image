@@ -9,6 +9,7 @@ const Error = @import("../error.zig").Error;
 const Image = @import("../../root.zig");
 const Info = @import("../../info.zig");
 const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
+const simd = @import("../../Colors/simd.zig");
 
 const Header = @import("header.zig");
 const Bitfields = @import("bitfields.zig").Bitfields;
@@ -99,12 +100,13 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     };
     const row_indices = try scratch.alloc(u8, width);
     const fields: Bitfields = try .init(hdr.masks);
+    const palette: Palette = .init(&hdr);
 
     for (0..height) |y| {
         const src_row = if (hdr.is_top_down) y else height - 1 - y;
         const dst = out[y * out_stride ..][0..out_stride];
         if (rle_indices) |idx| {
-            try writePaletteRow(&hdr, idx[src_row * width ..][0..width], dst, inf.tag);
+            try palette.writeRow(idx[src_row * width ..][0..width], dst, inf.tag);
             continue;
         }
         const src = data[hdr.data_offset + src_row * hdr.stride() ..][0..hdr.rowBytes()];
@@ -113,8 +115,12 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
             .rgb_16 => fields.decodeRow(u16, src, dst, width, out_bpp),
             .rgba_32 => fields.decodeRow(u32, src, dst, width, out_bpp),
             .bit_1_palette, .bit_2_palette, .bit_4_palette, .bit_8_palette => {
-                unpackIndices(src, row_indices, @intFromEnum(hdr.bits_per_pixel));
-                try writePaletteRow(&hdr, row_indices, dst, inf.tag);
+                const depth = @intFromEnum(hdr.bits_per_pixel);
+                const indices = if (depth == 8) src[0..width] else blk: {
+                    unpackIndices(src, row_indices, depth);
+                    break :blk row_indices;
+                };
+                try palette.writeRow(indices, dst, inf.tag);
             },
         }
     }
@@ -122,24 +128,47 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
 
 /// Splits packed 1/2/4/8-bit indices (most significant bits = leftmost pixel).
 fn unpackIndices(src: []const u8, out: []u8, depth: u16) void {
-    if (depth == 8) return @memcpy(out, src[0..out.len]);
-    const d: u3 = @intCast(depth);
-    const per_byte = 8 / depth;
-    const mask = (@as(u8, 1) << d) - 1;
-    for (out, 0..) |*o, x| {
-        const shift: u3 = @intCast(8 - depth * (1 + x % per_byte));
-        o.* = (src[x / per_byte] >> shift) & mask;
+    switch (depth) {
+        inline 1, 2, 4 => |d| unpackDepth(d, src, out),
+        else => @memcpy(out, src[0..out.len]),
     }
 }
 
-fn writePaletteRow(hdr: *const Header, indices: []const u8, dst: []u8, tag: PixelTag) !void {
-    const n_pal = hdr.paletteLen();
-    for (indices, 0..) |idx, x| {
-        if (idx >= n_pal) return Error.OutOfBounds;
-        const e = hdr.paletteColor(idx);
-        if (tag == .g) dst[x] = e[0] else dst[x * 3 ..][0..3].* = e.*;
-    }
+fn unpackDepth(comptime depth: u16, src: []const u8, out: []u8) void {
+    const per_byte = 8 / depth;
+    // every byte value's indices, so whole bytes unpack with one table load
+    const table: [256][per_byte]u8 = comptime blk: {
+        @setEvalBranchQuota(4 * 256 * per_byte);
+        var t: [256][per_byte]u8 = undefined;
+        for (&t, 0..) |*e, byte| for (e, 0..) |*o, k| {
+            o.* = (byte >> (8 - depth * (k + 1))) & ((1 << depth) - 1);
+        };
+        break :blk t;
+    };
+    const full = out.len / per_byte;
+    for (src[0..full], 0..) |byte, i| out[i * per_byte ..][0..per_byte].* = table[byte];
+    const rest = out.len - full * per_byte;
+    if (rest > 0) @memcpy(out[full * per_byte ..], table[src[full]][0..rest]);
 }
+
+/// The palette as 4-byte entries (BGR plus a pad byte), so a lookup is one load.
+const Palette = struct {
+    colors: [256][4]u8,
+    len: usize,
+
+    fn init(hdr: *const Header) Palette {
+        var p: Palette = .{ .colors = @splat(@splat(0)), .len = hdr.paletteLen() };
+        for (p.colors[0..p.len], 0..) |*c, i| c[0..3].* = hdr.paletteColor(i).*;
+        return p;
+    }
+
+    fn writeRow(self: *const Palette, indices: []const u8, dst: []u8, tag: PixelTag) Error!void {
+        if (self.len < 256 and simd.minMax(indices).max >= self.len) return Error.OutOfBounds;
+        // a gray palette maps every index to (index, index, index)
+        if (tag == .g) return @memcpy(dst, indices);
+        simd.lookup(3, &self.colors, indices, dst);
+    }
+};
 
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     // BMP stores gray (palette), BGR or BGRA; convert anything else
@@ -350,4 +379,163 @@ test "bmp encode keeps alpha" {
     defer out.deinit(gpa);
     try std.testing.expectEqual(PixelTag.bgra, std.meta.activeTag(out.pixels));
     try std.testing.expectEqualSlices(u8, &data, out.pixels.asBytes());
+}
+
+/// The original pixel-at-a-time decoder, kept as the oracle for the table and vector rows.
+fn decodeReference(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
+    const hdr: Header = try .decode(data);
+    const width: usize = hdr.width;
+    const height: usize = hdr.height;
+    const out_bpp = inf.tag.bytesPerPixel();
+    const rle_indices: ?[]u8 = switch (hdr.compression) {
+        .rle4, .rle8 => blk: {
+            const idx = try scratch.alloc(u8, width * height);
+            @memset(idx, 0);
+            try rle.decode(if (hdr.compression == .rle4) .rle4 else .rle8, hdr.rleData(data), width, height, idx);
+            break :blk idx;
+        },
+        else => null,
+    };
+    const indices = try scratch.alloc(u8, width);
+    const fields: Bitfields = try .init(hdr.masks);
+    for (0..height) |y| {
+        const src_row = if (hdr.is_top_down) y else height - 1 - y;
+        const dst = out[y * width * out_bpp ..][0 .. width * out_bpp];
+        const depth = @intFromEnum(hdr.bits_per_pixel);
+        if (rle_indices) |idx| @memcpy(indices, idx[src_row * width ..][0..width]) else {
+            const src = data[hdr.data_offset + src_row * hdr.stride() ..][0..hdr.rowBytes()];
+            if (depth <= 8) {
+                for (indices, 0..) |*o, x| {
+                    const shift: u3 = @intCast(8 - depth * (1 + x % (8 / depth)));
+                    o.* = (src[x / (8 / depth)] >> shift) & @as(u8, @intCast((@as(u16, 1) << @intCast(depth)) - 1));
+                }
+            } else for (0..width) |x| {
+                const px: u32 = switch (depth) {
+                    16 => std.mem.readInt(u16, src[x * 2 ..][0..2], .little),
+                    24 => {
+                        @memcpy(dst[x * 3 ..][0..3], src[x * 3 ..][0..3]);
+                        continue;
+                    },
+                    else => std.mem.readInt(u32, src[x * 4 ..][0..4], .little),
+                };
+                const d = dst[x * out_bpp ..];
+                d[0] = fields.b.get(px);
+                d[1] = fields.g.get(px);
+                d[2] = fields.r.get(px);
+                if (out_bpp == 4) d[3] = fields.a.get(px);
+            }
+        }
+        if (depth <= 8) for (indices, 0..) |idx, x| {
+            if (idx >= hdr.paletteLen()) return Error.OutOfBounds;
+            const e = hdr.paletteColor(idx);
+            if (inf.tag == .g) dst[x] = e[0] else dst[x * 3 ..][0..3].* = e.*;
+        };
+    }
+}
+
+test "bmp table/vector decoder matches the pixel-at-a-time reference" {
+    const gpa = std.testing.allocator;
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    var prng: std.Random.DefaultPrng = .init(0xB4B);
+    const rand = prng.random();
+    var file: std.ArrayList(u8) = .empty;
+    defer file.deinit(gpa);
+
+    const Kind = struct { bpp: u16, compression: u32, n_masks: usize = 0 };
+    const kinds = [_]Kind{
+        .{ .bpp = 1, .compression = 0 },
+        .{ .bpp = 2, .compression = 0 },
+        .{ .bpp = 4, .compression = 0 },
+        .{ .bpp = 8, .compression = 0 },
+        .{ .bpp = 8, .compression = 1 }, // RLE8
+        .{ .bpp = 4, .compression = 2 }, // RLE4
+        .{ .bpp = 16, .compression = 0 },
+        .{ .bpp = 24, .compression = 0 },
+        .{ .bpp = 32, .compression = 0 },
+        .{ .bpp = 16, .compression = 3, .n_masks = 3 }, // BI_BITFIELDS
+        .{ .bpp = 32, .compression = 3, .n_masks = 3 },
+        .{ .bpp = 16, .compression = 6, .n_masks = 4 }, // BI_ALPHABITFIELDS
+        .{ .bpp = 32, .compression = 6, .n_masks = 4 },
+    };
+    var decoded: usize = 0;
+    for (0..4000) |iter| {
+        const k = kinds[iter % kinds.len];
+        const width = rand.intRangeAtMost(u32, 1, 70);
+        const height = rand.intRangeAtMost(u32, 1, 5);
+        const top_down = rand.uintLessThan(u8, 4) == 0;
+        const max_colors = @as(usize, 1) << @intCast(@min(k.bpp, 8));
+        const n_pal: usize = if (k.bpp > 8) 0 else if (rand.boolean()) max_colors else rand.intRangeAtMost(usize, 1, max_colors);
+        const gray = rand.uintLessThan(u8, 3) == 0;
+
+        file.clearRetainingCapacity();
+        const offset = 14 + 40 + k.n_masks * 4 + n_pal * 4;
+        try file.appendNTimes(gpa, 0, offset);
+        file.items[0..2].* = "BM".*;
+        std.mem.writeInt(u32, file.items[10..14], @intCast(offset), .little);
+        std.mem.writeInt(u32, file.items[14..18], 40, .little);
+        std.mem.writeInt(i32, file.items[18..22], @intCast(width), .little);
+        std.mem.writeInt(i32, file.items[22..26], if (top_down) -@as(i32, @intCast(height)) else @intCast(height), .little);
+        std.mem.writeInt(u16, file.items[26..28], 1, .little);
+        std.mem.writeInt(u16, file.items[28..30], k.bpp, .little);
+        std.mem.writeInt(u32, file.items[30..34], k.compression, .little);
+        std.mem.writeInt(u32, file.items[46..50], @intCast(n_pal), .little);
+        // sometimes the plain byte layout, which has a shortcut
+        const byte_masks = k.bpp == 32 and rand.boolean();
+        for (0..k.n_masks) |m| {
+            // contiguous masks of any width that fits, sometimes absent
+            const pixel_bits: u6 = @intCast(k.bpp);
+            const bits = rand.uintAtMost(u6, @min(pixel_bits, 12));
+            const shift = rand.uintAtMost(u6, pixel_bits - bits);
+            const byte_shift = [4]u5{ 16, 8, 0, 24 }; // R, G, B, A
+            const mask: u32 = if (byte_masks) @as(u32, 0xFF) << byte_shift[m] else @intCast(((@as(u64, 1) << bits) - 1) << shift);
+            std.mem.writeInt(u32, file.items[54 + m * 4 ..][0..4], mask, .little);
+        }
+        for (0..n_pal) |i| {
+            const e = file.items[54 + k.n_masks * 4 + i * 4 ..][0..4];
+            e.* = if (gray) .{ @intCast(i), @intCast(i), @intCast(i), 0 } else .{ rand.int(u8), rand.int(u8), rand.int(u8), 0 };
+        }
+        if (k.compression == 1 or k.compression == 2) {
+            // runs, literals, end of line and deltas with random indices
+            for (0..rand.uintAtMost(usize, 40)) |_| switch (rand.uintLessThan(u8, 8)) {
+                0 => try file.appendSlice(gpa, &.{ 0, 0 }),
+                1 => try file.appendSlice(gpa, &.{ 0, 2, rand.uintLessThan(u8, 4), rand.uintLessThan(u8, 2) }),
+                2, 3 => {
+                    const n = rand.intRangeAtMost(u8, 3, 40);
+                    try file.appendSlice(gpa, &.{ 0, n });
+                    const n_bytes = if (k.compression == 1) n else (n + 1) / 2;
+                    for (0..n_bytes + (n_bytes & 1)) |_| try file.append(gpa, rand.int(u8));
+                },
+                else => try file.appendSlice(gpa, &.{ rand.intRangeAtMost(u8, 1, 80), rand.int(u8) }),
+            };
+            try file.appendSlice(gpa, &.{ 0, 1 });
+        } else {
+            const stride = ((width * k.bpp + 7) / 8 + 3) & ~@as(u32, 3);
+            for (0..stride * height) |_| try file.append(gpa, rand.int(u8));
+        }
+        std.mem.writeInt(u32, file.items[2..6], @intCast(file.items.len), .little);
+
+        const inf = info(file.items) catch continue;
+        const len = try inf.byteLen();
+        const ours = try gpa.alloc(u8, len);
+        defer gpa.free(ours);
+        const theirs = try gpa.alloc(u8, len);
+        defer gpa.free(theirs);
+        const r1 = decodeInto(arena.allocator(), file.items, inf, ours);
+        const r2 = decodeReference(arena.allocator(), file.items, inf, theirs);
+        _ = arena.reset(.retain_capacity);
+        if (r2) |_| {
+            r1 catch |err| {
+                std.debug.print("iter {}: {any}: reference decoded, new decoder failed with {t}\n", .{ iter, k, err });
+                return err;
+            };
+            std.testing.expectEqualSlices(u8, theirs, ours) catch |err| {
+                std.debug.print("iter {}: {any} {}x{} palette {}\n", .{ iter, k, width, height, n_pal });
+                return err;
+            };
+            decoded += 1;
+        } else |want| try std.testing.expectError(want, r1);
+    }
+    // most files must be valid, or this only compares error paths
+    try std.testing.expect(decoded > 2000);
 }

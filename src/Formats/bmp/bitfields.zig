@@ -3,6 +3,8 @@
 //! becomes 255 (not 248) and 2-bit 1 becomes 85; wider ones keep their top 8 bits.
 const std = @import("std");
 const Error = @import("../error.zig").Error;
+const simd = @import("../../Colors/simd.zig");
+const Pixels = @import("../../Colors/pixels.zig").Pixels;
 
 pub const Masks = struct {
     r: u32,
@@ -23,6 +25,25 @@ pub const Channel = struct {
     narrow: u5,
     /// raw value -> 8 bits, used when the channel has at most 8 bits
     lut: [256]u8,
+    /// the same mapping as arithmetic, for whole vectors
+    scale: Scale = .{},
+
+    /// `get` without a table (vectors have no table lookup): v = (px & mask) >> drop is
+    /// at most `top` (<= 255), and (v * 255 + top / 2) / top == ((v * 255 + half) * mul) >> post.
+    const Scale = struct {
+        mask: u32 = 0,
+        drop: u5 = 0,
+        half: u32 = 0,
+        mul: u32 = 0,
+        post: u5 = 0,
+
+        /// The 8-bit channel values, in u32 lanes.
+        fn apply(s: Scale, comptime L: usize, px: @Vector(L, u32)) @Vector(L, u32) {
+            const V = @Vector(L, u32);
+            const v = (px & @as(V, @splat(s.mask))) >> @splat(s.drop);
+            return (v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(s.mul)) >> @splat(s.post);
+        }
+    };
 
     pub fn init(mask: u32) Error!Channel {
         var c: Channel = .{ .mask = mask, .shift = 0, .narrow = 0, .lut = @splat(0) };
@@ -40,6 +61,18 @@ pub const Channel = struct {
             // widen by rounding v * 255 / max, so the maximum maps to 255
             for (0..max + 1) |v| c.lut[v] = @intCast((v * 255 + max / 2) / max);
         }
+        // kept top bits divide by 255 (an identity), so both cases share the vector formula
+        const top: u32 = @min(max, 255);
+        const s = &c.scale;
+        s.mask = mask;
+        s.drop = c.shift + c.narrow;
+        s.half = top / 2;
+        // Division by a constant as a multiply (Granlund & Montgomery): with numerators
+        // below 2^n and post = n + ceil(log2(top)), mul = ceil(2^post / top) is exact,
+        // and for top <= 255 the product stays below 2^32.
+        const n = 32 - @clz(255 * top + s.half);
+        s.post = @intCast(n + std.math.log2_int_ceil(u32, top));
+        s.mul = @intCast(((@as(u64, 1) << s.post) + top - 1) / top);
         return c;
     }
 
@@ -55,6 +88,8 @@ pub const Bitfields = struct {
     g: Channel,
     r: Channel,
     a: Channel,
+    /// 32-bit pixels that are plain B, G, R (, A) bytes, the usual layout: no unpacking
+    bytes: bool,
 
     pub fn init(m: Masks) Error!Bitfields {
         return .{
@@ -62,6 +97,7 @@ pub const Bitfields = struct {
             .g = try .init(m.g),
             .r = try .init(m.r),
             .a = try .init(m.a),
+            .bytes = m.b == 0xFF and m.g == 0xFF00 and m.r == 0xFF_0000 and (m.a == 0 or m.a == 0xFF00_0000),
         };
     }
 
@@ -74,10 +110,35 @@ pub const Bitfields = struct {
         width: usize,
         out_bpp: usize,
     ) void {
+        switch (out_bpp) {
+            inline 3, 4 => |ob| self.decodeRowAs(T, ob, src, dst, width),
+            else => unreachable,
+        }
+    }
+
+    fn decodeRowAs(self: *const Bitfields, comptime T: type, comptime out_bpp: usize, src: []const u8, dst: []u8, width: usize) void {
+        if (T == u32 and self.bytes) {
+            // BGRA kept whole, or BGRX without its unused byte
+            if (out_bpp == 4) return @memcpy(dst[0 .. width * 4], src[0 .. width * 4]);
+            return Pixels.convertRow(.bgra, .bgr, src[0 .. width * 4], dst[0 .. width * 3]);
+        }
         const n = @sizeOf(T);
-        for (0..width) |x| {
-            const px: u32 = std.mem.readInt(T, src[x * n ..][0..n], .little);
-            const d = dst[x * out_bpp ..];
+        const L = 16;
+        // by value: read through `self`, the constants would be reloaded after every store
+        const b = self.b.scale;
+        const g = self.g.scale;
+        const r = self.r.scale;
+        const a = self.a.scale;
+        var x: usize = 0;
+        while (x + L <= width) : (x += L) {
+            const px: @Vector(L, u32) = simd.loadLittle(L, T, src[x * n ..]);
+            var words = b.apply(L, px) | g.apply(L, px) << @splat(8) | r.apply(L, px) << @splat(16);
+            if (out_bpp == 4) words |= a.apply(L, px) << @splat(24);
+            dst[x * out_bpp ..][0 .. L * out_bpp].* = simd.pixelBytes(out_bpp, L, words);
+        }
+        for (x..width) |i| {
+            const px: u32 = std.mem.readInt(T, src[i * n ..][0..n], .little);
+            const d = dst[i * out_bpp ..][0..out_bpp];
             d[0] = self.b.get(px);
             d[1] = self.g.get(px);
             d[2] = self.r.get(px);
@@ -85,6 +146,24 @@ pub const Bitfields = struct {
         }
     }
 };
+
+test "vector channel scaling equals the table" {
+    // every contiguous mask width and position, in both pixel sizes
+    for (1..33) |bits| for (0..33 - bits) |shift| {
+        const mask: u32 = @intCast(((@as(u64, 1) << @intCast(bits)) - 1) << @intCast(shift));
+        const c: Channel = try .init(mask);
+        const L = 16;
+        var px: [L]u32 = undefined;
+        // every raw channel value up to 8 bits; a spread of values for wider ones
+        const max = mask >> @intCast(shift);
+        var v: u64 = 0;
+        while (v <= max) : (v += if (bits <= 8) 1 else max / 997 + 1) {
+            for (&px, 0..) |*p, k| p.* = (@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | ~mask & 0x5A5A_5A5A;
+            const got: [L]u32 = c.scale.apply(L, px);
+            for (px, got) |p, g| try std.testing.expectEqual(@as(u32, c.get(p)), g);
+        }
+    };
+}
 
 test "bitfields scale to the full 0..255 range" {
     const c565: Bitfields = try .init(.{ .r = 0xF800, .g = 0x07E0, .b = 0x001F });
