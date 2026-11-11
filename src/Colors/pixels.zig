@@ -30,7 +30,7 @@ pub const PixelTag = enum(u8) {
     bgra,
     ycbcra,
 
-    fn alignOf(self: PixelTag) u16 {
+    pub fn bytesPerPixel(self: PixelTag) u16 {
         return switch (self) {
             .g => 1,
             .ga => 2,
@@ -59,41 +59,54 @@ pub const Pixels = union(PixelTag) {
         gpa: std.mem.Allocator,
         data: []const u8,
     ) !Pixels {
-        if (@mod(data.len, pixel_tag.alignOf()) != 0 or data.len == 0) {
-            std.debug.print("Mod: {}\nLen: {}\n", .{ @mod(data.len, pixel_tag.alignOf()), data.len });
+        if (@mod(data.len, pixel_tag.bytesPerPixel()) != 0 or data.len == 0) //
             return error.InvalidDataLength;
-        }
-        const T = @FieldType(Pixels, @tagName(pixel_tag));
-        const slice: T = @ptrCast(try gpa.dupe(u8, data));
-        const pixels = @unionInit(Pixels, @tagName(pixel_tag), slice);
-        return pixels;
+        return fromBytes(pixel_tag, try gpa.dupe(u8, data));
     }
 
-    // Assumes data is:
-    //   - correct alignment (u24 vs u32)
+    /// Reinterprets `bytes` as pixels of `tag` without copying.
+    /// Every pixel struct is an `extern struct` of u8s (align 1), so any byte slice
+    /// whose length is a multiple of `tag.bytesPerPixel()` is valid.
+    /// Ownership of `bytes` moves to the returned value (free with `deinit`).
+    pub fn fromBytes(tag: PixelTag, bytes: []u8) Pixels {
+        std.debug.assert(bytes.len % tag.bytesPerPixel() == 0);
+        return switch (tag) {
+            inline else => |t| @unionInit(Pixels, @tagName(t), @ptrCast(bytes)),
+        };
+    }
+
+    /// Raw byte view of the pixel data (no copy).
+    pub fn asBytes(self: Pixels) []u8 {
+        return switch (self) {
+            inline else => |data| std.mem.sliceAsBytes(data),
+        };
+    }
+
+    pub fn count(self: Pixels) usize {
+        return switch (self) {
+            inline else => |data| data.len,
+        };
+    }
+
+    /// Builds pixels of `pixel_tag` from `data` whose channels are stored in `data_order`
+    /// (e.g. `.bgr` data into `.rgb` pixels).
     pub fn initOrder(
+        comptime pixel_tag: PixelTag,
         gpa: std.mem.Allocator,
         data: []const u8,
         data_order: OrderTag,
-        pixel_order: PixelTag,
-    ) !@This() {
-        if (data.len == 0) return error.InvalidDataLength;
-        try pixel_order.modCheck(data);
-        const n_bytes_per_pixel = pixel_order.alignOf();
-        const len = data.len / n_bytes_per_pixel;
-        switch (pixel_order) {
-            inline else => {
-                const DstElem = std.meta.Elem(@FieldType(Pixels, @tagName(pixel_order)));
-                const slice = try gpa.alloc(DstElem, len);
-                errdefer gpa.free(slice);
-                for (0..len) |i| {
-                    slice[i] = .initOrder(
-                        data[i * n_bytes_per_pixel ..][0..n_bytes_per_pixel],
-                        @enumFromInt(@intFromEnum(data_order)),
-                    );
-                }
-            },
-        }
+    ) !Pixels {
+        const bpp = comptime pixel_tag.bytesPerPixel();
+        if (data.len == 0 or data.len % bpp != 0) return error.InvalidDataLength;
+        if (bpp == 1) return init(pixel_tag, gpa, data);
+        const Elem = std.meta.Elem(@FieldType(Pixels, @tagName(pixel_tag)));
+        const Order = @typeInfo(@TypeOf(Elem.initOrder)).@"fn".params[1].type.?;
+        const order = std.enums.fromInt(Order, @intFromEnum(data_order)) orelse //
+            return error.InvalidOrder;
+        const n = data.len / bpp;
+        const slice = try gpa.alloc(Elem, n);
+        for (slice, 0..) |*px, i| px.* = .initOrder(data[i * bpp ..][0..bpp], order);
+        return @unionInit(Pixels, @tagName(pixel_tag), slice);
     }
 
     pub fn deinit(self: @This(), gpa: std.mem.Allocator) void {
@@ -175,11 +188,11 @@ pub const Pixels = union(PixelTag) {
         errdefer gpa.free(result);
 
         const srcV: []const u8 = @ptrCast(src);
-        const src_step = comptime src_tag.alignOf() * misc.N;
+        const src_step = comptime src_tag.bytesPerPixel() * misc.N;
         const src_len = srcV.len;
 
         const dstV: []u8 = @ptrCast(result);
-        const dst_step = comptime dst_tag.alignOf() * misc.N;
+        const dst_step = comptime dst_tag.bytesPerPixel() * misc.N;
         const dst_len = dstV.len;
 
         var i: usize = 0; // idx into src as []const u8
@@ -191,7 +204,7 @@ pub const Pixels = union(PixelTag) {
             dstV[j..][0..dst_step].* = @field(Pixels, methodV)(srcV[i..][0..src_step]);
         }
 
-        var k: usize = i / comptime src_tag.alignOf();
+        var k: usize = i / comptime src_tag.bytesPerPixel();
         while (k < len) : (k += 1) {
             result[k] = @field(SrcElem, method)(src[k]);
         }
@@ -435,8 +448,7 @@ pub const Pixels = union(PixelTag) {
 
     pub fn rgbaFromGa(src: *const [misc.N * 2]u8) U8_4 {
         const ga = splitVecs(2, src);
-        const a: U8_1 = @splat(255);
-        return std.simd.interlace(.{ ga[0], ga[0], ga[0], a });
+        return std.simd.interlace(.{ ga[0], ga[0], ga[0], ga[1] });
     }
 
     pub fn bgraFromGa(src: *const [misc.N * 2]u8) U8_4 {
@@ -541,9 +553,9 @@ pub const Pixels = union(PixelTag) {
 
     pub fn rgbFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
         const ycbcra = splitVecs(4, src);
-        const r = misc.redV(ycbcra[0], ycbcra[1]);
+        const r = misc.redV(ycbcra[0], ycbcra[2]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
-        const b = misc.blueV(ycbcra[0], ycbcra[2]);
+        const b = misc.blueV(ycbcra[0], ycbcra[1]);
         return std.simd.interlace(.{ r, g, b });
     }
 
@@ -578,7 +590,7 @@ pub const Pixels = union(PixelTag) {
         const b = misc.blueV(ycbcra[0], ycbcra[1]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
         const r = misc.redV(ycbcra[0], ycbcra[2]);
-        return std.simd.interlace(.{ b, g, r, ycbcra[0] });
+        return std.simd.interlace(.{ b, g, r, ycbcra[3] });
     }
 };
 
@@ -1696,7 +1708,9 @@ test "Pixels" {
         defer bgra1.deinit(gpa);
         n2 = n1.untilNow(io, clock);
         const t1 = n2.nanoseconds;
-        try std.testing.expect(t1 < t2);
+        // timing is informational only (noisy in Debug / under load)
+        if (t1 >= t2) std.log.debug("convertV not faster: {} ns vs {} ns", .{ t1, t2 });
+        try std.testing.expectEqualSlices(u8, bgra2.asBytes(), bgra1.asBytes());
     }
 
     { // computing conversion for data2
@@ -1714,7 +1728,9 @@ test "Pixels" {
         defer bgra1.deinit(gpa);
         n2 = n1.untilNow(io, clock);
         const t1 = n2.nanoseconds;
-        try std.testing.expect(t1 < t2);
+        // timing is informational only (noisy in Debug / under load)
+        if (t1 >= t2) std.log.debug("convertV not faster: {} ns vs {} ns", .{ t1, t2 });
+        try std.testing.expectEqualSlices(u8, bgra2.asBytes(), bgra1.asBytes());
     }
 
     const tags = [_]PixelTag{ .g, .rgb, .bgr, .ycbcr, .ga, .rgba, .bgra, .ycbcra };
@@ -1729,14 +1745,20 @@ test "Pixels" {
         }
     }
 
-    // convertV for each tag
-    {
+    // convertV (SIMD) must match convert (scalar) for every pair
+    for ([_][]const u8{ &data, &data2 }) |bytes| {
         inline for (tags) |tag1| {
-            const base1: Pixels = try .init(tag1, gpa, &data);
+            const base1: Pixels = try .init(tag1, gpa, bytes);
             defer base1.deinit(gpa);
             for (tags) |tag2| {
-                const base2: Pixels = try base1.convertV(tag2, gpa);
-                defer base2.deinit(gpa);
+                const scalar: Pixels = try base1.convert(tag2, gpa);
+                defer scalar.deinit(gpa);
+                const simd: Pixels = try base1.convertV(tag2, gpa);
+                defer simd.deinit(gpa);
+                std.testing.expectEqualSlices(u8, scalar.asBytes(), simd.asBytes()) catch |err| {
+                    std.debug.print("convertV mismatch: {t} -> {t}\n", .{ tag1, tag2 });
+                    return err;
+                };
             }
         }
     }

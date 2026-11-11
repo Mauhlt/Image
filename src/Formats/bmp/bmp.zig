@@ -1,12 +1,11 @@
+//! BMP / DIB: decodes 1/4/8-bit palette, 24-bit and 32-bit (incl. BI_BITFIELDS) images,
+//! bottom-up or top-down. Encodes g (8-bit gray palette), 24-bit and 32-bit.
 const std = @import("std");
-const Format = @import("Vulkan").Format;
-const Error = @import("../Error.zig");
+const Error = @import("../error.zig").Error;
 
 const Image = @import("../../root.zig");
-const G = @import("../../Colors/g.zig").G;
-const BGR = @import("../../Colors/bgr.zig").BGR;
-const BGRA = @import("../../Colors/bgra.zig").BGRA;
-const Pixels = @import("../../Colors/pixels.zig").Pixels;
+const Info = @import("../../info.zig");
+const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
 
 const Header = @import("header.zig");
 const strideOf = @import("misc.zig").strideOf;
@@ -37,33 +36,6 @@ const rgba_swap_mask: @Vector(RGBA_CHUNK_BYTES, i32) = blk: {
     break :blk m;
 };
 
-fn swapRgbRow(dst: []u8, src: []const u8, width: usize) void {
-    var i: usize = 0;
-    while (i + PIXELS_PER_CHUNK <= width) : (i += PIXELS_PER_CHUNK) {
-        const s: RGB_VEC = src[i * 3 ..][0..RGB_CHUNK_BYTES].*;
-        dst[i * 3 ..][0..RGB_CHUNK_BYTES].* = @shuffle(u8, s, undefined, rgb_swap_mask);
-    }
-    while (i < width) : (i += 1) {
-        dst[i * 3 + 0] = src[i * 3 + 2];
-        dst[i * 3 + 1] = src[i * 3 + 1];
-        dst[i * 3 + 2] = src[i * 3 + 0];
-    }
-}
-
-fn swapRgbaRow(dst: []u8, src: []const u8, width: usize) void {
-    var i: usize = 0;
-    while (i + PIXELS_PER_CHUNK <= width) : (i += PIXELS_PER_CHUNK) {
-        const s: RGBA_VEC = src[i * 4 ..][0..RGBA_CHUNK_BYTES].*;
-        dst[i * 4 ..][0..RGBA_CHUNK_BYTES].* = @shuffle(u8, s, undefined, rgba_swap_mask);
-    }
-    while (i < width) : (i += 1) {
-        dst[i * 4 + 0] = src[i * 4 + 2];
-        dst[i * 4 + 1] = src[i * 4 + 1];
-        dst[i * 4 + 2] = src[i * 4 + 0];
-        dst[i * 4 + 3] = src[i * 4 + 3];
-    }
-}
-
 fn writeRgbRowSwapped(w: *std.Io.Writer, src: []const u8, width: usize) !void {
     var i: usize = 0;
     while (i + PIXELS_PER_CHUNK <= width) : (i += PIXELS_PER_CHUNK) {
@@ -93,129 +65,84 @@ fn writeRgbaRowSwapped(w: *std.Io.Writer, src: []const u8, width: usize) !void {
     }
 }
 
-pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Image {
+pub fn info(data: []const u8) !Info {
     const hdr: Header = try .decode(data);
-    const bpp: @TypeOf(hdr.width) = switch (hdr.bits_per_pixel) {
-        .monochrome => 1,
-        .rgb_24 => 3,
-        .rgba => 4,
-        else => return error.UnsupportedBPP,
+    const tag: PixelTag = switch (hdr.bits_per_pixel) {
+        .rgb_24 => .bgr,
+        .rgba_32 => .bgra,
+        else => if (hdr.isGrayPalette()) .g else .bgr,
     };
-    const start = hdr.data_offset;
-    const row_bytes = hdr.width * bpp;
-    const stride = strideOf(row_bytes);
-    const end = start + stride * hdr.height; // end - start can equal hdr.compressed_image_size
-    if (end > data.len) return error.InvalidDataOffset;
-    if (hdr.compressed_image_size > 0) {
-        if (end - start != hdr.compressed_image_size) //
-            return error.InvalidDataOffset;
-    }
-    const n_pixels = hdr.width * hdr.height;
-
-    var pixels: Pixels = undefined;
-    var fmt: Format = undefined;
-    switch (hdr.bits_per_pixel) {
-        .bit_4_pallet, .bit_8_pallet, .rgb_16 => unreachable,
-        .monochrome => {
-            const slice = try gpa.alloc(G, n_pixels);
-            pixels = .{ .g = try gpa.alloc(G, n_pixels) };
-            for (0..hdr.height) |dst_row| {
-                const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
-                const src = data[start + src_row * stride ..][0..row_bytes];
-                const dst = slice[dst_row * hdr.width ..][0..hdr.width];
-                @memcpy(dst, @as([]const G, @ptrCast(src)));
-            }
-            pixels = .{ .g = slice };
-            fmt = .r8_srgb;
-        },
-        .rgb_24 => {
-            const slice = try gpa.alloc(BGR, n_pixels);
-            for (0..hdr.height) |dst_row| {
-                const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
-                const src = data[start + src_row * stride ..][0..row_bytes];
-                const dst = slice[dst_row * hdr.width ..][0..hdr.width];
-                @memcpy(dst, @as([]const BGR, @ptrCast(src)));
-            }
-            pixels = .{ .bgr = slice };
-            fmt = .r8g8b8_srgb;
-        },
-        .rgba => {
-            const slice = try gpa.alloc(BGRA, n_pixels);
-            for (0..hdr.height) |dst_row| {
-                const src_row = if (hdr.is_top_down) dst_row else hdr.height - dst_row - 1;
-                const src = data[start + src_row * stride ..][0..row_bytes];
-                const dst = slice[dst_row * hdr.width ..][0..hdr.width];
-                @memcpy(dst, @as([]const BGRA, @ptrCast(src)));
-            }
-            pixels = .{ .bgra = slice };
-            fmt = .r8g8b8a8_srgb;
-        },
-    }
-    return .{
-        .width = hdr.width,
-        .height = hdr.height,
-        .fmt = fmt,
-        .pixels = pixels,
-    };
+    return .{ .width = hdr.width, .height = hdr.height, .tag = tag, .fmt = Info.fmtFor(tag, true) };
 }
 
-pub fn encode(img: *const Image, w: *std.Io.Writer) !void {
-    const hdr: Header = try .fromImage(img);
-    try hdr.encode(w);
-    const zeros: [4]u8 = @splat(0);
-    switch (img.pixels) {
-        .g => |grays| {
-            const row_bytes = img.width;
-            const pad = strideOf(row_bytes) - row_bytes; // pad to 4 bytes
-            for (0..img.height) |file_row| {
-                const img_row = img.height - file_row - 1;
-                const row = grays[img_row * img.width ..][0..img.width];
-                try w.writeAll(std.mem.sliceAsBytes(row));
-                try w.writeAll(zeros[0..pad]);
-            }
-        },
-        .ga => return error.UnsupportedColorspace, // TODO: Check if this is supported
-        .rgb => |rgbs| {
-            const row_bytes = img.width * 3;
-            const pad = strideOf(row_bytes) - row_bytes;
-            for (0..img.height) |file_row| {
-                const img_row = img.height - file_row - 1;
-                const row = rgbs[img_row * img.width ..][0..img.width];
-                try writeRgbRowSwapped(w, std.mem.sliceAsBytes(row), img.width);
-                try w.writeAll(zeros[0..pad]);
-            }
-        },
-        .bgr => |bgrs| {
-            const row_bytes = img.width * 3;
-            const pad = strideOf(row_bytes) - row_bytes;
-            for (0..img.height) |file_row| {
-                const img_row = img.height - file_row - 1;
-                const row = bgrs[img_row * img.width ..][0..img.width];
-                try w.writeAll(std.mem.sliceAsBytes(row));
-                try w.writeAll(zeros[0..pad]);
-            }
-        },
-        .rgba => |rgbas| {
-            const row_bytes = img.width * 4;
-            const pad = strideOf(row_bytes) - row_bytes;
-            for (0..img.height) |file_row| {
-                const img_row = img.height - file_row - 1;
-                const row = rgbas[img_row * img.width ..][0..img.width];
-                try writeRgbaRowSwapped(w, std.mem.sliceAsBytes(row), img.width);
-                try w.writeAll(zeros[0..pad]);
-            }
-        },
-        .bgra => |bgras| {
-            const row_bytes = img.width * 4;
-            const pad = strideOf(row_bytes) - row_bytes;
-            for (0..img.height) |file_row| {
-                const img_row = img.height - file_row - 1;
-                const row = bgras[img_row * img.width ..][0..img.width];
-                try w.writeAll(std.mem.sliceAsBytes(row));
-                try w.writeAll(zeros[0..pad]);
-            }
-        },
-        .ycbcr, .ycbcra => unreachable,
+pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
+    _ = scratch;
+    const hdr: Header = try .decode(data);
+    const width: usize = hdr.width;
+    const out_bpp = inf.tag.bytesPerPixel();
+    const row_bytes = hdr.rowBytes();
+    const stride = hdr.stride();
+    const depth: usize = @intFromEnum(hdr.bits_per_pixel);
+    for (0..hdr.height) |y| {
+        const src_row = if (hdr.is_top_down) y else hdr.height - 1 - y;
+        const src = data[hdr.data_offset + src_row * stride ..][0..row_bytes];
+        const dst = out[y * width * out_bpp ..][0 .. width * out_bpp];
+        switch (hdr.bits_per_pixel) {
+            .rgb_24, .rgba_32 => @memcpy(dst, src),
+            .bit_1_palette, .bit_4_palette, .bit_8_palette => {
+                const n_pal = hdr.paletteLen();
+                for (0..width) |x| {
+                    const idx: usize = switch (depth) {
+                        8 => src[x],
+                        4 => (src[x / 2] >> @intCast(4 - 4 * (x % 2))) & 0xF,
+                        1 => (src[x / 8] >> @intCast(7 - (x % 8))) & 1,
+                        else => unreachable,
+                    };
+                    if (idx >= n_pal) return Error.OutOfBounds;
+                    const e = hdr.palette[idx * 4 ..][0..3];
+                    if (inf.tag == .g) dst[x] = e[0] else dst[x * 3 ..][0..3].* = e.*;
+                }
+            },
+            .rgb_16 => return Error.UnsupportedBitsPerPixel,
+        }
     }
-    try w.flush();
+}
+
+pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
+    // BMP stores gray (palette), BGR or BGRA; convert anything else
+    const tag: PixelTag = switch (img.pixels) {
+        .g, .ga => .g,
+        .rgb, .bgr, .ycbcr => .bgr,
+        .rgba, .bgra, .ycbcra => .bgra,
+    };
+    const active = std.meta.activeTag(img.pixels);
+    const swap = (active == .rgb and tag == .bgr) or (active == .rgba and tag == .bgra);
+    const converted = if (active == tag or swap) null else try img.pixels.convertV(tag, gpa);
+    defer if (converted) |c| c.deinit(gpa);
+    const src = (converted orelse img.pixels).asBytes();
+
+    const hdr: Header = try .init(img.width, img.height, switch (tag) {
+        .g => .bit_8_palette,
+        .bgr => .rgb_24,
+        else => .rgba_32,
+    });
+    try hdr.encode(w);
+
+    const width: usize = img.width;
+    const bpp = tag.bytesPerPixel();
+    const row_bytes = width * bpp;
+    const pad = strideOf(row_bytes) - row_bytes;
+    const zeros: [4]u8 = @splat(0);
+    for (0..img.height) |file_row| {
+        const img_row = img.height - 1 - file_row; // bottom-up
+        const row = src[img_row * row_bytes ..][0..row_bytes];
+        if (!swap) {
+            try w.writeAll(row);
+        } else if (bpp == 3) {
+            try writeRgbRowSwapped(w, row, width);
+        } else {
+            try writeRgbaRowSwapped(w, row, width);
+        }
+        try w.writeAll(zeros[0..pad]);
+    }
 }

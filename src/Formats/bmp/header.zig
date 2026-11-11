@@ -1,186 +1,151 @@
 const std = @import("std");
-const Image = @import("../../root.zig");
-const Pixels = @import("../../Colors/pixels.zig");
-const Error = @import("../error.zig");
-const BitsPerPixel = @import("misc.zig").BitsPerPixel;
-const Compression = @import("misc.zig").Compression;
-const strideOf = @import("misc.zig").strideOf;
-const SIG = @import("misc.zig").SIG;
+const Error = @import("../error.zig").Error;
+const misc = @import("misc.zig");
+const BitsPerPixel = misc.BitsPerPixel;
+const Compression = misc.Compression;
 
 file_size: u32,
-data_offset: u32 = 54,
-dib_hdr_size: u32 = 40,
+data_offset: u32,
+dib_hdr_size: u32 = misc.INFO_HDR_SIZE,
 width: u32,
 height: u32,
-depth: u32 = 1,
 is_top_down: bool = false,
-bits_per_pixel: BitsPerPixel = .rgba,
-n_possible_colors: u32,
+bits_per_pixel: BitsPerPixel,
 compression: Compression = .none,
-compressed_image_size: u32,
-n_colors_used: u32,
-important_colors: u32,
-color_table: Pixels = undefined,
+image_size: u32,
+n_colors_used: u32 = 0,
+/// raw BGRX palette entries (4 bytes each), empty for 16/24/32-bit
+palette: []const u8 = &.{},
 
-fn possibleColorsFor(bpp: BitsPerPixel) u32 {
-    const bits = @intFromEnum(bpp);
-    return if (bits >= 24) 0 else @as(u32, 1) << @truncate(bits);
+pub fn rowBytes(self: *const @This()) usize {
+    return (@as(usize, self.width) * @intFromEnum(self.bits_per_pixel) + 7) / 8;
 }
 
-pub fn fromImage(img: *const Image) !@This() {
-    const bpp: u32 = switch (img.fmt) {
-        .r8_srgb => 1,
-        .r8g8b8_srgb => 3,
-        .r8g8b8a8_srgb => 4,
-        else => return Error.Decode.InvalidFormat,
-    };
-    // hdr
-    var hdr: @This() = undefined;
-    hdr.data_offset = 54;
-    const row_bytes = img.width * bpp;
-    const stride = strideOf(row_bytes);
-    hdr.file_size = hdr.data_offset + stride * img.height;
-    // dib
-    hdr.dib_hdr_size = 40;
-    // img properties
-    hdr.width = img.width;
-    hdr.height = img.height;
-    hdr.depth = 1;
-    hdr.is_top_down = false;
-    hdr.bits_per_pixel = switch (bpp) {
-        1 => .monochrome,
-        3 => .rgb_24,
-        4 => .rgba,
-        else => unreachable,
-    };
-    hdr.compression = .none;
-    hdr.compressed_image_size = stride * img.height;
-    hdr.n_possible_colors = possibleColorsFor(hdr.bits_per_pixel);
-    hdr.n_colors_used = 0;
-    hdr.important_colors = 0;
-    // return
-    return hdr;
+pub fn stride(self: *const @This()) usize {
+    return misc.strideOf(self.rowBytes());
 }
 
-pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
-    // bmp
-    try w.writeAll(SIG); // 2
-    try w.writeInt(u32, self.file_size, .little); // 6
-    try w.writeInt(u32, 0, .little); // 10
-    std.debug.assert(self.data_offset == 54);
-    try w.writeInt(u32, self.data_offset, .little); // 14
-    // dib
-    std.debug.assert(self.dib_hdr_size == 40);
-    try w.writeInt(u32, self.dib_hdr_size, .little); // 18
-    // img props
-    _, const overflow = @mulWithOverflow(self.width, self.height);
-    if (overflow > 0) return Error.Encode.InvalidDimensions;
-    try w.writeInt(u32, self.width, .little); // 22
-    try w.writeInt(u32, self.height, .little); // 26
-    std.debug.assert(self.depth <= 1);
-    try w.writeInt(u16, @truncate(self.depth), .little); // 28
-    const bpp: u16 = @intFromEnum(self.bits_per_pixel);
-    try w.writeInt(u16, bpp, .little); // 30
-    std.debug.assert(self.compression == .none);
-    const compression: u32 = @intFromEnum(self.compression);
-    try w.writeInt(u32, compression, .little); // 34
-    try w.writeInt(u32, self.compressed_image_size, .little); // 38
-    try w.writeInt(u32, 0, .little); // 42
-    try w.writeInt(u32, 0, .little); // 46
-    try w.writeInt(u32, 0, .little); // 50
-    try w.writeInt(u32, 0, .little); // 54
-    try w.flush();
+pub fn paletteLen(self: *const @This()) usize {
+    return self.palette.len / 4;
 }
 
-pub fn decode(data: []const u8) !@This() {
-    if (!std.mem.startsWith(u8, data[0..], SIG)) //
-        return Error.Decode.UnexpectedSignature;
-    const file_size = std.mem.readInt(u32, data[2..][0..4], .little);
-    if (data.len != file_size) {
-        if (@import("builtin").mode == .debug) {
-            std.debug.print(
-                "\nBMP Header:\nFile Size: {}\nData Length: {}\n",
-                .{ file_size, data.len },
-            );
-        }
-        return Error.Decode.InvalidDataLen;
+/// true if palette[i] == (i, i, i) for every entry -> image is grayscale
+pub fn isGrayPalette(self: *const @This()) bool {
+    if (self.paletteLen() == 0) return false;
+    for (0..self.paletteLen()) |i| {
+        const e = self.palette[i * 4 ..][0..3];
+        if (e[0] != i or e[1] != i or e[2] != i) return false;
     }
-    const data_offset = std.mem.readInt(u32, data[10..][0..4], .little);
-    // dib
-    const dib_hdr_size = std.mem.readInt(u32, data[14..][0..4], .little);
-    if (dib_hdr_size != 40)
-        return Error.Decode.InvalidHeaderLen;
-    const raw_width = std.mem.readInt(i32, data[18..][0..4], .little);
-    const raw_height = std.mem.readInt(i32, data[22..][0..4], .little);
-    if (raw_width <= 0 or raw_height == 0)
-        return Error.Decode.InvalidDimensions;
-    const width: u32 = @intCast(raw_width);
-    const height: u32 = @intCast(@abs(raw_height));
-    const is_top_down: bool = raw_height < 0;
-    const depth = std.mem.readInt(u16, data[26..][0..2], .little);
-    if (depth > 1) {
-        std.debug.print("Depth: {}\n", .{depth});
-        return Error.Decode.InvalidDimensions;
+    return true;
+}
+
+pub fn decode(data: []const u8) Error!@This() {
+    if (data.len < misc.FILE_HDR_SIZE + misc.INFO_HDR_SIZE) return Error.UnexpectedEndOfData;
+    if (!std.mem.startsWith(u8, data, misc.SIG)) return Error.UnexpectedSignature;
+    const file_size = std.mem.readInt(u32, data[2..6], .little);
+    const data_offset = std.mem.readInt(u32, data[10..14], .little);
+    const dib_hdr_size = std.mem.readInt(u32, data[14..18], .little);
+    // BITMAPINFOHEADER and its V2..V5 extensions share the first 40 bytes
+    if (dib_hdr_size < misc.INFO_HDR_SIZE) return Error.InvalidHeaderLen;
+    const raw_width = std.mem.readInt(i32, data[18..22], .little);
+    const raw_height = std.mem.readInt(i32, data[22..26], .little);
+    if (raw_width <= 0 or raw_height == 0 or raw_height == std.math.minInt(i32)) return Error.InvalidDimensions;
+    const planes = std.mem.readInt(u16, data[26..28], .little);
+    if (planes != 1) return Error.InvalidHeader;
+    const bits_per_pixel = std.enums.fromInt(BitsPerPixel, std.mem.readInt(u16, data[28..30], .little)) orelse
+        return Error.InvalidBitsPerPixel;
+    const compression = std.enums.fromInt(Compression, std.mem.readInt(u32, data[30..34], .little)) orelse
+        return Error.InvalidCompression;
+    switch (compression) {
+        .none => {},
+        // bitfields: only the common masks are supported (checked by the decoder via bit depth)
+        .bitfields => if (bits_per_pixel != .rgba_32) return Error.UnsupportedCompression,
+        .rle4, .rle8 => return Error.UnsupportedCompression,
     }
-    const bits_per_pixel = std.enums.fromInt(BitsPerPixel, //
-        std.mem.readInt(u16, data[28..][0..2], .little)) orelse
-        return Error.Decode.InvalidBitsPerPixel;
-    const n_possible_colors = @as(u32, 1) << //
-        @truncate(@as(u32, @intFromEnum(bits_per_pixel)));
-    const compression = std.enums.fromInt(Compression, //
-        std.mem.readInt(u32, data[30..][0..4], .little)) orelse
-        return Error.Decode.InvalidCompression;
-    const compressed_image_size = //
-        std.mem.readInt(u32, data[34..][0..4], .little);
-    switch (bits_per_pixel) {
-        .monochrome, .rgb_24, .rgba => if (compression != .none)
-            return Error.Decode.InvalidCompression,
-        else => unreachable,
-    }
-    const n_colors_used = std.mem.readInt(u32, data[46..][0..4], .little);
-    if (n_colors_used > n_possible_colors) {
-        std.debug.print("# of Colors Used: {}\n", .{n_colors_used});
-        std.debug.print("# of Possible Colors: {}\n", .{n_possible_colors});
-        return Error.Decode.InvalidNumberOfColors;
-    }
-    const important_colors = std.mem.readInt(u32, data[50..][0..4], .little);
-    if (important_colors > n_colors_used) {
-        return Error.Decode.InvalidImportantColors;
-    }
-    return .{
+    if (bits_per_pixel == .rgb_16) return Error.UnsupportedBitsPerPixel;
+    const image_size = std.mem.readInt(u32, data[34..38], .little);
+    const n_colors_used = std.mem.readInt(u32, data[46..50], .little);
+
+    var hdr: @This() = .{
         .file_size = file_size,
         .data_offset = data_offset,
         .dib_hdr_size = dib_hdr_size,
-        .width = width,
-        .height = height,
-        .is_top_down = is_top_down,
+        .width = @intCast(raw_width),
+        .height = @intCast(@abs(raw_height)),
+        .is_top_down = raw_height < 0,
         .bits_per_pixel = bits_per_pixel,
-        .n_possible_colors = n_possible_colors,
         .compression = compression,
-        .compressed_image_size = compressed_image_size,
+        .image_size = image_size,
         .n_colors_used = n_colors_used,
-        .important_colors = important_colors,
     };
+
+    if (@intFromEnum(bits_per_pixel) <= 8) {
+        const max_colors = @as(u32, 1) << @intCast(@intFromEnum(bits_per_pixel));
+        const n = if (n_colors_used == 0) max_colors else n_colors_used;
+        if (n > max_colors) return Error.InvalidNumberOfColors;
+        // BI_BITFIELDS with a 40-byte header stores 3 masks before the palette
+        const start = misc.FILE_HDR_SIZE + dib_hdr_size;
+        if (start + n * 4 > data.len) return Error.UnexpectedEndOfData;
+        hdr.palette = data[start..][0 .. n * 4];
+    }
+
+    const end = @as(usize, data_offset) + hdr.stride() * hdr.height;
+    if (data_offset < misc.FILE_HDR_SIZE + misc.INFO_HDR_SIZE or end > data.len) return Error.InvalidDataOffset;
+    return hdr;
 }
 
-pub fn deinit(self: *const @This(), gpa: std.mem.Allocator) void {
-    if (self.color_table.len > 0) {
-        gpa.free(self.color_table);
+/// Uncompressed BITMAPINFOHEADER for 8 (gray palette), 24 or 32-bit pixels.
+pub fn init(width: u32, height: u32, bits_per_pixel: BitsPerPixel) Error!@This() {
+    if (width == 0 or height == 0 or width > std.math.maxInt(i32) or height > std.math.maxInt(i32))
+        return Error.InvalidDimensions;
+    var hdr: @This() = .{
+        .file_size = 0,
+        .data_offset = 0,
+        .width = width,
+        .height = height,
+        .bits_per_pixel = bits_per_pixel,
+        .image_size = 0,
+        .n_colors_used = if (bits_per_pixel == .bit_8_palette) 256 else 0,
+    };
+    const palette_bytes: usize = if (bits_per_pixel == .bit_8_palette) 256 * 4 else 0;
+    const image_size = hdr.stride() * height;
+    const total = misc.FILE_HDR_SIZE + misc.INFO_HDR_SIZE + palette_bytes + image_size;
+    if (total > std.math.maxInt(u32)) return Error.InvalidDimensions;
+    hdr.data_offset = @intCast(misc.FILE_HDR_SIZE + misc.INFO_HDR_SIZE + palette_bytes);
+    hdr.image_size = @intCast(image_size);
+    hdr.file_size = @intCast(total);
+    return hdr;
+}
+
+/// Writes the file header + BITMAPINFOHEADER (+ gray palette for 8-bit).
+pub fn encode(self: *const @This(), w: *std.Io.Writer) !void {
+    try w.writeAll(misc.SIG);
+    try w.writeInt(u32, self.file_size, .little);
+    try w.writeInt(u32, 0, .little); // reserved
+    try w.writeInt(u32, self.data_offset, .little);
+    try w.writeInt(u32, misc.INFO_HDR_SIZE, .little);
+    try w.writeInt(i32, @intCast(self.width), .little);
+    try w.writeInt(i32, @intCast(self.height), .little); // bottom-up
+    try w.writeInt(u16, 1, .little); // planes
+    try w.writeInt(u16, @intFromEnum(self.bits_per_pixel), .little);
+    try w.writeInt(u32, @intFromEnum(Compression.none), .little);
+    try w.writeInt(u32, self.image_size, .little);
+    try w.writeInt(i32, 2835, .little); // 72 dpi
+    try w.writeInt(i32, 2835, .little);
+    try w.writeInt(u32, self.n_colors_used, .little);
+    try w.writeInt(u32, 0, .little); // important colors
+    if (self.bits_per_pixel == .bit_8_palette) {
+        for (0..256) |i| {
+            const v: u8 = @intCast(i);
+            try w.writeAll(&.{ v, v, v, 0 });
+        }
     }
 }
 
 pub fn format(self: *const @This(), w: *std.Io.Writer) !void {
-    try w.print("\nFile Size: {}\n", .{self.file_size});
+    try w.print("File Size: {}\n", .{self.file_size});
     try w.print("Data Offset: {}\n", .{self.data_offset});
-    try w.print("Dib Hdr Size: {}\n", .{self.dib_hdr_size});
-    try w.print("Width: {}\n", .{self.width});
-    try w.print("Height: {}\n", .{self.height});
-    // try w.print("Depth: {}\n", .{self.depth});
-    try w.print("Top Down: {}\n", .{self.is_top_down});
-    try w.print("Bits Per Pixel: {}\n", .{self.bits_per_pixel});
-    try w.print("# of Possible Colors: {}\n", .{self.n_possible_colors});
-    try w.print("Compression: {t}\n", .{self.compression});
-    try w.print("Compressed Image Size: {}\n", .{self.compressed_image_size});
-    try w.print("# of Colors Used: {}\n", .{self.n_colors_used});
-    // .important_colors = important_colors,
+    try w.print("Width: {}\nHeight: {}\nTop Down: {}\n", .{ self.width, self.height, self.is_top_down });
+    try w.print("Bits Per Pixel: {t}\nCompression: {t}\n", .{ self.bits_per_pixel, self.compression });
+    try w.print("Palette Entries: {}\n", .{self.paletteLen()});
 }

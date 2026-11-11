@@ -1,44 +1,5 @@
 const std = @import("std");
 
-pub fn timer(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    path: []const u8,
-    n_iters: u64,
-    my_fn: anytype,
-) !u64 {
-    const clock: std.Io.Clock = .awake;
-    var time_taken: f64 = 0;
-    const div: f64 = 1 / n_iters;
-    for (0..n_iters) |_| {
-        const start = clock.now(io).toMilliseconds();
-        const data = try my_fn(io, gpa, path);
-        defer gpa.free(data);
-        const end = clock.now(io).toMilliseconds();
-        time_taken += (@as(f64, @floatFromInt(@as(u64, @intCast((end - start))))) * div);
-    }
-    return time_taken;
-}
-
-pub fn readData(
-    io: std.Io,
-    gpa: std.mem.Allocator,
-    file: std.Io.File,
-) ![]const u8 {
-    const len = try file.length(io);
-    const data = try gpa.alloc(u8, len);
-    const n_bytes = try file.readPositionalAll(io, data, 0);
-    if (n_bytes != len) return error.FailedToReadFile;
-    return data;
-}
-
-pub fn tagFromExt(path: []const u8) !ImageTag {
-    const ext = std.Io.Dir.path.extension(path);
-    return std.meta.stringToEnum(ImageTag, ext[1..ext.len]) orelse //
-        mapImageTagFromExt.get(ext) orelse //
-        return error.UnsupportedImageExt;
-}
-
 pub const ImageTag = enum {
     bmp,
     gif,
@@ -54,20 +15,7 @@ pub const ImageTag = enum {
     webp,
 };
 
-// const ImageTagUnion = union(ImageTag) {
-//     bmp: BMP,
-//     // gif: @import("gif.zig"),
-//     // heic: @import("heic.zig"),
-//     // jpg: @import("jpg.zig"),
-//     // paint: @import("paint.zig"),
-//     // png: @import("png.zig"),
-//     // ppm: @import("ppm.zig"),
-//     // qoi: @import("qoi.zig"),
-//     // tif: @import("tif.zig"),
-//     // tga: @import("tga.zig"),
-//     // webp: @import("webp.zig"),
-// };
-
+/// Extra spellings that map onto an `ImageTag` (looked up without the leading '.').
 pub const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "jpeg", .jpg },
     .{ "jpe", .jpg },
@@ -76,4 +24,55 @@ pub const mapImageTagFromExt: std.StaticStringMap(ImageTag) = .initComptime(.{
     .{ "tiff", .tif },
     .{ "hif", .heic },
     .{ "dib", .bmp },
+    .{ "pnm", .ppm },
 });
+
+/// "foo/bar.JPEG" -> .jpg
+pub fn tagFromExt(path: []const u8) !ImageTag {
+    const ext = std.fs.path.extension(path);
+    if (ext.len < 2) return error.InvalidFileExtension;
+    var buf: [8]u8 = undefined;
+    if (ext.len - 1 > buf.len) return error.InvalidFileExtension;
+    const lower = std.ascii.lowerString(&buf, ext[1..]);
+    return std.meta.stringToEnum(ImageTag, lower) orelse
+        mapImageTagFromExt.get(lower) orelse
+        error.InvalidFileExtension;
+}
+
+/// Reads the whole file into `buf`, growing it only when needed.
+/// Reusing `buf` across many files avoids one allocation per file.
+pub fn readFileInto(
+    io: std.Io,
+    gpa: std.mem.Allocator,
+    file: std.Io.File,
+    buf: *std.ArrayList(u8),
+) ![]const u8 {
+    const len: usize = @intCast(try file.length(io));
+    buf.clearRetainingCapacity();
+    try buf.ensureTotalCapacity(gpa, len);
+    buf.items.len = len;
+    const n_bytes = try file.readPositionalAll(io, buf.items, 0);
+    if (n_bytes != len) return error.FailedToReadFile;
+    return buf.items;
+}
+
+pub fn timer(
+    io: std.Io,
+    n_iters: u64,
+    ctx: anytype,
+    comptime func: anytype,
+) !f64 {
+    const clock: std.Io.Clock = .awake;
+    const start = clock.now(io).toNanoseconds();
+    for (0..n_iters) |_| try func(ctx);
+    const end = clock.now(io).toNanoseconds();
+    const total: f64 = @floatFromInt(end - start);
+    return total / @as(f64, @floatFromInt(n_iters)) / std.time.ns_per_ms;
+}
+
+test "tagFromExt" {
+    try std.testing.expectEqual(ImageTag.jpg, try tagFromExt("a/b.JPEG"));
+    try std.testing.expectEqual(ImageTag.png, try tagFromExt("x.png"));
+    try std.testing.expectEqual(ImageTag.bmp, try tagFromExt("x.dib"));
+    try std.testing.expectError(error.InvalidFileExtension, tagFromExt("noext"));
+}

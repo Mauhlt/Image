@@ -1,30 +1,31 @@
 const std = @import("std");
-const Image = @import("../../root.zig"); // TODO: fix this
-const Error = @import("../error.zig");
+const Image = @import("../../root.zig");
+const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
+const Error = @import("../error.zig").Error;
 
 // Misc
 const Channel = @import("misc.zig").Channel;
 const Colorspace = @import("misc.zig").Colorspace;
 const SIG = @import("misc.zig").SIG;
 
+pub const SIZE = 14;
+
 width: u32,
 height: u32,
 channel: Channel,
 colorspace: Colorspace,
 
-pub fn fromImage(img: *const Image) !@This() {
-    if (img.width == 0 or img.height == 0) return Error.Encode.InvalidDimensions;
+pub fn fromImage(img: *const Image, tag: PixelTag) !@This() {
+    if (img.width == 0 or img.height == 0) return Error.InvalidDimensions;
     _, const overflow = @mulWithOverflow(img.width, img.height);
-    if (overflow > 0) return Error.Encode.InvalidDimensions;
-    const channel: Channel = switch (img.pixels) {
+    if (overflow > 0) return Error.InvalidDimensions;
+    const channel: Channel = switch (tag) {
         .rgb => .rgb,
         .rgba => .rgba,
-        else => return Error.Encode.InvalidColorspace,
+        else => return Error.InvalidChannels,
     };
-    const tagname = @tagName(img.fmt);
-    const colorspace: Colorspace = if (std.mem.endsWith(u8, tagname, "srgb")) .srgb //
-        else if (std.mem.endsWith(u8, tagname, "unorm")) .linear //
-        else return Error.Encode.InvalidColorspace;
+    // anything not explicitly sRGB is written as linear
+    const colorspace: Colorspace = if (std.mem.endsWith(u8, @tagName(img.fmt), "srgb")) .srgb else .linear;
     return .{
         .width = img.width,
         .height = img.height,
@@ -34,22 +35,22 @@ pub fn fromImage(img: *const Image) !@This() {
 }
 
 pub fn decode(data: []const u8) !@This() {
-    if (data.len < @sizeOf(@This())) return Error.Decode.InvalidDataLen;
+    if (data.len < SIZE) return Error.InvalidDataLen;
     var i: usize = 0;
     if (!std.mem.startsWith(u8, data[i..], SIG)) //
-        return Error.Decode.UnexpectedSignature;
+        return Error.UnexpectedSignature;
     i = SIG.len;
     const width = std.mem.readInt(u32, data[i..][0..4], .big);
     i += @sizeOf(u32);
     const height = std.mem.readInt(u32, data[i..][0..4], .big);
     i += @sizeOf(u32);
     _, const overflow: u1 = @mulWithOverflow(width, height);
-    if (overflow > 0) return error.InvalidDimensions;
+    if (overflow > 0) return Error.InvalidDimensions;
     const channel = std.enums.fromInt(Channel, data[i]) orelse
-        return error.InvalidChannels;
+        return Error.InvalidChannels;
     i += @sizeOf(u8);
     const colorspace = std.enums.fromInt(Colorspace, data[i]) orelse
-        return error.InvalidColorspace;
+        return Error.InvalidColorspace;
     i += @sizeOf(u8);
     return .{
         .width = width,
