@@ -20,6 +20,7 @@ pub const ImageTag = misc.ImageTag;
 pub const tagFromExt = misc.tagFromExt;
 
 pub const BMP = @import("Formats/bmp/bmp.zig");
+pub const HEIC = @import("Formats/heic/heic.zig");
 pub const JPG = @import("Formats/jpg/jpg.zig");
 pub const PAM = @import("Formats/pam/pam.zig");
 pub const PBM = @import("Formats/pbm/pbm.zig");
@@ -52,7 +53,8 @@ pub fn Codec(comptime tag: ImageTag) ?type {
         .qoi => QOI,
         .tga => TGA,
         .webp => WEBP,
-        .gif, .heic, .paint, .tif => null,
+        .heic => HEIC,
+        .gif, .paint, .tif => null,
     };
 }
 
@@ -212,7 +214,8 @@ test {
     _ = @import("Formats/heic/hevc/tables.zig");
     _ = @import("Formats/heic/hevc/params.zig");
     _ = @import("Formats/heic/hevc/cabac.zig");
-    inline for (.{ BMP, JPG, PAM, PBM, PGM, PNG, PNM, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
+    _ = @import("Formats/heic/hevc/hevc.zig");
+    inline for (.{ BMP, HEIC, JPG, PAM, PBM, PGM, PNG, PNM, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
 }
 
 /// Test helper: converts both images to `tag` and compares pixels.

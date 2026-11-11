@@ -109,7 +109,7 @@ pub const Decoder = struct {
             ctx.* = (tables.trans_lps[state] << 1) | @as(u8, mps);
         } else {
             bin = mps;
-            ctx.* = (@min(state + 1, 62) << 1) | @as(u8, mps);
+            ctx.* = (@as(u8, @min(state + 1, 62)) << 1) | @as(u8, mps);
         }
         while (d.range < 256) {
             d.range <<= 1;
@@ -162,4 +162,132 @@ test "context init matches the spec formula" {
     // initValue 139 at QP 26: slope = 8*5-45 = -5, offset = (11<<3)-16 = 72
     // pre = ((-5*26)>>4) + 72 = -9 + 72 = 63 -> valMps 0, pStateIdx 0
     try std.testing.expectEqual(@as(u8, 0), c.split_cu[0]);
+}
+/// Spec arithmetic encoder (H.265 9.3.4.x encoder side, as in HM), for round-trip tests.
+const TestEncoder = struct {
+    low: u32 = 0,
+    range: u32 = 510,
+    outstanding: u32 = 0,
+    first: bool = true,
+    bits: std.ArrayList(u1) = .empty,
+    gpa: std.mem.Allocator,
+
+    fn putBit(e: *TestEncoder, b: u1) !void {
+        if (e.first) e.first = false else try e.bits.append(e.gpa, b);
+        while (e.outstanding > 0) : (e.outstanding -= 1) try e.bits.append(e.gpa, ~b);
+    }
+    fn renorm(e: *TestEncoder) !void {
+        while (e.range < 256) {
+            if (e.low < 256) {
+                try e.putBit(0);
+            } else if (e.low >= 512) {
+                e.low -= 512;
+                try e.putBit(1);
+            } else {
+                e.low -= 256;
+                e.outstanding += 1;
+            }
+            e.range <<= 1;
+            e.low <<= 1;
+        }
+    }
+    fn decision(e: *TestEncoder, ctx: *u8, bin: u1) !void {
+        const state = ctx.* >> 1;
+        var mps: u1 = @truncate(ctx.*);
+        const lps: u32 = tables.range_lps[state][(e.range >> 6) & 3];
+        e.range -= lps;
+        if (bin != mps) {
+            e.low += e.range;
+            e.range = lps;
+            if (state == 0) mps = ~mps;
+            ctx.* = (tables.trans_lps[state] << 1) | @as(u8, mps);
+        } else {
+            ctx.* = (@as(u8, @min(state + 1, 62)) << 1) | @as(u8, mps);
+        }
+        try e.renorm();
+    }
+    fn bypass(e: *TestEncoder, bin: u1) !void {
+        e.low <<= 1;
+        if (bin == 1) e.low += e.range;
+        if (e.low >= 1024) {
+            try e.putBit(1);
+            e.low -= 1024;
+        } else if (e.low < 512) {
+            try e.putBit(0);
+        } else {
+            e.low -= 512;
+            e.outstanding += 1;
+        }
+    }
+    fn terminate(e: *TestEncoder, bin: u1) !void {
+        e.range -= 2;
+        if (bin == 1) {
+            e.low += e.range;
+            // flush
+            e.range = 2;
+            try e.renorm();
+            try e.putBit(@truncate(e.low >> 9));
+            try e.bits.append(e.gpa, @truncate(e.low >> 8));
+            try e.bits.append(e.gpa, 1); // rbsp stop bit
+        } else {
+            try e.renorm();
+        }
+    }
+    fn bytes(e: *TestEncoder) ![]u8 {
+        while (e.bits.items.len % 8 != 0) try e.bits.append(e.gpa, 0);
+        const out = try e.gpa.alloc(u8, e.bits.items.len / 8 + 4);
+        @memset(out, 0);
+        for (e.bits.items, 0..) |b, i| out[i / 8] |= @as(u8, b) << @intCast(7 - i % 8);
+        return out;
+    }
+};
+
+test "arithmetic decoder round-trips the spec encoder" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const gpa = arena_state.allocator();
+    var prng: std.Random.DefaultPrng = .init(1234);
+    const rnd = prng.random();
+    const n = 20000;
+    const kinds = try gpa.alloc(u8, n);
+    const vals = try gpa.alloc(u1, n);
+    for (kinds, vals, 0..) |*k, *v, i| {
+        k.* = rnd.uintLessThan(u8, 6); // 0..3 contexts, 4 bypass, 5 terminate(0)
+        // skewed bins so contexts adapt
+        v.* = if (k.* < 4) @intFromBool(rnd.uintLessThan(u8, 10) < 2 + 2 * k.*) else rnd.int(u1);
+        if (k.* == 5) v.* = 0;
+        if (i == n - 1) {
+            k.* = 5;
+            v.* = 1;
+        }
+    }
+    var ectx = Contexts.init(22);
+    var e: TestEncoder = .{ .gpa = gpa };
+    const ep: [*]u8 = @ptrCast(&ectx);
+    for (kinds, vals) |k, v| switch (k) {
+        0...3 => try e.decision(&ep[k * 7], v),
+        4 => try e.bypass(v),
+        else => try e.terminate(v),
+    };
+    const data = try e.bytes();
+    var dctx = Contexts.init(22);
+    const dp: [*]u8 = @ptrCast(&dctx);
+    var d: Decoder = .init(data, 0);
+    for (kinds, vals) |k, v| {
+        const got: u1 = switch (k) {
+            0...3 => d.decision(&dp[k * 7]),
+            4 => d.bypass(),
+            else => d.terminate(),
+        };
+        try std.testing.expectEqual(v, got);
+    }
+}
+
+test "an MPS moves high states up too" {
+    // regression: @min(state + 1, 62) is a u6, so `<< 1` dropped the top bit for states >= 32
+    var ctx: u8 = (40 << 1) | 1;
+    const zeros: [8]u8 = @splat(0);
+    var d: Decoder = .init(&zeros, 0);
+    try std.testing.expectEqual(@as(u1, 1), d.decision(&ctx));
+    try std.testing.expectEqual(@as(u8, (41 << 1) | 1), ctx);
 }
