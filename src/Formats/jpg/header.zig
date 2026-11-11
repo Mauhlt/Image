@@ -17,21 +17,59 @@ qtables: [4]?[64]u16 = @splat(null),
 dc_tables: [4]?huffman.DecTable = @splat(null),
 ac_tables: [4]?huffman.DecTable = @splat(null),
 restart_interval: u16 = 0,
+/// SOF2: coefficients arrive over several scans (see progressive.zig)
+progressive: bool = false,
 /// indices into `components`, in scan order
 scan: [4]u8 = undefined,
 n_scan: u8 = 0,
+/// Current scan's spectral selection (zigzag indices `ss..se`) and successive
+/// approximation bit positions. Sequential scans always cover 0..63, ah = al = 0.
+ss: u8 = 0,
+se: u8 = 63,
+ah: u8 = 0,
+al: u8 = 0,
 /// offset of the first entropy-coded byte
 scan_start: usize = 0,
 
 pub const ParseUntil = enum { frame, scan };
 
-/// `.frame` stops after SOF (cheap, for `info`), `.scan` parses through SOS.
+/// `.frame` stops after SOF (cheap, for `info`), `.scan` parses through the first SOS.
 pub fn decode(data: []const u8, until: ParseUntil) Error!@This() {
     if (data.len < 4 or data[0] != 0xFF or data[1] != @intFromEnum(Marker.SOI))
         return Error.UnexpectedSignature;
     var hdr: @This() = .{};
-    var found_frame = false;
-    var pos: usize = 2;
+    if (!try hdr.parse(data, 2, until)) return Error.MissingScan;
+    return hdr;
+}
+
+/// Continues after a scan's entropy-coded data (`pos` = offset of the next
+/// marker), applying any tables defined in between. Returns false at EOI.
+pub fn nextScan(self: *@This(), data: []const u8, pos: usize) Error!bool {
+    if (pos >= data.len) return false; // truncated after a complete scan: keep what we have
+    return self.parse(data, pos, .scan);
+}
+
+/// Offset of the marker that ends the entropy-coded data starting at `start`
+/// (skipping stuffed 0xFF00 bytes and RSTn markers), or `data.len`.
+pub fn entropyEnd(data: []const u8, start: usize) usize {
+    var i = start;
+    while (i + 1 < data.len) : (i += 1) {
+        if (data[i] != 0xFF) continue;
+        const m = data[i + 1];
+        if (m == 0x00 or (m >= 0xD0 and m <= 0xD7)) {
+            i += 1;
+            continue;
+        }
+        if (m == 0xFF) continue; // fill byte before a marker
+        return i;
+    }
+    return data.len;
+}
+
+/// Parses segments from the marker at `start` until a frame (`.frame`) or a
+/// scan (`.scan`) is found (true), or EOI (false).
+fn parse(self: *@This(), data: []const u8, start: usize, until: ParseUntil) Error!bool {
+    var pos = start;
     while (true) {
         // markers may be preceded by any number of 0xFF fill bytes
         if (pos >= data.len or data[pos] != 0xFF) return Error.InvalidMarker;
@@ -41,7 +79,7 @@ pub fn decode(data: []const u8, until: ParseUntil) Error!@This() {
         pos += 1;
         switch (marker) {
             .SOI, .RST0, .RST1, .RST2, .RST3, .RST4, .RST5, .RST6, .RST7 => continue,
-            .EOI => return Error.MissingScan,
+            .EOI => return false,
             else => {},
         }
         if (pos + 2 > data.len) return Error.UnexpectedEndOfData;
@@ -51,24 +89,24 @@ pub fn decode(data: []const u8, until: ParseUntil) Error!@This() {
         pos += seg_len;
 
         switch (marker) {
-            .SOF0, .SOF1 => {
-                try hdr.decodeFrame(seg);
-                found_frame = true;
-                if (until == .frame) return hdr;
+            .SOF0, .SOF1, .SOF2 => {
+                try self.decodeFrame(seg);
+                self.progressive = marker == .SOF2;
+                if (until == .frame) return true;
             },
-            .SOF2, .SOF6, .SOF10, .SOF14 => return Error.UnsupportedProgressive,
-            .SOF3, .SOF5, .SOF7, .SOF9, .SOF11, .SOF13, .SOF15 => return Error.UnsupportedFeature,
-            .DQT => try hdr.decodeQuant(seg),
-            .DHT => try hdr.decodeHuffman(seg),
+            // differential, lossless and arithmetic-coded frames
+            .SOF3, .SOF5, .SOF6, .SOF7, .SOF9, .SOF10, .SOF11, .SOF13, .SOF14, .SOF15 => return Error.UnsupportedFeature,
+            .DQT => try self.decodeQuant(seg),
+            .DHT => try self.decodeHuffman(seg),
             .DRI => {
                 if (seg.len < 2) return Error.InvalidChunkLen;
-                hdr.restart_interval = std.mem.readInt(u16, seg[0..2], .big);
+                self.restart_interval = std.mem.readInt(u16, seg[0..2], .big);
             },
             .SOS => {
-                if (!found_frame) return Error.MissingFrame;
-                try hdr.decodeScan(seg);
-                hdr.scan_start = pos;
-                return hdr;
+                if (self.n_components == 0) return Error.MissingFrame;
+                try self.decodeScan(seg);
+                self.scan_start = pos;
+                return true;
             },
             else => {}, // APPn, COM, ... skipped
         }
@@ -154,6 +192,22 @@ fn decodeScan(self: *@This(), seg: []const u8) Error!void {
         self.scan[i] = @intCast(ci);
     }
     self.n_scan = ns;
-    // baseline: all components must be in this single scan
-    if (ns != self.n_components) return Error.UnsupportedFeature;
+    const tail = seg[1 + @as(usize, ns) * 2 ..][0..3];
+    if (self.progressive) {
+        self.ss = tail[0];
+        self.se = tail[1];
+        self.ah = tail[2] >> 4;
+        self.al = tail[2] & 0xF;
+        // G.1.1.1.1: a DC scan has ss = se = 0; AC scans hold one component
+        const valid = self.ss <= self.se and self.se <= 63 and
+            (self.ss != 0 or self.se == 0) and (self.ss == 0 or ns == 1) and
+            self.ah <= 13 and self.al <= 13;
+        if (!valid) return Error.InvalidHeader;
+    } else {
+        // sequential: every scan carries complete blocks
+        self.ss = 0;
+        self.se = 63;
+        self.ah = 0;
+        self.al = 0;
+    }
 }

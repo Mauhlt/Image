@@ -1,6 +1,7 @@
-//! Baseline / extended-sequential Huffman JPEG (JFIF).
+//! Baseline / extended-sequential / progressive Huffman JPEG (JFIF).
 //! Decode: 1 (gray) or 3 (YCbCr) components, any sampling factors, restart intervals,
-//!         8 or 16-bit quant tables. Progressive / arithmetic / CMYK are rejected.
+//!         8 or 16-bit quant tables, progressive and multi-scan files (progressive.zig).
+//!         Arithmetic coding, lossless, 12-bit and CMYK are rejected.
 //! Encode: baseline, 4:2:0 (default) or 4:4:4, grayscale for `.g`/`.ga` images.
 //!
 //! Steps (encode): YCbCr -> chroma downsample -> 8x8 DCT -> quantize -> zigzag RLE + Huffman.
@@ -17,6 +18,7 @@ const Component = @import("component.zig");
 const huffman = @import("huffman.zig");
 const dct = @import("dct.zig");
 const misc = @import("misc.zig");
+const progressive = @import("progressive.zig");
 const ZIGZAG = misc.ZIGZAG;
 const ceilDiv = misc.ceilDiv;
 
@@ -30,7 +32,7 @@ pub fn info(data: []const u8) !Info {
     return .{ .width = hdr.width, .height = hdr.height, .tag = tag, .fmt = Info.fmtFor(tag, true) };
 }
 
-const Plane = struct {
+pub const Plane = struct {
     data: []u8,
     stride: usize, // allocated width (multiple of 8)
     w: usize, // meaningful width  = ceil(width * h / h_max)
@@ -54,11 +56,19 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
             .w = ceilDiv(@as(usize, hdr.width) * c.h, hdr.h_max),
             .h = ceilDiv(@as(usize, hdr.height) * c.v, hdr.v_max),
         };
-        if (hdr.qtables[c.tq] == null) return Error.MissingQuantTable;
-        if (hdr.dc_tables[c.td] == null or hdr.ac_tables[c.ta] == null) return Error.MissingHuffmanTable;
     }
     defer for (planes[0..hdr.n_components]) |p| scratch.free(p.data);
 
+    // Progressive, or sequential with components spread over several scans.
+    if (hdr.progressive or hdr.n_scan != hdr.n_components) {
+        try progressive.decode(scratch, data, hdr, &planes);
+        return writePixels(scratch, &hdr, &planes, inf, out);
+    }
+
+    for (hdr.components[0..hdr.n_components]) |c| {
+        if (hdr.qtables[c.tq] == null) return Error.MissingQuantTable;
+        if (hdr.dc_tables[c.td] == null or hdr.ac_tables[c.ta] == null) return Error.MissingHuffmanTable;
+    }
     var br: BitReader = .{ .data = data[hdr.scan_start..] };
     var pred: [4]i32 = @splat(0);
     var mcu_count: usize = 0;
@@ -137,6 +147,11 @@ fn decodeBlock(
     }
 
     const samples = dct.inverse(&coeffs);
+    storeBlock(&samples, dst, stride);
+}
+
+/// Level-shifts, rounds and clamps an IDCT'd block into an 8x8 area of a plane.
+pub fn storeBlock(samples: *const [64]f32, dst: []u8, stride: usize) void {
     for (0..8) |y| {
         const row: @Vector(8, f32) = samples[y * 8 ..][0..8].*;
         const v = @round(row + @as(@Vector(8, f32), @splat(128)));

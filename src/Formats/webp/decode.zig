@@ -53,10 +53,16 @@ fn prefixValue(br: *BitReader, prefix: u16) usize {
 
 const Group = struct { trees: [5]huffman.Tree };
 
-/// Decodes the full VP8L bitstream (after the 5-byte header) into ARGB pixels.
+/// Decodes a full VP8L bitstream (including its 5-byte header) into ARGB pixels.
 pub fn decodeArgb(scratch: std.mem.Allocator, bitstream: []const u8, width: usize, height: usize, out: []u32) !void {
+    return decodeImageStream(scratch, bitstream[5..], width, height, out);
+}
+
+/// Decodes a VP8L "image-stream" whose size is known from elsewhere (no
+/// header): the body of a VP8L chunk, or a lossless-compressed ALPH chunk.
+pub fn decodeImageStream(scratch: std.mem.Allocator, stream: []const u8, width: usize, height: usize, out: []u32) !void {
     std.debug.assert(out.len == width * height);
-    var br: BitReader = .{ .data = bitstream[5..] };
+    var br: BitReader = .{ .data = stream };
 
     // transforms, in stream order
     var transforms: [4]Transform = undefined;
