@@ -10,4 +10,5 @@ test "Colors" {
     _ = @import("ycbcra.zig");
 
     _ = @import("pixels.zig");
+    _ = @import("simd.zig");
 }

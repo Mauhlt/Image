@@ -12,6 +12,8 @@ const Error = @import("error.zig").Error;
 const Image = @import("../root.zig");
 const Info = @import("../info.zig");
 const PixelTag = @import("../Colors/pixels.zig").PixelTag;
+const simd = @import("../Colors/simd.zig");
+const native_endian = @import("builtin").cpu.arch.endian();
 
 pub const Magic = enum { P1, P2, P3, P4, P5, P6, P7 };
 
@@ -176,13 +178,25 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     }
 }
 
+/// Moves `pos.*` to the next non-separator byte of an ASCII raster (whitespace and
+/// comments are skipped), or fails at the end of the data.
+inline fn nextToken(data: []const u8, pos: *usize) Error!u8 {
+    while (pos.* < data.len) {
+        const c = data[pos.*];
+        if (c == '#') {
+            pos.* = std.mem.indexOfScalarPos(u8, data, pos.*, '\n') orelse data.len;
+        } else if (std.ascii.isWhitespace(c)) {
+            pos.* += 1;
+        } else return c;
+    }
+    return Error.UnexpectedEndOfData;
+}
+
 /// P1: one '0' / '1' character per pixel; whitespace between them is optional.
 fn decodeAsciiBits(data: []const u8, start: usize, out: []u8) Error!void {
     var pos = start;
     for (out) |*o| {
-        pos = skipWhitespaceAndComments(data, pos);
-        if (pos >= data.len) return Error.UnexpectedEndOfData;
-        o.* = switch (data[pos]) {
+        o.* = switch (try nextToken(data, &pos)) {
             '0' => 255,
             '1' => 0,
             else => return Error.InvalidToken,
@@ -193,45 +207,173 @@ fn decodeAsciiBits(data: []const u8, start: usize, out: []u8) Error!void {
 
 /// P4: 8 pixels per byte, most significant bit first, each row starting on a fresh byte.
 fn decodeBinaryBits(raster: []const u8, width: u32, out: []u8) Error!void {
+    // every byte's 8 pixels (1 = black), so whole bytes expand with one table load
+    const table: [256][8]u8 = comptime blk: {
+        @setEvalBranchQuota(256 * 8 * 4);
+        var t: [256][8]u8 = undefined;
+        for (&t, 0..) |*e, byte| for (e, 0..) |*o, bit| {
+            o.* = if ((byte >> (7 - bit)) & 1 == 1) 0 else 255;
+        };
+        break :blk t;
+    };
     const row_bytes = (@as(usize, width) + 7) / 8;
     const n_rows = out.len / width;
     if (raster.len < row_bytes * n_rows) return Error.UnexpectedEndOfData;
+    const full = width / 8;
     for (0..n_rows) |y| {
         const src = raster[y * row_bytes ..][0..row_bytes];
-        for (out[y * width ..][0..width], 0..) |*o, x| {
-            const bit = (src[x / 8] >> @intCast(7 - x % 8)) & 1;
-            o.* = if (bit == 1) 0 else 255;
-        }
+        const dst = out[y * width ..][0..width];
+        for (src[0..full], 0..) |byte, i| dst[i * 8 ..][0..8].* = table[byte];
+        if (width % 8 != 0) @memcpy(dst[full * 8 ..], table[src[full]][0 .. width % 8]);
     }
 }
 
 fn decodeAsciiSamples(data: []const u8, start: usize, max: u16, out: []u8) Error!void {
+    const scaler: Scaler = .init(max);
     var pos = start;
-    for (out) |*o| {
-        const v = try readUint(data, &pos);
-        if (v > max) return Error.InvalidNum;
-        o.* = scale(v, max);
+    var n: usize = 0;
+    while (n < out.len) {
+        if (data.len - pos >= block_len + 8) {
+            const done = if (max == 255) try decodeBlock(true, data, &pos, scaler, out, &n) else try decodeBlock(false, data, &pos, scaler, out, &n);
+            if (done) continue;
+        }
+        // one sample the plain way: near the end, around comments or junk, long numbers
+        if (!std.ascii.isDigit(try nextToken(data, &pos))) return Error.InvalidToken;
+        var v: u32 = 0;
+        while (pos < data.len and std.ascii.isDigit(data[pos])) : (pos += 1) {
+            v = v * 10 + (data[pos] - '0');
+            // also keeps `v` from overflowing on absurdly long numbers
+            if (v > max) return Error.InvalidNum;
+        }
+        out[n] = scaler.apply(v);
+        n += 1;
     }
+}
+
+const block_len = 64;
+
+/// Decodes the numbers in the `block_len` bytes at `pos.*` when those are only digits and
+/// whitespace, the bulk of a typical file. Returns false (after the numbers before it)
+/// at a number of 9+ digits, and when there is none to decode; the plain path then
+/// reads the next number.
+///
+/// Parsing one number at a time chains every step on the previous number's length.
+/// Instead, vector compares find where all of the block's numbers start and end, and
+/// each is parsed on its own from an 8-byte load, so the CPU overlaps their work.
+/// `identity`: maxval 255, samples need no scaling.
+fn decodeBlock(comptime identity: bool, data: []const u8, pos: *usize, scaler: Scaler, out: []u8, n: *usize) Error!bool {
+    // the bit order of a bool-vector bitcast follows the byte order
+    if (native_endian != .little) return false;
+    const V = @Vector(block_len, u8);
+    const base = pos.*;
+    const block: V = data[base..][0..block_len].*;
+    const digit: u64 = @bitCast(block -% @as(V, @splat('0')) < @as(V, @splat(10)));
+    // std.ascii.whitespace: ' ' and '\t' (9) through '\r' (13)
+    const space: u64 = @as(u64, @bitCast(block == @as(V, @splat(' ')))) | @as(u64, @bitCast(block -% @as(V, @splat(9)) < @as(V, @splat(5))));
+    if (digit | space != std.math.maxInt(u64)) return false;
+    // `pos.*` never sits inside a number, so a digit at bit 0 starts one too
+    var starts = digit & ~(digit << 1);
+    var ends = digit & ~(digit >> 1); // last digits
+    // a number reaching the block's end may go on: the next block starts with it
+    var next = base + block_len;
+    if (digit >> 63 != 0) {
+        const cut = 63 - @clz(starts);
+        next = base + cut;
+        starts &= ~(@as(u64, 1) << @intCast(cut));
+        ends &= ~(@as(u64, 1) << 63);
+    }
+    if (starts == 0) return false;
+
+    // locals: through the pointers, every store to `out` would force a reload
+    var count = n.*;
+    defer n.* = count;
+    while (starts != 0 and count < out.len) {
+        const s = @ctz(starts);
+        const len = @ctz(ends) - s + 1;
+        starts &= starts - 1;
+        ends &= ends - 1;
+        if (len > 8) {
+            pos.* = base + s;
+            return false;
+        }
+        // first digit in the lowest byte; shifting the number to the top drops what
+        // follows it and leaves zero bytes (leading zeros) below it
+        const bytes = std.mem.readInt(u64, data[base + s ..][0..8], .little) -% ones * '0';
+        const v = parse8Digits(bytes << @intCast(8 * (8 - len)));
+        if (v > scaler.max) return Error.InvalidNum;
+        out[count] = if (identity) @intCast(v) else scaler.apply(v);
+        count += 1;
+    }
+    pos.* = next;
+    return true;
+}
+
+/// 0x01 in every byte of a u64.
+const ones: u64 = 0x0101_0101_0101_0101;
+
+/// Eight decimal digits (values 0..9, first digit in the lowest byte) to their number:
+/// adjacent pairs, then quads, then the halves are combined by multiply-and-shift.
+fn parse8Digits(digits: u64) u32 {
+    var v = digits;
+    v = (v *% 10 +% (v >> 8)) & 0x00FF_00FF_00FF_00FF;
+    v = (v *% 100 +% (v >> 16)) & 0x0000_FFFF_0000_FFFF;
+    return @intCast((v *% 10000 +% (v >> 32)) & 0xFFFF_FFFF);
 }
 
 fn decodeBinarySamples(raster: []const u8, max: u16, out: []u8) Error!void {
+    const scaler: Scaler = .init(max);
+    const L = 16;
+    var i: usize = 0;
     if (max <= 255) {
         if (raster.len < out.len) return Error.UnexpectedEndOfData;
-        if (max == 255) {
-            @memcpy(out, raster[0..out.len]);
-        } else for (out, raster[0..out.len]) |*o, v| {
-            o.* = scale(v, max);
+        if (max == 255) return @memcpy(out, raster[0..out.len]);
+        while (i + L <= out.len) : (i += L) {
+            const v: @Vector(L, u8) = raster[i..][0..L].*;
+            out[i..][0..L].* = scaler.applyV(u32, L, v);
         }
+        for (out[i..], raster[i..out.len]) |*o, v| o.* = scaler.apply(v);
     } else {
         if (raster.len < out.len * 2) return Error.UnexpectedEndOfData;
-        for (out, 0..) |*o, i| o.* = scale(std.mem.readInt(u16, raster[i * 2 ..][0..2], .big), max);
+        while (i + L <= out.len) : (i += L) {
+            const v = simd.load(L, u16, raster[i * 2 ..]);
+            out[i..][0..L].* = scaler.applyV(u64, L, if (native_endian == .little) @byteSwap(v) else v);
+        }
+        for (out[i..], i..) |*o, k| o.* = scaler.apply(std.mem.readInt(u16, raster[k * 2 ..][0..2], .big));
     }
 }
 
-/// Rounds to the nearest 8-bit value; out-of-range binary samples clamp to white.
-fn scale(v: u32, max: u32) u8 {
-    return @intCast(@min(255, (v * 255 + max / 2) / max));
-}
+/// Sample -> 8 bits for one maxval, rounded to nearest; out-of-range binary samples
+/// clamp to white. Rounding (v * 255 + max / 2) / max is done as a multiply by a
+/// fixed-point reciprocal instead of a division per sample (Granlund & Montgomery:
+/// with numerators below 2^n and post = n + ceil(log2(max)), mul = ceil(2^post / max)
+/// gives the exact quotient).
+const Scaler = struct {
+    max: u32,
+    half: u32,
+    mul: u64,
+    post: u6,
+
+    fn init(max: u16) Scaler {
+        // samples above maxval clamp to it first; it scales to 255 just like they would
+        const half = max / 2;
+        const n = 64 - @clz(@as(u64, 255) * max + half);
+        const post: u6 = @intCast(n + std.math.log2_int_ceil(u32, max));
+        return .{ .max = max, .half = half, .mul = ((@as(u64, 1) << post) + max - 1) / max, .post = post };
+    }
+
+    fn apply(s: Scaler, v: u32) u8 {
+        return @intCast((@as(u64, @min(v, s.max)) * 255 + s.half) * s.mul >> s.post);
+    }
+
+    /// `apply` on `L` samples in `W` lanes: u64 always fits, u32 does for maxval <= 255
+    /// (the product stays below 255.5 * 2^24 + 2^16).
+    fn applyV(s: Scaler, comptime W: type, comptime L: usize, samples: anytype) @Vector(L, u8) {
+        const V = @Vector(L, W);
+        const v = @min(@as(V, samples), @as(V, @splat(@intCast(s.max))));
+        const post: std.math.Log2Int(W) = @intCast(s.post);
+        return @intCast((v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(@intCast(s.mul))) >> @splat(post));
+    }
+};
 
 fn convertedPixels(img: *const Image, tag: PixelTag, gpa: std.mem.Allocator) !?Image.Pixels {
     return if (std.meta.activeTag(img.pixels) == tag) null else try img.pixels.convertV(tag, gpa);
@@ -547,4 +689,161 @@ test "netpbm reference files in every encoding" {
         defer pbm.deinit(gpa);
         for (gray.pixels.asBytes(), pbm.pixels.asBytes()) |g, b| try testing.expectEqual(@as(u8, if (g < 128) 0 else 255), b);
     }
+}
+
+/// The scaling every sample went through before `Scaler`: one division each.
+fn referenceScale(v: u32, max: u32) u8 {
+    return @intCast(@min(255, (v * 255 + max / 2) / max));
+}
+
+test "netpbm Scaler equals the division for every sample" {
+    // every 8-bit maxval and a spread of 16-bit ones, each against every 16-bit sample
+    var maxes: [255 + 12]u16 = undefined;
+    for (maxes[0..255], 1..) |*m, v| m.* = @intCast(v);
+    maxes[255..].* = .{ 256, 257, 300, 511, 1000, 1023, 4095, 9999, 32767, 32768, 65534, 65535 };
+    for (maxes) |max| {
+        const s: Scaler = .init(max);
+        var v: u32 = 0;
+        while (v <= 0xFFFF) : (v += 1) {
+            const want = referenceScale(v, max);
+            try testing.expectEqual(want, s.apply(v));
+            if (v % 16 == 0 and v + 16 <= 0x10000) {
+                const lanes = std.simd.iota(u32, 16) + @as(@Vector(16, u32), @splat(v));
+                const wide: [16]u8 = s.applyV(u64, 16, lanes);
+                try testing.expectEqual(want, wide[0]);
+                for (wide, 0..) |got, k| try testing.expectEqual(referenceScale(v + @as(u32, @intCast(k)), max), got);
+                if (max <= 255 and v < 256) {
+                    const narrow: [16]u8 = s.applyV(u32, 16, @as(@Vector(16, u8), @intCast(lanes)));
+                    try testing.expectEqualSlices(u8, &wide, &narrow);
+                }
+            }
+        }
+    }
+}
+
+/// The original sample-at-a-time raster decoders, kept as the oracle for the faster ones.
+fn decodeReference(data: []const u8, out: []u8) Error!void {
+    const hdr = try decodeHeader(data);
+    switch (hdr.magic) {
+        .P1 => {
+            var pos = hdr.data_start;
+            for (out) |*o| {
+                pos = skipWhitespaceAndComments(data, pos);
+                if (pos >= data.len) return Error.UnexpectedEndOfData;
+                o.* = switch (data[pos]) {
+                    '0' => 255,
+                    '1' => 0,
+                    else => return Error.InvalidToken,
+                };
+                pos += 1;
+            }
+        },
+        .P4 => {
+            const raster = data[hdr.data_start..];
+            const row_bytes = (@as(usize, hdr.width) + 7) / 8;
+            if (raster.len < row_bytes * hdr.height) return Error.UnexpectedEndOfData;
+            for (0..hdr.height) |y| for (out[y * hdr.width ..][0..hdr.width], 0..) |*o, x| {
+                o.* = if ((raster[y * row_bytes + x / 8] >> @intCast(7 - x % 8)) & 1 == 1) 0 else 255;
+            };
+        },
+        .P2, .P3 => {
+            var pos = hdr.data_start;
+            for (out) |*o| {
+                const v = try readUint(data, &pos);
+                if (v > hdr.max_val) return Error.InvalidNum;
+                o.* = referenceScale(v, hdr.max_val);
+            }
+        },
+        .P5, .P6, .P7 => {
+            const raster = data[hdr.data_start..];
+            if (hdr.max_val <= 255) {
+                if (raster.len < out.len) return Error.UnexpectedEndOfData;
+                for (out, raster[0..out.len]) |*o, v| o.* = referenceScale(v, hdr.max_val);
+            } else {
+                if (raster.len < out.len * 2) return Error.UnexpectedEndOfData;
+                for (out, 0..) |*o, i| o.* = referenceScale(std.mem.readInt(u16, raster[i * 2 ..][0..2], .big), hdr.max_val);
+            }
+        },
+    }
+}
+
+test "netpbm raster decoders match the sample-at-a-time reference" {
+    const gpa = testing.allocator;
+    var prng: std.Random.DefaultPrng = .init(0x9B3);
+    const rand = prng.random();
+    var file: std.Io.Writer.Allocating = .init(gpa);
+    defer file.deinit();
+    const magics = [_]Magic{ .P1, .P2, .P3, .P4, .P5, .P6 };
+    var decoded: usize = 0;
+    for (0..3000) |iter| {
+        const magic = magics[iter % magics.len];
+        const width = rand.intRangeAtMost(u32, 1, 70);
+        const height = rand.intRangeAtMost(u32, 1, 4);
+        const max: u16 = switch (rand.uintLessThan(u8, 4)) {
+            0 => 255,
+            1 => 65535,
+            2 => rand.intRangeAtMost(u16, 1, 254),
+            else => rand.intRangeAtMost(u16, 256, 65534),
+        };
+        const n_samples = @as(usize, width) * height * @as(usize, if (magic == .P3 or magic == .P6) 3 else 1);
+        file.clearRetainingCapacity();
+        const w = &file.writer;
+        switch (magic) {
+            .P1, .P4 => try w.print("{t}\n{} {}\n", .{ magic, width, height }),
+            else => try w.print("{t}\n{} {}\n{}\n", .{ magic, width, height, max }),
+        }
+        // ASCII samples with uneven separators and comments; in some files one bad
+        // token (junk, or a value above maxval). Binary samples may exceed maxval.
+        const bad_at = if (rand.uintLessThan(u8, 8) == 0) rand.uintLessThan(usize, n_samples) else n_samples;
+        if (magic == .P4) {
+            for (0..(width + 7) / 8 * height) |_| try w.writeByte(rand.int(u8));
+        } else for (0..n_samples) |i| switch (magic) {
+            .P1 => try w.writeAll(if (i == bad_at) "2" else switch (rand.uintLessThan(u8, 20)) {
+                0 => " #c 0\n1",
+                1...8 => "1 ",
+                else => "0",
+            }),
+            .P2, .P3 => {
+                const v = if (i == bad_at) @as(u32, max) + 1 else rand.uintAtMost(u32, max);
+                // leading zeros: 8 digits still fit one 8-byte load, 10 do not
+                switch (rand.uintLessThan(u8, 30)) {
+                    0 => try w.print("{d:0>8}", .{v}),
+                    1 => try w.print("{d:0>10}", .{v}),
+                    else => try w.print("{}", .{v}),
+                }
+                try w.writeAll(if (i + 1 == bad_at and rand.boolean()) "x" else switch (rand.uintLessThan(u8, 20)) {
+                    0 => "#comment 9 9\n",
+                    1...4 => "\n",
+                    5...8 => "\t ",
+                    else => " ",
+                });
+            },
+            else => if (max > 255) try w.writeInt(u16, rand.int(u16), .big) else try w.writeByte(rand.int(u8)),
+        };
+        // sometimes cut the raster short
+        const bytes = file.written();
+        const keep = if (rand.uintLessThan(u8, 10) == 0) rand.uintAtMost(usize, bytes.len) else bytes.len;
+        const data = bytes[0..keep];
+
+        const inf = info(data) catch continue;
+        const len = try inf.byteLen();
+        const ours = try gpa.alloc(u8, len);
+        defer gpa.free(ours);
+        const theirs = try gpa.alloc(u8, len);
+        defer gpa.free(theirs);
+        const r1 = decodeInto(gpa, data, inf, ours);
+        const r2 = decodeReference(data, theirs);
+        if (r2) |_| {
+            r1 catch |err| {
+                std.debug.print("iter {}: {t} {}x{} max {}: reference decoded, new decoder failed with {t}\n", .{ iter, magic, width, height, max, err });
+                return err;
+            };
+            testing.expectEqualSlices(u8, theirs, ours) catch |err| {
+                std.debug.print("iter {}: {t} {}x{} max {}\n", .{ iter, magic, width, height, max });
+                return err;
+            };
+            decoded += 1;
+        } else |want| try testing.expectError(want, r1);
+    }
+    try testing.expect(decoded > 1500);
 }
