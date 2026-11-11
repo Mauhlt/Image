@@ -21,8 +21,11 @@ pub const tagFromExt = misc.tagFromExt;
 
 pub const BMP = @import("Formats/bmp/bmp.zig");
 pub const JPG = @import("Formats/jpg/jpg.zig");
+pub const PAM = @import("Formats/pam/pam.zig");
+pub const PBM = @import("Formats/pbm/pbm.zig");
 pub const PGM = @import("Formats/pgm/pgm.zig");
 pub const PNG = @import("Formats/png/png.zig");
+pub const PNM = @import("Formats/pnm/pnm.zig");
 pub const PPM = @import("Formats/ppm/ppm.zig");
 pub const QOI = @import("Formats/qoi/qoi.zig");
 pub const TGA = @import("Formats/tga/tga.zig");
@@ -40,8 +43,11 @@ pub fn Codec(comptime tag: ImageTag) ?type {
     return switch (tag) {
         .bmp => BMP,
         .jpg => JPG,
+        .pam => PAM,
+        .pbm => PBM,
         .pgm => PGM,
         .png => PNG,
+        .pnm => PNM,
         .ppm => PPM,
         .qoi => QOI,
         .tga => TGA,
@@ -201,7 +207,7 @@ test {
     _ = @import("Formats/netpbm.zig");
     _ = @import("Colors/test.zig");
     _ = @import("Formats/qoi/matches.zig");
-    inline for (.{ BMP, JPG, PGM, PNG, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
+    inline for (.{ BMP, JPG, PAM, PBM, PGM, PNG, PNM, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
 }
 
 /// Test helper: converts both images to `tag` and compares pixels.
