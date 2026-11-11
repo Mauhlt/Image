@@ -62,7 +62,12 @@ pub fn bitsPerPixel(self: *const @This()) usize {
 
 /// Bytes per scanline, excluding the filter byte.
 pub fn rowBytes(self: *const @This()) usize {
-    return (@as(usize, self.width) * self.bitsPerPixel() + 7) / 8;
+    return self.rowBytesFor(self.width);
+}
+
+/// Bytes per scanline of `width` pixels (an interlace pass is narrower than the image).
+pub fn rowBytesFor(self: *const @This(), width: usize) usize {
+    return (width * self.bitsPerPixel() + 7) / 8;
 }
 
 pub fn decode(chunk: Chunk) !@This() {
