@@ -17,6 +17,14 @@ From PngSuite by Willem van Schaik, release 2017-07-19
 - `tbbn0g04`, `tbwn0g16`, `tbrn2c08`, `tbbn3p08`, `tm3n3p02`: tRNS for gray
   (4- and 16-bit), rgb and palette images.
 
+## `BasicArt16i.png`
+
+`../BasicArt.png` as 16-bit RGBA (each sample times 257), Adam7, with the
+filter chosen per row by the minimum-sum-of-absolutes heuristic and 64 KiB IDAT
+chunks. Written by a throwaway
+Zig generator for the decode benchmark; it must decode to exactly BasicArt's
+pixels, since the high byte of v * 257 is v.
+
 ## Windows references (`*.wic.png`)
 
 The PngSuite file of the same name decoded by Windows' WIC decoder
