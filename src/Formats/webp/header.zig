@@ -13,6 +13,8 @@ alpha: bool,
 codec: Codec,
 /// the VP8L / VP8 bitstream (chunk payload)
 bitstream: []const u8,
+/// lossy only: the ALPH chunk payload, if the image has one
+alpha_chunk: ?[]const u8 = null,
 
 pub fn decode(data: []const u8) Error!@This() {
     if (data.len < 20 or !std.mem.eql(u8, data[0..4], "RIFF") or !std.mem.eql(u8, data[8..12], "WEBP"))
@@ -22,6 +24,7 @@ pub fn decode(data: []const u8) Error!@This() {
 
     var pos: usize = 12;
     var vp8x_alpha = false;
+    var alpha_chunk: ?[]const u8 = null;
     while (pos + 8 <= end) {
         const tag = data[pos..][0..4];
         const len = std.mem.readInt(u32, data[pos + 4 ..][0..4], .little);
@@ -54,9 +57,12 @@ pub fn decode(data: []const u8) Error!@This() {
                 .alpha = vp8x_alpha,
                 .codec = .lossy,
                 .bitstream = body,
+                .alpha_chunk = if (vp8x_alpha) alpha_chunk else null,
             };
+        } else if (std.mem.eql(u8, tag, "ALPH")) {
+            alpha_chunk = body; // precedes the VP8 chunk
         }
-        // ICCP, EXIF, XMP, ALPH, unknown: skip
+        // ICCP, EXIF, XMP, unknown: skip
     }
     return Error.MissingScan;
 }

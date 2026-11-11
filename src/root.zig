@@ -307,12 +307,33 @@ test "Images - decode reference files" {
             };
         }
     }
-    // progressive JPEG is not supported (yet) - must fail cleanly
-    try std.testing.expectError(error.UnsupportedProgressive, read(.{
-        .io = io,
-        .gpa = gpa,
-        .filepath = "src/Data/Read/GradientProgressive.jpg",
-    }));
+}
+
+test "JPEG - progressive" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+
+    // IJG's testprog.jpg is a lossless (jpegtran) conversion of testorig.jpg to
+    // progressive: same coefficients, so the pixels must match exactly.
+    const baseline = try testRead(io, gpa, "src/Data/Read/IjgBaseline.jpg");
+    defer baseline.deinit(gpa);
+    const prog = try testRead(io, gpa, "src/Data/Read/IjgProgressive.jpg");
+    defer prog.deinit(gpa);
+    try expectSimilar(gpa, &baseline, &prog, .rgb, 0);
+
+    // ...and both match libjpeg's own decode (testimg.ppm) up to IDCT rounding.
+    const libjpeg = try testRead(io, gpa, "src/Data/Read/IjgBaselineJpg.ref.ppm");
+    defer libjpeg.deinit(gpa);
+    try expectSimilar(gpa, &libjpeg, &prog, .rgb, 1);
+
+    // A second encoder's progressive file vs. Windows' decoder (WIC).
+    const wic = try testRead(io, gpa, "src/Data/Read/GradientProgressiveJpg.ref.ppm");
+    defer wic.deinit(gpa);
+    const grad = try testRead(io, gpa, "src/Data/Read/GradientProgressive.jpg");
+    defer grad.deinit(gpa);
+    try expectSimilar(gpa, &wic, &grad, .rgb, 2.5);
 }
 
 // encode -> file -> decode for every writable format.

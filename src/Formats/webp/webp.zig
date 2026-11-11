@@ -1,5 +1,5 @@
-//! WebP. Lossless (VP8L) decode + encode, simple and extended (VP8X) containers.
-//! Lossy (VP8) and animation are detected and rejected.
+//! WebP: lossless (VP8L) decode + encode, lossy (VP8, with optional ALPH
+//! alpha) decode, in simple and extended (VP8X) containers. Animation is rejected.
 const std = @import("std");
 const Error = @import("../error.zig").Error;
 const Image = @import("../../root.zig");
@@ -8,18 +8,20 @@ const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
 const Header = @import("header.zig");
 const vp8l_decode = @import("decode.zig");
 const vp8l_encode = @import("encode.zig");
+const vp8 = @import("vp8.zig");
+const alpha = @import("alpha.zig");
+const yuv = @import("yuv.zig");
 
 pub fn info(data: []const u8) !Info {
     const hdr: Header = try .decode(data);
-    if (hdr.codec == .lossy) return Error.UnsupportedLossy;
     const tag: PixelTag = if (hdr.alpha) .rgba else .rgb;
     return .{ .width = hdr.width, .height = hdr.height, .tag = tag, .fmt = Info.fmtFor(tag, true) };
 }
 
 pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
     const hdr: Header = try .decode(data);
-    if (hdr.codec == .lossy) return Error.UnsupportedLossy;
     if (hdr.width != inf.width or hdr.height != inf.height) return Error.InvalidDimensions;
+    if (hdr.codec == .lossy) return decodeLossy(scratch, hdr, inf, out);
     const n = @as(usize, hdr.width) * hdr.height;
     const argb = try scratch.alloc(u32, n);
     defer scratch.free(argb);
@@ -33,6 +35,26 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
         },
         else => return Error.UnsupportedPixels,
     }
+}
+
+fn decodeLossy(scratch: std.mem.Allocator, hdr: Header, inf: Info, out: []u8) !void {
+    const channels: usize = switch (inf.tag) {
+        .rgb => 3,
+        .rgba => 4,
+        else => return Error.UnsupportedPixels,
+    };
+    const planes = try vp8.decode(scratch, hdr.bitstream);
+    defer planes.deinit(scratch);
+    if (planes.width != hdr.width or planes.height != hdr.height) return Error.InvalidDimensions;
+    var a: ?[]u8 = null;
+    defer if (a) |buf| scratch.free(buf);
+    if (channels == 4) {
+        if (hdr.alpha_chunk) |chunk| {
+            a = try scratch.alloc(u8, @as(usize, hdr.width) * hdr.height);
+            try alpha.decode(scratch, chunk, hdr.width, hdr.height, a.?);
+        }
+    }
+    yuv.toRgb(&planes, a, channels, out);
 }
 
 /// Lossless.
@@ -62,6 +84,96 @@ test {
     _ = @import("transform.zig");
     _ = @import("decode.zig");
     _ = @import("encode.zig");
+    _ = @import("vp8.zig");
+    _ = @import("alpha.zig");
+    _ = @import("yuv.zig");
+}
+
+/// Splits a golden image from golang.org/x/image's testdata: a gray image
+/// holding Y on top, then U | V side by side, then (optionally) alpha.
+/// Those planes were produced by libwebp, so they must match exactly.
+fn expectPlanesMatchGolden(gpa: std.mem.Allocator, webp_path: []const u8, golden_path: []const u8) !void {
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const cwd = std.Io.Dir.cwd();
+    const data = try cwd.readFileAlloc(io, webp_path, gpa, .unlimited);
+    defer gpa.free(data);
+    const golden = try Image.read(.{ .io = io, .gpa = gpa, .filepath = golden_path });
+    defer golden.deinit(gpa);
+    const g = golden.pixels.asBytes(); // gray: one byte per pixel
+
+    const hdr: Header = try .decode(data);
+    const planes = try vp8.decode(gpa, hdr.bitstream);
+    defer planes.deinit(gpa);
+    const w: usize = planes.width;
+    const h: usize = planes.height;
+    const w2 = (w + 1) / 2;
+    const h2 = (h + 1) / 2;
+    const gw: usize = golden.width;
+    try std.testing.expectEqual(2 * w2, gw);
+
+    var mismatches: usize = 0;
+    const Plane = struct { name: []const u8, pix: []const u8, stride: usize, x0: usize, y0: usize, w: usize, h: usize };
+    var list: [4]Plane = .{
+        .{ .name = "Y", .pix = planes.y, .stride = planes.y_stride, .x0 = 0, .y0 = 0, .w = w, .h = h },
+        .{ .name = "U", .pix = planes.u, .stride = planes.uv_stride, .x0 = 0, .y0 = h, .w = w2, .h = h2 },
+        .{ .name = "V", .pix = planes.v, .stride = planes.uv_stride, .x0 = w2, .y0 = h, .w = w2, .h = h2 },
+        undefined,
+    };
+    var n_planes: usize = 3;
+    var a_buf: ?[]u8 = null;
+    defer if (a_buf) |b| gpa.free(b);
+    if (golden.height == 2 * h + h2) {
+        a_buf = try gpa.alloc(u8, w * h);
+        // like decodeInto, the lossless decoder's temporaries go in an arena
+        var arena: std.heap.ArenaAllocator = .init(gpa);
+        defer arena.deinit();
+        try alpha.decode(arena.allocator(), hdr.alpha_chunk orelse return error.MissingAlpha, w, h, a_buf.?);
+        list[3] = .{ .name = "A", .pix = a_buf.?, .stride = w, .x0 = 0, .y0 = h + h2, .w = w, .h = h };
+        n_planes = 4;
+    }
+    for (list[0..n_planes]) |p| for (0..p.h) |j| {
+        const got = p.pix[j * p.stride ..][0..p.w];
+        const want = g[(p.y0 + j) * gw + p.x0 ..][0..p.w];
+        if (!std.mem.eql(u8, got, want)) {
+            mismatches += 1;
+            if (mismatches <= 5) std.debug.print("{s}: {s} plane row {d} differs\n", .{ webp_path, p.name, j });
+        }
+    };
+    try std.testing.expectEqual(@as(usize, 0), mismatches);
+}
+
+test "lossy webp RGB(A) matches Windows' WebP decoder" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    const dir = "src/Data/Read/vp8/";
+    inline for (.{
+        .{ "yellow_rose.lossy.webp", PixelTag.rgb },
+        .{ "yellow_rose.lossy-with-alpha.webp", PixelTag.rgba },
+        .{ "video-001.lossy.webp", PixelTag.rgb },
+    }) |case| {
+        const ours = try Image.read(.{ .io = io, .gpa = gpa, .filepath = dir ++ case[0] });
+        defer ours.deinit(gpa);
+        const wic = try Image.read(.{ .io = io, .gpa = gpa, .filepath = dir ++ case[0] ++ ".wic.png" });
+        defer wic.deinit(gpa);
+        try Image.expectSimilar(gpa, &wic, &ours, case[1], 0);
+    }
+}
+
+test "lossy webp planes match libwebp exactly" {
+    const dir = "src/Data/Read/vp8/";
+    inline for (.{
+        "blue-purple-pink.lossy.webp",
+        "blue-purple-pink-large.no-filter.lossy.webp",
+        "blue-purple-pink-large.simple-filter.lossy.webp",
+        "blue-purple-pink-large.normal-filter.lossy.webp",
+        "video-001.lossy.webp",
+        "yellow_rose.lossy.webp",
+    }) |name| try expectPlanesMatchGolden(std.testing.allocator, dir ++ name, dir ++ name ++ ".ycbcr.png");
+    try expectPlanesMatchGolden(std.testing.allocator, dir ++ "yellow_rose.lossy-with-alpha.webp", dir ++ "yellow_rose.lossy-with-alpha.webp.nycbcra.png");
 }
 
 test "webp encode/decode round trip - noise, palette, alpha" {
