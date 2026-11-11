@@ -122,23 +122,24 @@ pub fn inversePredictor(t: *const Transform, px: []u32, height: usize) void {
 fn predictRun(comptime mode: u4, px: []u32, row: usize, start: usize, end: usize, width: usize) void {
     var x = start;
     if (comptime fromAboveOnly(mode)) {
-        // no dependency along the row: 4 pixels at a time
-        const V = @Vector(16, u8);
-        while (x + 4 <= end) : (x += 4) {
+        // no dependency along the row: a vector of pixels at a time
+        const P = @import("../../Colors/misc.zig").N / 4;
+        const V = @Vector(4 * P, u8);
+        while (x + P <= end) : (x += P) {
             const up = row + x - width;
-            const tl: V = @bitCast(px[up - 1 ..][0..4].*);
-            const t: V = @bitCast(px[up..][0..4].*);
-            const tr: V = @bitCast(px[up + 1 ..][0..4].*); // the last column's is the row's first pixel
+            const tl: V = @bitCast(px[up - 1 ..][0..P].*);
+            const t: V = @bitCast(px[up..][0..P].*);
+            const tr: V = @bitCast(px[up + 1 ..][0..P].*); // the last column's is the row's first pixel
             const pred: V = switch (mode) {
                 2 => t,
                 3 => tr,
                 4 => tl,
                 8 => average2v(tl, t),
                 9 => average2v(t, tr),
-                else => @bitCast(@as(@Vector(4, u32), @splat(0xFF000000))),
+                else => @bitCast(@as(@Vector(P, u32), @splat(0xFF000000))),
             };
-            const cur: V = @bitCast(px[row + x ..][0..4].*);
-            px[row + x ..][0..4].* = @bitCast(cur +% pred);
+            const cur: V = @bitCast(px[row + x ..][0..P].*);
+            px[row + x ..][0..P].* = @bitCast(cur +% pred);
         }
     }
     while (x < end) : (x += 1) px[row + x] = addPixels(px[row + x], predict(mode, px, row + x, width));
@@ -153,7 +154,7 @@ fn fromAboveOnly(mode: u4) bool {
 }
 
 /// average2 on each byte of a vector.
-inline fn average2v(a: @Vector(16, u8), b: @Vector(16, u8)) @Vector(16, u8) {
+inline fn average2v(a: anytype, b: @TypeOf(a)) @TypeOf(a) {
     return (a & b) + ((a ^ b) >> @splat(1));
 }
 
@@ -359,4 +360,24 @@ test "inverse subtract green and colour indexing, per pixel" {
     const t: Transform = .{ .type = .color_indexing, .xsize = width, .size_bits = 2, .data = &palette };
     inverseColorIndexing(&t, &src, &dst, 1);
     try std.testing.expectEqualSlices(u32, &.{ palette[0], palette[1], palette[2], 0, palette[1], palette[2], palette[0] }, &dst);
+}
+
+test "vector predictor runs at vector-edge widths match the per-pixel predictor" {
+    const P = @import("../../Colors/misc.zig").N / 4; // as predictRun
+    var prng: std.Random.DefaultPrng = .init(9);
+    const rand = prng.random();
+    var buf: [3 * (4 * P + 8)]u32 = undefined;
+    for ([_]usize{ 2, 3, 7, 15, 17, 33, P, P + 1, P + 2, 2 * P + 3, 4 * P + 8 }) |width| {
+        inline for (.{ 0, 2, 3, 4, 8, 9, 14, 15 }) |mode| {
+            const px = buf[0 .. 2 * width];
+            rand.bytes(std.mem.sliceAsBytes(px));
+            var ref: [3 * (4 * P + 8)]u32 = undefined;
+            @memcpy(ref[0..px.len], px);
+            const row = width;
+            // the decoder starts each row at x = 1 (column 0 predicts from T)
+            predictRun(mode, px, row, 1, width, width);
+            for (1..width) |x| ref[row + x] = addPixels(ref[row + x], predict(mode, ref[0..px.len], row + x, width));
+            try std.testing.expectEqualSlices(u32, ref[0..px.len], px);
+        }
+    }
 }

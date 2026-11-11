@@ -123,7 +123,8 @@ pub const Bitfields = struct {
             return Pixels.convertRow(.bgra, .bgr, src[0 .. width * 4], dst[0 .. width * 3]);
         }
         const n = @sizeOf(T);
-        const L = 16;
+        // pixels per step: two registers of u32 lanes (16 with AVX2)
+        const L = @import("../../Colors/misc.zig").N / 2;
         // by value: read through `self`, the constants would be reloaded after every store
         const b = self.b.scale;
         const g = self.g.scale;
@@ -152,7 +153,7 @@ test "vector channel scaling equals the table" {
     for (1..33) |bits| for (0..33 - bits) |shift| {
         const mask: u32 = @intCast(((@as(u64, 1) << @intCast(bits)) - 1) << @intCast(shift));
         const c: Channel = try .init(mask);
-        const L = 16;
+        const L = @import("../../Colors/misc.zig").N / 2; // as decodeRowAs
         var px: [L]u32 = undefined;
         // every raw channel value up to 8 bits; a spread of values for wider ones
         const max = mask >> @intCast(shift);

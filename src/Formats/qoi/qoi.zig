@@ -194,12 +194,13 @@ inline fn fillRun(comptime ch: usize, comptime checked: bool, at: []u8, word: u3
     // LLVM turns a byte shuffle, or a byte array built from integers, back into
     // one store per byte.
     if (ch == 4) {
+        // fixed: 32-byte stores, the overshoot the callers' 31 bytes of slack allow
         const v: @Vector(8, u32) = @splat(std.mem.nativeToLittle(u32, word));
         var k: usize = 0;
         while (k < run * 4) : (k += 32) std.mem.bytesAsValue(@Vector(8, u32), at[k..][0..32]).* = v;
         return;
     }
-    // 16 bytes of the pattern hold 5 rgb pixels and a byte
+    // 16 bytes of the pattern hold 5 rgb pixels and a byte (fixed: the 15-byte period)
     const p: u64 = word & 0xFF_FFFF;
     const lo = p | p << 24 | p << 48; // r g b r g b r g
     const hi = p >> 16 | p << 8 | p << 32 | p << 56; // b r g b r g b r

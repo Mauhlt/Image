@@ -16,7 +16,7 @@ inline fn fill(self: *@This()) void {
     // Common case: the next 8 bytes hold no 0xFF, so there is no stuffing or
     // marker to handle and the whole bytes that fit can be taken at once.
     if (!self.hit_marker and self.pos + 8 <= self.data.len) {
-        const bytes: @Vector(8, u8) = self.data[self.pos..][0..8].*;
+        const bytes: @Vector(8, u8) = self.data[self.pos..][0..8].*; // fixed: one u64 of lookahead
         if (!@reduce(.Or, bytes == @as(@Vector(8, u8), @splat(0xFF)))) {
             const word = std.mem.readInt(u64, self.data[self.pos..][0..8], .big);
             const n = (64 - self.count) / 8;

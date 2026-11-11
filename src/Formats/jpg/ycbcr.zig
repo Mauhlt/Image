@@ -1,4 +1,4 @@
-//! JFIF YCbCr -> interleaved RGB, 16 pixels per step. Gives exactly the results of
+//! JFIF YCbCr -> interleaved RGB, `V` (upsample.V) pixels per step. Gives exactly the results of
 //! the 16.16 fixed-point formulas in Colors/misc.zig (red/green/blue).
 const std = @import("std");
 const V = @import("upsample.zig").V;

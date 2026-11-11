@@ -2,10 +2,18 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
 
+    // SIMD tuning width in bytes; unset = std.simd.suggestVectorLength(u8) for the target.
+    // Set it to run a wider (or narrower) build's vector code on this machine.
+    const vector_bytes = b.option(usize, "vector-bytes", "SIMD tuning width in bytes (power of two, >= 16; default: suggested for the target CPU)");
+    const options = b.addOptions();
+    options.addOption(usize, "vector_bytes", vector_bytes orelse 0); // 0: suggested
+    const options_mod = options.createModule();
+
     const mod = b.addModule("Image", .{
         .root_source_file = b.path("src/root.zig"),
         .target = target,
     });
+    mod.addImport("build_options", options_mod);
 
     // Libraries
     const libraries = [_][]const u8{"Vulkan"};
@@ -30,6 +38,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseFast,
     });
+    mod_release.addImport("build_options", options_mod);
     for (libraries) |library| {
         const dep = b.dependency(library, .{});
         const new_mod = dep.module(library);

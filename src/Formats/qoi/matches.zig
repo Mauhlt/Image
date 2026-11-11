@@ -4,6 +4,7 @@ const BGR = @import("../../Colors/bgr.zig").BGR;
 const RGBA = @import("../../Colors/rgba.zig").RGBA;
 const BGRA = @import("../../Colors/bgra.zig").BGRA;
 
+// fixed: the match mask is a u64
 const VEC_LEN = 64;
 const VEC = @Vector(64, u8);
 

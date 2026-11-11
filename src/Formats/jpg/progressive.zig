@@ -81,7 +81,7 @@ pub fn decode(scratch: std.mem.Allocator, data: []const u8, first: Header, plane
         const g = grids[i];
         const p = planes[i];
         for (0..g.blocks.len / g.stride) |by| for (0..g.stride) |bx| {
-            const block: @Vector(64, i16) = g.blocks[by * g.stride + bx];
+            const block: @Vector(64, i16) = g.blocks[by * g.stride + bx]; // fixed: one 8x8 block
             const q: @Vector(64, u16) = qt.*;
             const coeffs: [64]f32 = @as(@Vector(64, f32), @floatFromInt(@as(@Vector(64, i32), block) * @as(@Vector(64, i32), q)));
             const dst = p.data[by * 8 * p.stride + bx * 8 ..];

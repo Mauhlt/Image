@@ -16,8 +16,9 @@ const Bitfields = @import("bitfields.zig").Bitfields;
 const rle = @import("rle.zig");
 const strideOf = @import("misc.zig").strideOf;
 
-/// SIMD
-const PIXELS_PER_CHUNK = 16;
+/// SIMD: pixels per R/B swap, from the tuning width (16 with AVX2, so a 4-byte chunk is
+/// two registers and a 3-byte one one and a half).
+const PIXELS_PER_CHUNK = @import("../../Colors/misc.zig").N / 2;
 const RGB_CHUNK_BYTES = PIXELS_PER_CHUNK * 3;
 const RGB_VEC = @Vector(RGB_CHUNK_BYTES, u8);
 const rgb_swap_mask: @Vector(RGB_CHUNK_BYTES, i32) = blk: {
@@ -384,6 +385,51 @@ test "bmp encode keeps alpha" {
     try std.testing.expectEqualSlices(u8, &data, out.pixels.asBytes());
 }
 
+/// Widths below, at and just past one vector step (`PIXELS_PER_CHUNK` and the bitfield
+/// rows' pixels, `minMax`'s bytes), and several steps plus a tail.
+const edge_widths = blk: {
+    const L = PIXELS_PER_CHUNK;
+    const N = 2 * L;
+    break :blk [_]u32{ 1, 2, 7, 15, 17, 33, 65, 127, L - 1, L, L + 1, 2 * L + 3, N - 1, N, N + 1, 2 * N + 3 };
+};
+
+test "bmp encode R/B swap at vector-edge widths" {
+    const gpa = std.testing.allocator;
+    for (edge_widths) |width| for ([_]PixelTag{ .rgb, .rgba }) |tag| {
+        const bpp = tag.bytesPerPixel();
+        const height = 2;
+        const data = try gpa.alloc(u8, width * height * bpp);
+        defer gpa.free(data);
+        for (data, 0..) |*b, i| b.* = @truncate(i * 31 + i / 7);
+        const img: Image = .{
+            .width = width,
+            .height = height,
+            .fmt = if (tag == .rgb) .r8g8b8_srgb else .r8g8b8a8_srgb,
+            .pixels = switch (tag) {
+                inline .rgb, .rgba => |t| try .init(t, gpa, data),
+                else => unreachable,
+            },
+        };
+        defer img.deinit(gpa);
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+        try encode(&img, &aw.writer, gpa);
+        const out = try Image.decode(.bmp, gpa, aw.written());
+        defer out.deinit(gpa);
+        const got = out.pixels.asBytes();
+        try std.testing.expectEqual(data.len, got.len);
+        // the file holds BGR(A): every pixel comes back with R and B swapped
+        for (0..width * height) |p| {
+            const s = data[p * bpp ..][0..bpp];
+            const d = got[p * bpp ..][0..bpp];
+            try std.testing.expectEqual(s[2], d[0]);
+            try std.testing.expectEqual(s[1], d[1]);
+            try std.testing.expectEqual(s[0], d[2]);
+            if (bpp == 4) try std.testing.expectEqual(s[3], d[3]);
+        }
+    };
+}
+
 /// The original pixel-at-a-time decoder, kept as the oracle for the table and vector rows.
 fn decodeReference(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
     const hdr: Header = try .decode(data);
@@ -468,7 +514,9 @@ test "bmp table/vector decoder matches the pixel-at-a-time reference" {
     var decoded: usize = 0;
     for (0..4000) |iter| {
         const k = kinds[iter % kinds.len];
-        const width = rand.intRangeAtMost(u32, 1, 70);
+        // every kind at every vector-edge width first, then random widths
+        const edge = iter / kinds.len;
+        const width = if (edge < 2 * edge_widths.len) edge_widths[edge % edge_widths.len] else rand.intRangeAtMost(u32, 1, 70);
         const height = rand.intRangeAtMost(u32, 1, 5);
         const top_down = rand.uintLessThan(u8, 4) == 0;
         const max_colors = @as(usize, 1) << @intCast(@min(k.bpp, 8));

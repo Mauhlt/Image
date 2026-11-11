@@ -906,7 +906,7 @@ const Decoder = struct {
 
 // ─────────────────────── Loop filter kernels (15.2, 15.3) ───────────────────────
 
-/// One sample per line of an edge. i16 holds every intermediate value exactly
+/// One sample per line of an edge (fixed: a macroblock edge has 16 lines). i16 holds every intermediate value exactly
 /// (the largest is 27 * 127 + 63 in the 6-pixel filter).
 const Lanes = @Vector(16, i16);
 
@@ -930,7 +930,7 @@ fn chromaLines(p: *const Planes, i: usize) [2]Half {
     return .{ .{ .pix = p.u, .i = i }, .{ .pix = p.v, .i = i } };
 }
 
-const Bytes = @Vector(16, u8);
+const Bytes = @Vector(16, u8); // fixed: 16 lines of an edge, as `Lanes`
 
 /// Loads the 4 pixels on either side of an edge: result[j] holds, for all 16
 /// lines, the pixel j - 4 steps across the edge (p3 p2 p1 p0 q0 q1 q2 q3).

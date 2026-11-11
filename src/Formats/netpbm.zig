@@ -322,7 +322,8 @@ fn parse8Digits(digits: u64) u32 {
 
 fn decodeBinarySamples(raster: []const u8, max: u16, out: []u8) Error!void {
     const scaler: Scaler = .init(max);
-    const L = 16;
+    // samples per step: two registers of u32 lanes (16 with AVX2)
+    const L = @import("../Colors/misc.zig").N / 2;
     var i: usize = 0;
     if (max <= 255) {
         if (raster.len < out.len) return Error.UnexpectedEndOfData;
@@ -846,4 +847,27 @@ test "netpbm raster decoders match the sample-at-a-time reference" {
         } else |want| try testing.expectError(want, r1);
     }
     try testing.expect(decoded > 1500);
+}
+
+test "netpbm binary samples at vector-edge lengths vs per-sample scaling" {
+    const L = @import("../Colors/misc.zig").N / 2; // as decodeBinarySamples
+    var prng: std.Random.DefaultPrng = .init(16);
+    const rand = prng.random();
+    var raster: [2 * (4 * L + 7)]u8 = undefined;
+    var out: [4 * L + 8]u8 = undefined;
+    for ([_]usize{ 1, 2, 7, 15, 17, 33, L - 1, L, L + 1, 2 * L + 3, 4 * L + 7 }) |n| {
+        for ([_]u16{ 1, 100, 254, 256, 1000, 65535 }) |max| {
+            const s: Scaler = .init(max);
+            const wide = max > 255;
+            const len = if (wide) 2 * n else n;
+            for (raster[0..len], 0..) |*b, i| b.* = if (wide and i % 2 == 0) rand.uintAtMost(u8, @intCast(max >> 8)) else rand.uintAtMost(u8, @intCast(@min(max, 255)));
+            @memset(&out, 0xAA);
+            try decodeBinarySamples(raster[0..len], max, out[0..n]);
+            for (0..n) |k| {
+                const v: u32 = if (wide) std.mem.readInt(u16, raster[k * 2 ..][0..2], .big) else raster[k];
+                try testing.expectEqual(s.apply(v), out[k]);
+            }
+            try testing.expectEqual(@as(u8, 0xAA), out[n]);
+        }
+    }
 }
