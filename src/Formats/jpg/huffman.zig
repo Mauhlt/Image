@@ -64,6 +64,10 @@ pub const DecTable = struct {
     /// symbol index = code + delta[len]
     delta: [17]i32 = @splat(0),
     values: [256]u8 = @splat(0),
+    /// AC symbol and its value bits in one lookup, when both fit in LOOKAHEAD bits:
+    /// (value << 8) | (run << 4) | total_len. 0 -> not covered (incl. EOB/ZRL),
+    /// so a nonzero entry always has a nonzero value.
+    fast_ac: [1 << LOOKAHEAD]i16 = @splat(0),
 
     pub fn init(spec: Spec) Error!DecTable {
         var t: DecTable = .{};
@@ -92,6 +96,17 @@ pub const DecTable = struct {
             }
             if (code > (@as(u32, 1) << @intCast(len))) return Error.InvalidHuffmanCode;
             code <<= 1;
+        }
+
+        for (&t.fast_ac, t.lookup, 0..) |*fast, entry, i| {
+            const len = entry >> 8;
+            const run = (entry >> 4) & 0xF;
+            const size = entry & 0xF;
+            // size <= 7 keeps |value| <= 127, so it fits the top byte
+            if (len == 0 or size == 0 or size > 7 or len + size > LOOKAHEAD) continue;
+            const bits: i16 = @intCast((i >> @intCast(LOOKAHEAD - len - size)) & ((@as(usize, 1) << @intCast(size)) - 1));
+            const value = if (bits < @as(i16, 1) << @intCast(size - 1)) bits - (@as(i16, 1) << @intCast(size)) + 1 else bits;
+            fast.* = value * 256 + @as(i16, @intCast((run << 4) | (len + size)));
         }
         return t;
     }
