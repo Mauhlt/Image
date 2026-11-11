@@ -5,8 +5,11 @@ const std = @import("std");
 const Error = @import("../error.zig").Error;
 const Image = @import("../../root.zig");
 const Info = @import("../../info.zig");
+const Pixels = @import("../../Colors/pixels.zig").Pixels;
 const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
 const Header = @import("header.zig");
+const native_endian = @import("builtin").cpu.arch.endian();
+const simd = @import("../../Colors/simd.zig");
 
 const Alpha = enum { none, straight, premultiplied };
 
@@ -70,51 +73,129 @@ fn expand5(v: u5) u8 {
     return (@as(u8, v) << 3) | (@as(u8, v) >> 2);
 }
 
-/// Reads stored pixels (colors, or indices into a pre-expanded palette) in file order.
-const Reader = struct {
-    src: []const u8,
-    pos: usize = 0,
+/// Turns stored pixels into output pixels, many at a time.
+const Converter = struct {
+    kind: Kind,
     in_bpp: usize,
-    depth: u8,
-    gray: bool,
-    palette: ?[]const [4]u8,
-    first: usize, // index of palette[0] (the header's color map origin)
+    out_bpp: usize,
+    palette: []const [4]u8 = &.{},
+    first: usize = 0, // index of palette[0] (the header's color map origin)
+    /// for 8-bit indices: the palette by raw index, so a lookup needs no subtraction
+    by_index: *const [256][4]u8,
 
-    fn byte(self: *Reader) Error!u8 {
-        if (self.pos >= self.src.len) return Error.UnexpectedEndOfData;
-        defer self.pos += 1;
-        return self.src[self.pos];
+    const Kind = enum {
+        /// stored bytes are the output bytes: 8-bit gray, 16-bit gray+alpha, 24 / 32-bit color
+        copy,
+        /// 32-bit color or 16-bit gray+alpha whose alpha byte is not wanted
+        drop_alpha,
+        /// A1R5G5B5 to BGR or BGRA
+        rgb555,
+        /// 8 or 16-bit color map index
+        index,
+    };
+
+    fn init(hdr: *const Header, out_bpp: usize, palette: []const [4]u8, by_index: *[256][4]u8) Converter {
+        const in_bpp = Header.bytesFor(hdr.depth);
+        const kind: Kind = switch (hdr.image_type.base()) {
+            .color_mapped => .index,
+            .true_color => if (in_bpp == 2) .rgb555 else if (in_bpp == out_bpp) .copy else .drop_alpha,
+            else => if (in_bpp == out_bpp) .copy else .drop_alpha,
+        };
+        const first = hdr.cmap_first;
+        for (by_index, 0..) |*e, i| e.* = if (i >= first and i - first < palette.len) palette[i - first] else @splat(0);
+        return .{ .kind = kind, .in_bpp = in_bpp, .out_bpp = out_bpp, .palette = palette, .first = first, .by_index = by_index };
     }
 
-    fn pixel(self: *Reader) Error![4]u8 {
-        if (self.src.len - self.pos < self.in_bpp) return Error.UnexpectedEndOfData;
-        const bytes = self.src[self.pos..][0..self.in_bpp];
-        self.pos += self.in_bpp;
-        const palette = self.palette orelse return expand(self.depth, self.gray, bytes);
-        const idx: usize = if (bytes.len == 2) std.mem.readInt(u16, bytes[0..2], .little) else bytes[0];
-        const entry = std.math.sub(usize, idx, self.first) catch return Error.OutOfBounds;
-        if (entry >= palette.len) return Error.OutOfBounds;
-        return palette[entry];
+    /// Converts the `n` stored pixels in `src` into `dst`.
+    fn convert(self: *const Converter, src: []const u8, dst: []u8, n: usize) Error!void {
+        const in = src[0 .. n * self.in_bpp];
+        const o = dst[0 .. n * self.out_bpp];
+        switch (self.kind) {
+            .copy => @memcpy(o, in),
+            .drop_alpha => if (self.out_bpp == 3) Pixels.convertRow(.bgra, .bgr, in, o) else Pixels.convertRow(.ga, .g, in, o),
+            .rgb555 => if (self.out_bpp == 3) rgb555(3, in, o) else rgb555(4, in, o),
+            .index => switch (self.out_bpp) {
+                inline 3, 4 => |ob| if (self.in_bpp == 1) {
+                    // check the whole span at once, then look up without branches
+                    const range = simd.minMax(in);
+                    if (range.min < self.first or range.max - self.first >= self.palette.len) return Error.OutOfBounds;
+                    simd.lookup(ob, self.by_index, in, o);
+                } else try self.lookup16(ob, in, o),
+                else => unreachable, // color-mapped images decode to BGR(A)
+            },
+        }
+    }
+
+    fn lookup16(self: *const Converter, comptime out_bpp: usize, in: []const u8, o: []u8) Error!void {
+        for (0..in.len / 2) |i| {
+            const idx = std.mem.readInt(u16, in[i * 2 ..][0..2], .little);
+            const entry = std.math.sub(usize, idx, self.first) catch return Error.OutOfBounds;
+            if (entry >= self.palette.len) return Error.OutOfBounds;
+            o[i * out_bpp ..][0..out_bpp].* = self.palette[entry][0..out_bpp].*;
+        }
     }
 };
 
-/// Places pixels given in file order: rows run bottom-up unless the descriptor
-/// says top-down, columns left-to-right unless it says right-to-left.
+/// A1R5G5B5 (little endian) -> BGR or BGRA, `expand5`ing each channel.
+fn rgb555(comptime out_bpp: usize, in: []const u8, o: []u8) void {
+    const L = 16;
+    const n = in.len / 2;
+    var i: usize = 0;
+    while (i + L <= n) : (i += L) {
+        const v: @Vector(L, u32) = simd.loadLittle(L, u16, in[i * 2 ..]);
+        var words = expand5V(v) | expand5V(v >> @splat(5)) << @splat(8) | expand5V(v >> @splat(10)) << @splat(16);
+        // alpha: bit 15 -> 0 or 255
+        if (out_bpp == 4) words |= (v >> @splat(15)) * @as(@Vector(L, u32), @splat(255)) << @splat(24);
+        o[i * out_bpp ..][0 .. L * out_bpp].* = simd.pixelBytes(out_bpp, L, words);
+    }
+    for (i..n) |k| @memcpy(o[k * out_bpp ..][0..out_bpp], expand(16, false, in[k * 2 ..][0..2])[0..out_bpp]);
+}
+
+/// `expand5` of the low 5 bits of each lane.
+fn expand5V(v: @Vector(16, u32)) @Vector(16, u32) {
+    const c = v & @as(@Vector(16, u32), @splat(0x1F));
+    return (c << @splat(3)) | (c >> @splat(2));
+}
+
+/// Writes `px` (one output pixel) over all of `dst`.
+fn fillPixel(dst: []u8, px: []const u8) void {
+    switch (px.len) {
+        1 => @memset(dst, px[0]),
+        2 => @memset(std.mem.bytesAsSlice(u16, dst), std.mem.readInt(u16, px[0..2], native_endian)),
+        4 => @memset(std.mem.bytesAsSlice(u32, dst), std.mem.readInt(u32, px[0..4], native_endian)),
+        else => {
+            // 3 bytes: place one pixel, then keep doubling the filled prefix
+            @memcpy(dst[0..px.len], px);
+            var filled = px.len;
+            while (filled < dst.len) {
+                const k = @min(filled, dst.len - filled);
+                @memcpy(dst[filled..][0..k], dst[0..k]);
+                filled += k;
+            }
+        },
+    }
+}
+
+/// Where pixels go, in file order: rows run bottom-up unless the descriptor says
+/// top-down. Right-to-left rows are written left-to-right and mirrored at the end.
 const Cursor = struct {
     out: []u8,
     bpp: usize,
     width: usize,
     height: usize,
     top_down: bool,
-    right_to_left: bool,
     fx: usize = 0,
     fy: usize = 0,
 
-    fn put(self: *Cursor, px: [4]u8) void {
-        const x = if (self.right_to_left) self.width - 1 - self.fx else self.fx;
+    /// Output bytes for the next pixels, at most `n` and never past the current row.
+    fn span(self: *const Cursor, n: usize) []u8 {
         const y = if (self.top_down) self.fy else self.height - 1 - self.fy;
-        @memcpy(self.out[(y * self.width + x) * self.bpp ..][0..self.bpp], px[0..self.bpp]);
-        self.fx += 1;
+        const k = @min(n, self.width - self.fx);
+        return self.out[(y * self.width + self.fx) * self.bpp ..][0 .. k * self.bpp];
+    }
+
+    fn advance(self: *Cursor, k: usize) void {
+        self.fx += k;
         if (self.fx == self.width) {
             self.fx = 0;
             self.fy += 1;
@@ -126,32 +207,20 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     const hdr: Header = try .decode(data);
     const alpha = alphaMode(&hdr, data);
     if (outTag(&hdr, alpha) != inf.tag) return Error.InvalidHeader;
-    const base = hdr.image_type.base();
+    const bpp = inf.tag.bytesPerPixel();
 
-    const palette: ?[][4]u8 = if (base == .color_mapped) blk: {
+    const palette: []const [4]u8 = if (hdr.image_type.base() == .color_mapped) blk: {
         const eb = Header.bytesFor(hdr.cmap_depth);
         const cmap = data[hdr.cmapOffset()..][0..hdr.cmapBytes()];
         const pal = try scratch.alloc([4]u8, hdr.cmap_len);
         for (pal, 0..) |*p, i| p.* = expand(hdr.cmap_depth, false, cmap[i * eb ..][0..eb]);
         break :blk pal;
-    } else null;
-
-    var reader: Reader = .{
-        .src = data[hdr.pixelOffset()..],
-        .in_bpp = Header.bytesFor(hdr.depth),
-        .depth = hdr.depth,
-        .gray = base == .grayscale,
-        .palette = palette,
-        .first = hdr.cmap_first,
-    };
-    var cursor: Cursor = .{
-        .out = out,
-        .bpp = inf.tag.bytesPerPixel(),
-        .width = hdr.width,
-        .height = hdr.height,
-        .top_down = hdr.topDown(),
-        .right_to_left = hdr.rightToLeft(),
-    };
+    } else &.{};
+    var by_index: [256][4]u8 = undefined;
+    const conv: Converter = .init(&hdr, bpp, palette, &by_index);
+    const src = data[hdr.pixelOffset()..];
+    var pos: usize = 0;
+    var cursor: Cursor = .{ .out = out, .bpp = bpp, .width = hdr.width, .height = hdr.height, .top_down = hdr.topDown() };
 
     // A raw image is one packet of literal pixels. RLE packets may cross scanlines
     // (allowed by TGA 2.0 and written by many encoders), so they are only bounded
@@ -162,20 +231,54 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
         var count = total - n;
         var is_run = false;
         if (hdr.image_type.isRle()) {
-            const packet = try reader.byte();
+            if (pos >= src.len) return Error.UnexpectedEndOfData;
+            const packet = src[pos];
+            pos += 1;
             count = @as(usize, packet & 0x7F) + 1;
             is_run = packet & 0x80 != 0;
             if (count > total - n) return Error.InvalidRLEData;
         }
-        if (is_run) {
-            const px = try reader.pixel();
-            for (0..count) |_| cursor.put(px);
-        } else {
-            for (0..count) |_| cursor.put(try reader.pixel());
-        }
         n += count;
+        if (is_run) {
+            if (src.len - pos < conv.in_bpp) return Error.UnexpectedEndOfData;
+            var px: [4]u8 = undefined;
+            try conv.convert(src[pos..], &px, 1);
+            pos += conv.in_bpp;
+            while (count > 0) {
+                const dst = cursor.span(count);
+                fillPixel(dst, px[0..bpp]);
+                cursor.advance(dst.len / bpp);
+                count -= dst.len / bpp;
+            }
+        } else {
+            // convert what is there, then report a truncated packet
+            const avail = @min(count, (src.len - pos) / conv.in_bpp);
+            var left = avail;
+            while (left > 0) {
+                const dst = cursor.span(left);
+                const k = dst.len / bpp;
+                try conv.convert(src[pos..], dst, k);
+                pos += k * conv.in_bpp;
+                cursor.advance(k);
+                left -= k;
+            }
+            if (avail < count) return Error.UnexpectedEndOfData;
+        }
     }
-    if (alpha == .premultiplied) unpremultiply(out, cursor.bpp);
+    if (hdr.rightToLeft()) mirrorRows(out, hdr.width, bpp);
+    if (alpha == .premultiplied) unpremultiply(out, bpp);
+}
+
+fn mirrorRows(out: []u8, width: usize, bpp: usize) void {
+    var row_start: usize = 0;
+    while (row_start < out.len) : (row_start += width * bpp) {
+        const row = out[row_start..][0 .. width * bpp];
+        for (0..width / 2) |x| {
+            const a = row[x * bpp ..][0..bpp];
+            const b = row[(width - 1 - x) * bpp ..][0..bpp];
+            for (a, b) |*p, *q| std.mem.swap(u8, p, q);
+        }
+    }
 }
 
 /// Library pixels carry straight alpha, so TGA 2.0 premultiplied colors are divided back out.
@@ -633,4 +736,155 @@ test "tga conformance files" {
     var opaque_px: usize = 0;
     for (b5.pixels.bgra) |p| opaque_px += @intFromBool(p.a == 255);
     try testing.expect(opaque_px > 0 and opaque_px < b5.pixels.bgra.len);
+}
+
+/// The original pixel-at-a-time decoder, kept as the oracle for the span-based one.
+fn decodeReference(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
+    const hdr: Header = try .decode(data);
+    const alpha = alphaMode(&hdr, data);
+    if (outTag(&hdr, alpha) != inf.tag) return Error.InvalidHeader;
+    const base = hdr.image_type.base();
+    const palette: ?[][4]u8 = if (base == .color_mapped) blk: {
+        const eb = Header.bytesFor(hdr.cmap_depth);
+        const cmap = data[hdr.cmapOffset()..][0..hdr.cmapBytes()];
+        const pal = try scratch.alloc([4]u8, hdr.cmap_len);
+        for (pal, 0..) |*p, i| p.* = expand(hdr.cmap_depth, false, cmap[i * eb ..][0..eb]);
+        break :blk pal;
+    } else null;
+    const src = data[hdr.pixelOffset()..];
+    const in_bpp = Header.bytesFor(hdr.depth);
+    const bpp = inf.tag.bytesPerPixel();
+    var pos: usize = 0;
+    var fx: usize = 0;
+    var fy: usize = 0;
+    const total = @as(usize, hdr.width) * hdr.height;
+    var n: usize = 0;
+    while (n < total) {
+        var count = total - n;
+        var is_run = false;
+        if (hdr.image_type.isRle()) {
+            if (pos >= src.len) return Error.UnexpectedEndOfData;
+            count = @as(usize, src[pos] & 0x7F) + 1;
+            is_run = src[pos] & 0x80 != 0;
+            pos += 1;
+            if (count > total - n) return Error.InvalidRLEData;
+        }
+        var px: [4]u8 = undefined;
+        for (0..count) |k| {
+            if (k == 0 or !is_run) {
+                if (src.len - pos < in_bpp) return Error.UnexpectedEndOfData;
+                const bytes = src[pos..][0..in_bpp];
+                pos += in_bpp;
+                px = if (palette) |pal| p: {
+                    const idx: usize = if (in_bpp == 2) std.mem.readInt(u16, bytes[0..2], .little) else bytes[0];
+                    const entry = std.math.sub(usize, idx, hdr.cmap_first) catch return Error.OutOfBounds;
+                    if (entry >= pal.len) return Error.OutOfBounds;
+                    break :p pal[entry];
+                } else expand(hdr.depth, base == .grayscale, bytes);
+            }
+            const x = if (hdr.rightToLeft()) hdr.width - 1 - fx else fx;
+            const y = if (hdr.topDown()) fy else hdr.height - 1 - fy;
+            @memcpy(out[(y * hdr.width + x) * bpp ..][0..bpp], px[0..bpp]);
+            fx += 1;
+            if (fx == hdr.width) {
+                fx = 0;
+                fy += 1;
+            }
+        }
+        n += count;
+    }
+    if (alpha == .premultiplied) unpremultiply(out, bpp);
+}
+
+test "tga span decoder matches the pixel-at-a-time reference" {
+    const gpa = testing.allocator;
+    var arena: std.heap.ArenaAllocator = .init(gpa);
+    defer arena.deinit();
+    var prng: std.Random.DefaultPrng = .init(0x76A0);
+    const rand = prng.random();
+    const attrs = [_]?Header.AttributeType{ null, .alpha, .premultiplied, .undefined_ignore };
+    var stored: std.ArrayList(u8) = .empty;
+    defer stored.deinit(gpa);
+    var cmap: std.ArrayList(u8) = .empty;
+    defer cmap.deinit(gpa);
+
+    var decoded: usize = 0;
+    for (0..3000) |iter| {
+        const v = variants[iter % variants.len];
+        const mapped = v.base == .color_mapped;
+        // widths around the 16 / 32-pixel vector steps, and tiny ones
+        const width = rand.intRangeAtMost(u16, 1, 70);
+        const height = rand.intRangeAtMost(u16, 1, 6);
+        const in_bpp = Header.bytesFor(v.depth);
+        const total = @as(usize, width) * height;
+
+        cmap.clearRetainingCapacity();
+        const cmap_len: usize = if (mapped) rand.intRangeAtMost(usize, 1, if (v.depth == 16) 300 else 40) else 0;
+        for (0..cmap_len * Header.bytesFor(v.cmap_depth)) |_| try cmap.append(gpa, rand.int(u8));
+        const first: u16 = if (mapped) rand.intRangeAtMost(u16, 0, 3) else 0;
+
+        // random stored pixels; indices mostly inside the map, rarely just outside either end
+        stored.clearRetainingCapacity();
+        const compressed = rand.boolean();
+        var n: usize = 0;
+        while (n < total) {
+            const left = total - n;
+            const count = if (compressed) rand.intRangeAtMost(usize, 1, @min(128, left + @intFromBool(rand.uintLessThan(u8, 50) == 0))) else left;
+            const is_run = compressed and rand.boolean();
+            if (compressed) try stored.append(gpa, @intCast((count - 1) | @as(usize, if (is_run) 0x80 else 0)));
+            for (0..if (is_run) 1 else count) |_| {
+                if (mapped) {
+                    const idx: usize = switch (rand.uintLessThan(u16, 800)) {
+                        0 => first + cmap_len,
+                        1 => first -| 1,
+                        else => first + rand.uintLessThan(usize, cmap_len),
+                    };
+                    if (in_bpp == 1) try stored.append(gpa, @truncate(idx)) else try stored.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u16, @intCast(idx))));
+                } else for (0..in_bpp) |_| try stored.append(gpa, rand.int(u8));
+            }
+            n += count;
+        }
+        // sometimes cut the pixel data short
+        const keep = if (rand.uintLessThan(u8, 10) == 0) rand.uintAtMost(usize, stored.items.len) else stored.items.len;
+
+        const origin: u8 = rand.uintLessThan(u8, 4) << 4;
+        const attr = attrs[rand.uintLessThan(usize, attrs.len)];
+        const file = try (TestFile{
+            .image_type = if (compressed) @fromBackingInt(@intCast(@backingInt(v.base) + 8)) else v.base,
+            .width = width,
+            .height = height,
+            .depth = v.depth,
+            .descriptor = origin | v.alpha_bits,
+            .cmap_first = first,
+            .cmap_depth = v.cmap_depth,
+            .cmap = cmap.items,
+            .pixels = stored.items[0..keep],
+            .attribute = if (keep == stored.items.len) attr else null,
+        }).build(gpa);
+        defer gpa.free(file);
+        const data = if (keep == stored.items.len) file else file[0 .. Header.SIZE + cmap.items.len + keep];
+
+        const inf = info(data) catch continue;
+        const len = try inf.byteLen();
+        const ours = try gpa.alloc(u8, len);
+        defer gpa.free(ours);
+        const theirs = try gpa.alloc(u8, len);
+        defer gpa.free(theirs);
+        const r1 = decodeInto(arena.allocator(), data, inf, ours);
+        const r2 = decodeReference(arena.allocator(), data, inf, theirs);
+        _ = arena.reset(.retain_capacity);
+        if (r2) |_| {
+            r1 catch |err| {
+                std.debug.print("iter {}: {any}: reference decoded, span decoder failed with {t}\n", .{ iter, v, err });
+                return err;
+            };
+            testing.expectEqualSlices(u8, theirs, ours) catch |err| {
+                std.debug.print("iter {}: {any} {}x{} rle={} origin=0x{x}\n", .{ iter, v, width, height, compressed, origin });
+                return err;
+            };
+            decoded += 1;
+        } else |want| try testing.expectError(want, r1);
+    }
+    // most files must be valid, or this only compares error paths
+    try testing.expect(decoded > 1500);
 }
