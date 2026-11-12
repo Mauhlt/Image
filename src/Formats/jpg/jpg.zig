@@ -1,7 +1,8 @@
 //! Baseline / extended-sequential / progressive Huffman JPEG (JFIF).
 //! Decode: 1 (gray) or 3 (YCbCr) components, any sampling factors, restart intervals,
 //!         8 or 16-bit quant tables, progressive and multi-scan files (progressive.zig).
-//!         Arithmetic coding, lossless, 12-bit and CMYK are rejected.
+//!         Lossless (SOF3) files go to lossless.zig (gray above 8 bits -> .g16, else 8 bits).
+//!         Arithmetic coding, 12-bit DCT and CMYK are rejected.
 //! Encode: baseline, 4:2:0 (default) or 4:4:4, grayscale for `.g`/`.ga` images.
 //!
 //! Steps (encode): YCbCr -> chroma downsample -> 8x8 DCT -> quantize -> zigzag RLE + Huffman.
@@ -18,6 +19,7 @@ const huffman = @import("huffman.zig");
 const dct = @import("dct.zig");
 const misc = @import("misc.zig");
 const progressive = @import("progressive.zig");
+const lossless = @import("lossless.zig");
 const Upsampler = @import("upsample.zig").Upsampler;
 const ycbcr = @import("ycbcr.zig");
 const V = @import("upsample.zig").V;
@@ -30,6 +32,7 @@ pub const DEFAULT_QUALITY = misc.DEFAULT_QUALITY;
 
 pub fn info(data: []const u8) !Info {
     const hdr: Header = try .decode(data, .frame);
+    if (hdr.lossless) return lossless.info(data);
     const tag: @import("../../Colors/pixels.zig").PixelTag = if (hdr.n_components == 1) .g else .rgb;
     return .{ .width = hdr.width, .height = hdr.height, .tag = tag, .fmt = Info.fmtFor(tag, true) };
 }
@@ -56,6 +59,7 @@ pub const Plane = struct {
 
 pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) !void {
     const hdr: Header = try .decode(data, .scan);
+    if (hdr.lossless) return lossless.decodeInto(scratch, data, inf, out);
     if (hdr.width != inf.width or hdr.height != inf.height) return Error.InvalidDimensions;
 
     const mcus_x = ceilDiv(hdr.width, 8 * @as(usize, hdr.h_max));
@@ -227,7 +231,7 @@ pub fn encodeOptions(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocato
     if (width == 0 or height == 0 or width > 0xFFFF or height > 0xFFFF) return Error.InvalidDimensions;
 
     const gray = switch (img.pixels) {
-        .g, .ga => true,
+        .g, .ga, .g16 => true, // 8-bit: .g16 is rounded
         else => false,
     };
     const sub: Subsampling = if (gray) .s444 else opts.subsampling;
@@ -398,6 +402,8 @@ test {
     _ = @import("dct.zig");
     _ = @import("upsample.zig");
     _ = @import("ycbcr.zig");
+    _ = @import("narrow.zig");
+    _ = @import("lossless.zig");
 }
 
 test "zigzag is a permutation" {

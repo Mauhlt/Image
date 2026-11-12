@@ -1,13 +1,15 @@
-//! Converts defiltered PNG scanlines into 8-bit output pixels.
+//! Converts defiltered PNG scanlines into output pixels (8-bit, or `.g16`).
 //! The layout is decided once per image (`init`), so the per-row work is a tight
 //! loop specialised at comptime for its bit depth and pixel size:
 //!   copy     8-bit samples that need no change: memcpy, or a per-pixel copy for Adam7
 //!   reduce16 16-bit samples without tRNS: keep the high byte, 16 samples per shuffle
+//!   gray16   16-bit gray without tRNS: big-endian -> native `.g16` samples
 //!   lookup   palette and gray up to 8 bits: one table load per pixel, which also
 //!            does bit unpacking's scaling and tRNS alpha
 //!   key      rgb (8/16-bit) and 16-bit gray with a tRNS color key: compare + alpha
 const std = @import("std");
 const Header = @import("header.zig");
+const simd = @import("../../Colors/simd.zig");
 
 pub const Expander = struct {
     kind: Kind,
@@ -20,7 +22,7 @@ pub const Expander = struct {
     /// `.key`: the tRNS color (one sample for gray, three for rgb)
     key: [3]u16 = undefined,
 
-    const Kind = enum { copy, reduce16, lookup, key };
+    const Kind = enum { copy, reduce16, gray16, lookup, key };
 
     /// `trns` must already be validated against the color type (see png.zig's `parse`).
     pub fn init(hdr: *const Header, palette: []const u8, trns: []const u8) Expander {
@@ -54,6 +56,9 @@ pub const Expander = struct {
                     const gray: u8 = @intCast(v * (255 / max));
                     entry.* = .{ gray, if (v == key) 0 else 255, 0, 0 };
                 }
+            } else if (depth == 16 and !has_trns) {
+                e.kind = .gray16;
+                e.out_bpp = 2;
             } else e.initDirect(depth, trns),
             .rgb => e.initDirect(depth, trns),
             .ga, .rgba => e.kind = if (depth == 16) .reduce16 else .copy,
@@ -90,6 +95,11 @@ pub const Expander = struct {
                     inline for (0..n) |c| out[x * stride + c] = row[(x * n + c) * 2];
                 },
                 else => unreachable,
+            },
+            .gray16 => if (stride == 2)
+                simd.nativeFromBig16(row[0 .. width * 2], out[0 .. width * 2])
+            else for (0..width) |x| {
+                out[x * stride ..][0..2].* = @bitCast(std.mem.readInt(u16, row[x * 2 ..][0..2], .big));
             },
             .lookup => switch (e.depth) {
                 inline 1, 2, 4, 8 => |depth| switch (e.out_bpp) {

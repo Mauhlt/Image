@@ -36,15 +36,13 @@ pub fn layoutOf(fmt: vk.Format) ?Layout {
     if (bc.Format.fromVk(fmt)) |f| return .{ .block_dim = 4, .block_bytes = @intCast(f[0].blockBytes()) };
     return switch (fmt) {
         .r8_unorm, .r8_srgb => .{ .block_dim = 1, .block_bytes = 1 },
-        .r8g8_unorm, .r8g8_srgb => .{ .block_dim = 1, .block_bytes = 2 },
+        .r8g8_unorm, .r8g8_srgb, .r16_unorm => .{ .block_dim = 1, .block_bytes = 2 },
         .r8g8b8a8_unorm, .r8g8b8a8_srgb, .b8g8r8a8_unorm, .b8g8r8a8_srgb => .{ .block_dim = 1, .block_bytes = 4 },
         else => null,
     };
 }
 
-pub fn isSrgb(fmt: vk.Format) bool {
-    return std.mem.endsWith(u8, @tagName(fmt), "srgb") or std.mem.endsWith(u8, @tagName(fmt), "srgb_block");
-}
+pub const isSrgb = Info.isSrgb;
 
 pub fn levelWidth(self: *const Texture, level: u32) u32 {
     return @max(1, self.width >> @intCast(level));
@@ -124,6 +122,7 @@ pub fn fullMipCount(width: u32, height: u32) u32 {
 pub const TargetFormat = enum {
     rgba8,
     bc1,
+    bc2,
     bc3,
     bc4,
     bc5,
@@ -141,7 +140,7 @@ pub const FromImageOptions = struct {
 pub fn vkFormatFor(target: TargetFormat, srgb: bool) vk.Format {
     return switch (target) {
         .rgba8 => if (srgb) .r8g8b8a8_srgb else .r8g8b8a8_unorm,
-        inline else => |t| @field(bc.Format, @tagName(t)).vkFormat(srgb).?,
+        inline else => |t| @field(bc.Format, @tagName(t)).vkFormat(srgb),
     };
 }
 
@@ -233,6 +232,7 @@ pub fn toImage(self: *const Texture, gpa: std.mem.Allocator, level: u32, layer: 
     const tag: Image.PixelTag = switch (self.fmt) {
         .r8_unorm, .r8_srgb => .g,
         .r8g8_unorm, .r8g8_srgb => .ga,
+        .r16_unorm => .g16,
         .b8g8r8a8_unorm, .b8g8r8a8_srgb => .bgra,
         else => .rgba,
     };
@@ -329,6 +329,7 @@ test "Texture - bake, write, read back (dds + ktx2, every format)" {
         const tol: f64 = switch (target) {
             .rgba8 => 0,
             .bc1 => 8.5,
+            .bc2 => 6.5, // BC1-style color + 4-bit alpha
             .bc3 => 6.5,
             else => 4, // bc7
         };
@@ -341,16 +342,18 @@ test "Texture - read Pillow DDS files" {
     var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
     const io = threaded.io();
-    const cases = [_][2][]const u8{
-        .{ "src/Data/Read/GradientDXT1.dds", "src/Data/Read/GradientDXT1.ref.png" },
-        .{ "src/Data/Read/GradientDXT3.dds", "src/Data/Read/GradientDXT3.ref.png" }, // BC2 -> transcoded to RGBA8
-        .{ "src/Data/Read/GradientDXT5.dds", "src/Data/Read/GradientDXT5.ref.png" },
-        .{ "src/Data/Read/GradientBC5.dds", "src/Data/Read/GradientBC5.ref.png" },
-        .{ "src/Data/Read/GradientRGBA.dds", "src/Data/Read/Gradient.png" },
+    const Case = struct { []const u8, []const u8, vk.Format };
+    const cases = [_]Case{
+        .{ "src/Data/Read/GradientDXT1.dds", "src/Data/Read/GradientDXT1.ref.png", .bc1_rgba_unorm_block },
+        .{ "src/Data/Read/GradientDXT3.dds", "src/Data/Read/GradientDXT3.ref.png", .bc2_unorm_block }, // blocks kept as-is
+        .{ "src/Data/Read/GradientDXT5.dds", "src/Data/Read/GradientDXT5.ref.png", .bc3_unorm_block },
+        .{ "src/Data/Read/GradientBC5.dds", "src/Data/Read/GradientBC5.ref.png", .bc5_unorm_block },
+        .{ "src/Data/Read/GradientRGBA.dds", "src/Data/Read/Gradient.png", .b8g8r8a8_unorm },
     };
     for (cases) |c| {
         const tex = try read(io, gpa, c[0]);
         defer tex.deinit(gpa);
+        try std.testing.expectEqual(c[2], tex.fmt);
         const img = try tex.toImage(gpa, 0, 0, 0);
         defer img.deinit(gpa);
         const ref = try Image.read(.{ .io = io, .gpa = gpa, .filepath = c[1] });
@@ -360,4 +363,48 @@ test "Texture - read Pillow DDS files" {
             return err;
         };
     }
+}
+
+test "Texture - r16_unorm: layout, DDS round trip, toImage as g16" {
+    const gpa = std.testing.allocator;
+    try std.testing.expectEqual(@import("Vulkan").Format.r16_unorm, Info.fmtFor(.g16, true));
+    try std.testing.expectEqual(@as(u32, 2), layoutOf(.r16_unorm).?.block_bytes);
+    const vals = [_]u16{ 0, 1, 4095, 65535, 300, 40000 };
+    const data = try gpa.dupe(u8, std.mem.sliceAsBytes(&vals));
+    const tex: Texture = .{ .fmt = .r16_unorm, .width = 3, .height = 2, .data = data };
+    defer tex.deinit(gpa);
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try DDS.encode(&tex, &aw.writer);
+    const back = try DDS.decode(gpa, aw.written());
+    defer back.deinit(gpa);
+    try std.testing.expectEqual(tex.fmt, back.fmt);
+    const img = try back.toImage(gpa, 0, 0, 0);
+    defer img.deinit(gpa);
+    try std.testing.expectEqual(Image.PixelTag.g16, std.meta.activeTag(img.pixels));
+    try std.testing.expectEqualSlices(u8, data, img.pixels.asBytes());
+}
+
+test "Texture - vk.Format values without a name are rejected, not illegal" {
+    const gpa = std.testing.allocator;
+    // vk.Format is non-exhaustive: files (and newer drivers) can carry values this vk.zig does not name.
+    const unknown: vk.Format = @fromBackingInt(@intCast(0x7fff_0000));
+    try std.testing.expectEqual(@as(?Layout, null), layoutOf(unknown));
+    try std.testing.expect(!isSrgb(unknown));
+    try std.testing.expect(isSrgb(.bc2_srgb_block));
+
+    var pixels = [_]u8{ 1, 2, 3, 4 };
+    const tex: Texture = .{ .fmt = .r8g8b8a8_unorm, .width = 1, .height = 1, .data = &pixels };
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try KTX2.encode(&tex, &aw.writer, gpa);
+    const file = aw.written();
+    std.mem.writeInt(u32, file[12..16], @backingInt(unknown), .little); // header.vkFormat
+    try std.testing.expectError(error.UnsupportedColorspace, KTX2.decode(gpa, file));
+
+    const bad: Texture = .{ .fmt = unknown, .width = 1, .height = 1, .data = &pixels };
+    var aw2: std.Io.Writer.Allocating = .init(gpa);
+    defer aw2.deinit();
+    try std.testing.expectError(error.UnsupportedColorspace, DDS.encode(&bad, &aw2.writer));
+    try std.testing.expectError(error.UnsupportedColorspace, KTX2.encode(&bad, &aw2.writer, gpa));
 }

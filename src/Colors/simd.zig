@@ -2,6 +2,40 @@
 const std = @import("std");
 const native_endian = @import("builtin").cpu.arch.endian();
 
+/// Swaps the bytes of every 16-bit sample (`src.len` even, == `dst.len`; `dst` may be
+/// `src` itself): big <-> little endian.
+pub fn swapBytes16(src: []const u8, dst: []u8) void {
+    std.debug.assert(src.len == dst.len and src.len % 2 == 0);
+    const L = @import("misc.zig").N / 2;
+    var i: usize = 0;
+    while (i + 2 * L <= src.len) : (i += 2 * L) {
+        const v: @Vector(2 * L, u8) = @bitCast(@byteSwap(load(L, u16, src[i..])));
+        dst[i..][0 .. 2 * L].* = v;
+    }
+    while (i < src.len) : (i += 2) {
+        const hi = src[i];
+        dst[i] = src[i + 1];
+        dst[i + 1] = hi;
+    }
+}
+
+/// Big-endian 16-bit samples -> native endian (or back: the same operation).
+pub fn nativeFromBig16(src: []const u8, dst: []u8) void {
+    if (native_endian == .little) return swapBytes16(src, dst);
+    if (src.ptr != dst.ptr) @memcpy(dst, src);
+}
+
+test swapBytes16 {
+    const L = @import("misc.zig").N / 2;
+    var buf: [2 * (2 * L + 3)]u8 = undefined;
+    for (&buf, 0..) |*b, k| b.* = @intCast(k);
+    for ([_]usize{ 0, 1, L - 1, L, L + 1, 2 * L + 3 }) |n| {
+        var out: [buf.len]u8 = undefined;
+        swapBytes16(buf[0 .. 2 * n], out[0 .. 2 * n]);
+        for (0..n) |k| try std.testing.expectEqual(std.mem.readInt(u16, buf[2 * k ..][0..2], .big), std.mem.readInt(u16, out[2 * k ..][0..2], .little));
+    }
+}
+
 /// `L` native-endian `T`s from the start of `bytes`. A pointer cast compiles to one
 /// unaligned load, where `@bitCast` of a byte array becomes a byte-by-byte loop.
 pub inline fn load(comptime L: usize, comptime T: type, bytes: []const u8) @Vector(L, T) {

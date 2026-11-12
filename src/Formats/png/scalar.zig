@@ -75,7 +75,10 @@ pub const Expander = struct {
                         o += 1;
                     }
                 },
-                .g => {
+                .g => if (depth == 16 and p.trns.len < 2) {
+                    // `.g16`: the sample, native endian
+                    std.mem.writeInt(u16, out[o..][0..2], s[0], @import("builtin").cpu.arch.endian());
+                } else {
                     const raw = s[0];
                     out[o] = scale8(raw, depth);
                     o += 1;

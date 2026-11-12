@@ -25,7 +25,7 @@ pub fn fromImage(img: *const Image, tag: PixelTag) !@This() {
         else => return Error.InvalidChannels,
     };
     // anything not explicitly sRGB is written as linear
-    const colorspace: Colorspace = if (std.mem.endsWith(u8, @tagName(img.fmt), "srgb")) .srgb else .linear;
+    const colorspace: Colorspace = if (Image.Info.isSrgb(img.fmt)) .srgb else .linear;
     return .{
         .width = img.width,
         .height = img.height,

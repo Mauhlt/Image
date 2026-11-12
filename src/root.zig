@@ -22,6 +22,11 @@ pub const tagFromExt = misc.tagFromExt;
 pub const BMP = @import("Formats/bmp/bmp.zig");
 pub const HEIC = @import("Formats/heic/heic.zig");
 pub const JPG = @import("Formats/jpg/jpg.zig");
+/// Lossless JPEG (SOF3) raw API: 2..16-bit samples, plus an encoder. `.jpg` files
+/// with an SOF3 frame also open through `JPG` (scaled to 8 bits).
+pub const JPG_LOSSLESS = @import("Formats/jpg/lossless.zig");
+/// JPEG-LS (T.87): raw 2..16-bit decode, and `.jls` files through the codec path.
+pub const JPEGLS = @import("Formats/jpegls/jpegls.zig");
 pub const PAM = @import("Formats/pam/pam.zig");
 pub const PBM = @import("Formats/pbm/pbm.zig");
 pub const PGM = @import("Formats/pgm/pgm.zig");
@@ -31,6 +36,9 @@ pub const PPM = @import("Formats/ppm/ppm.zig");
 pub const QOI = @import("Formats/qoi/qoi.zig");
 pub const TGA = @import("Formats/tga/tga.zig");
 pub const WEBP = @import("Formats/webp/webp.zig");
+/// One-shot DEFLATE / zlib / gzip decoder with checksum verification, plus fast
+/// CRC-32 and Adler-32 (`inflate.crc32`, `inflate.adler32`).
+pub const inflate = @import("inflate/inflate.zig");
 
 const Image = @This();
 
@@ -44,6 +52,7 @@ pub fn Codec(comptime tag: ImageTag) ?type {
     return switch (tag) {
         .bmp => BMP,
         .jpg => JPG,
+        .jls => JPEGLS,
         .pam => PAM,
         .pbm => PBM,
         .pgm => PGM,
@@ -128,7 +137,7 @@ pub fn copy(img: *const Image, gpa: std.mem.Allocator) !Image {
 
 /// Returns a new image with pixels converted to `tag`.
 pub fn convert(img: *const Image, tag: PixelTag, gpa: std.mem.Allocator) !Image {
-    const srgb = std.mem.endsWith(u8, @tagName(img.fmt), "srgb");
+    const srgb = Info.isSrgb(img.fmt);
     return .{
         .width = img.width,
         .height = img.height,
@@ -215,7 +224,9 @@ test {
     _ = @import("Formats/heic/hevc/params.zig");
     _ = @import("Formats/heic/hevc/cabac.zig");
     _ = @import("Formats/heic/hevc/hevc.zig");
-    inline for (.{ BMP, HEIC, JPG, PAM, PBM, PGM, PNG, PNM, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
+    _ = @import("Formats/jpegls/jpegls.zig");
+    _ = @import("inflate/inflate.zig");
+    inline for (.{ BMP, HEIC, JPG, JPG_LOSSLESS, JPEGLS, PAM, PBM, PGM, PNG, PNM, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
 }
 
 /// Test helper: converts both images to `tag` and compares pixels.
@@ -280,16 +291,19 @@ test "Images - decode reference files" {
 
     const Case = struct { path: []const u8, tag: PixelTag, tol: f64 = 0 };
     const groups = [_]struct { ref: []const u8, cases: []const Case }{
-        .{ .ref = "src/Data/Read/BasicArt.png", .cases = &.{
-            // these two were exported from a slightly different source (blue off by 1)
-            .{ .path = "src/Data/Read/BasicArt.bmp", .tag = .rgb, .tol = 0.5 },
-            .{ .path = "src/Data/Read/BasicArt.qoi", .tag = .rgb, .tol = 0.5 },
-            .{ .path = "src/Data/Read/BasicArt.ppm", .tag = .rgb },
-            .{ .path = "src/Data/Read/BasicArt.pgm", .tag = .g, .tol = 0.6 }, // gray formula differs by rounding
-            .{ .path = "src/Data/Read/BasicArt.tga", .tag = .rgba },
-            .{ .path = "src/Data/Read/BasicArt.webp", .tag = .rgba },
-            .{ .path = "src/Data/Read/BasicArt.jpg", .tag = .rgb, .tol = 3 },
-        } },
+        .{
+            .ref = "src/Data/Read/BasicArt.png",
+            .cases = &.{
+                // these two were exported from a slightly different source (blue off by 1)
+                .{ .path = "src/Data/Read/BasicArt.bmp", .tag = .rgb, .tol = 0.5 },
+                .{ .path = "src/Data/Read/BasicArt.qoi", .tag = .rgb, .tol = 0.5 },
+                .{ .path = "src/Data/Read/BasicArt.ppm", .tag = .rgb },
+                .{ .path = "src/Data/Read/BasicArt.pgm", .tag = .g, .tol = 0.6 }, // gray formula differs by rounding
+                .{ .path = "src/Data/Read/BasicArt.tga", .tag = .rgba },
+                .{ .path = "src/Data/Read/BasicArt.webp", .tag = .rgba },
+                .{ .path = "src/Data/Read/BasicArt.jpg", .tag = .rgb, .tol = 3 },
+            },
+        },
         .{ .ref = "src/Data/Read/Gradient.png", .cases = &.{
             .{ .path = "src/Data/Read/Gradient.bmp", .tag = .rgb },
             .{ .path = "src/Data/Read/Gradient.ppm", .tag = .rgb },
@@ -348,6 +362,80 @@ test "JPEG - progressive" {
     const grad = try testRead(io, gpa, "src/Data/Read/GradientProgressive.jpg");
     defer grad.deinit(gpa);
     try expectSimilar(gpa, &wic, &grad, .rgb, 2.5);
+}
+
+// Lossless JPEG (a .jpg with an SOF3 frame) and JPEG-LS (.jls) through the codec path:
+// samples scaled by their precision P; 1 component -> .g, or .g16 when P > 8; 3 -> .rgb.
+test "lossless JPEG / JPEG-LS - codec path and Image.read" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    const W = 37;
+    const H = 11;
+    for ([_]u8{ 2, 8, 9, 12, 16 }) |p| for ([_]u8{ 1, 3 }) |nc| {
+        const n = W * H * @as(usize, nc);
+        const maxval: u32 = (@as(u32, 1) << @intCast(p)) - 1;
+        const samples = try gpa.alloc(u16, n);
+        defer gpa.free(samples);
+        var prng: std.Random.DefaultPrng = .init(@as(u64, p) * 10 + nc);
+        const random = prng.random();
+        for (samples, 0..) |*s, i| s.* = switch (i % 5) {
+            0 => @intCast(maxval), // extremes
+            1 => 0,
+            2 => @intCast((i * 7) % (maxval + 1)), // gradient
+            else => @intCast(random.uintAtMost(u32, maxval)),
+        };
+        // scalar reference: v8 = (v * 255 + maxval / 2) / maxval, or for gray above 8 bits
+        // v16 = (v * 65535 + maxval / 2) / maxval (native endian)
+        const wide = nc == 1 and p > 8;
+        const want_tag: PixelTag = if (wide) .g16 else if (nc == 1) .g else .rgb;
+        const want = try gpa.alloc(u8, n * want_tag.bytesPerPixel() / nc);
+        defer gpa.free(want);
+        if (wide) {
+            for (samples, std.mem.bytesAsSlice(u16, want)) |s, *w| w.* = @intCast((@as(u32, s) * 65535 + maxval / 2) / maxval);
+        } else for (samples, want) |s, *w| w.* = @intCast((@as(u32, s) * 255 + maxval / 2) / maxval);
+
+        const jll = try JPG_LOSSLESS.encode(gpa, W, H, p, nc, samples);
+        defer gpa.free(jll);
+        const jls = try JPEGLS.testEncode(gpa, W, H, p, nc, samples, .{ .ilv = if (nc == 1) 0 else 1 });
+        defer gpa.free(jls);
+        const cases = [_]struct { tag: ImageTag, data: []const u8, path: []const u8 }{
+            .{ .tag = .jpg, .data = jll, .path = "lossless.jpg" },
+            .{ .tag = .jls, .data = jls, .path = "image.jls" },
+        };
+        for (cases) |c| {
+            const img = try decode(c.tag, gpa, c.data);
+            defer img.deinit(gpa);
+            try std.testing.expectEqual(want_tag, std.meta.activeTag(img.pixels));
+            try std.testing.expectEqual(@as(u32, W), img.width);
+            try std.testing.expectEqual(@as(u32, H), img.height);
+            std.testing.expectEqualSlices(u8, want, img.pixels.asBytes()) catch |err| {
+                std.debug.print("{t}: P={} components={}\n", .{ c.tag, p, nc });
+                return err;
+            };
+
+            try tmp.dir.writeFile(io, .{ .sub_path = c.path, .data = c.data });
+            const from_file = try read(.{ .io = io, .gpa = gpa, .dir = tmp.dir, .filepath = c.path, .path_type = .dir });
+            defer from_file.deinit(gpa);
+            try std.testing.expectEqualSlices(u8, want, from_file.pixels.asBytes());
+        }
+    };
+
+    // 2 (or 4) components have no 8-bit layout; there is no JPEG-LS encoder
+    const two: [8]u16 = @splat(100);
+    const jll2 = try JPG_LOSSLESS.encode(gpa, 2, 2, 8, 2, &two);
+    defer gpa.free(jll2);
+    try std.testing.expectError(error.UnsupportedFeature, info(.jpg, jll2));
+    const jls2 = try JPEGLS.testEncode(gpa, 2, 2, 8, 2, &two, .{ .ilv = 1 });
+    defer gpa.free(jls2);
+    try std.testing.expectError(error.UnsupportedFeature, info(.jls, jls2));
+    const g: Image = .{ .width = 1, .height = 1, .fmt = .r8_unorm, .pixels = try .init(.g, gpa, &.{7}) };
+    defer g.deinit(gpa);
+    var aw: std.Io.Writer.Allocating = .init(gpa);
+    defer aw.deinit();
+    try std.testing.expectError(error.UnsupportedFeature, g.encode(.jls, &aw.writer, gpa));
 }
 
 // encode -> file -> decode for every writable format.

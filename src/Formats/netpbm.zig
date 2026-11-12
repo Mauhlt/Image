@@ -6,7 +6,10 @@
 //!   P7      = PAM, binary; header of `KEYWORD value` lines ending with ENDHDR
 //! P1..P6 header: magic, width, height, maxval (not in PBM) separated by any whitespace;
 //! '#' starts a comment that runs to the end of the line.
-//! maxval may be 1..65535 (2 big-endian bytes per sample above 255); samples are rescaled to 8 bits.
+//! maxval may be 1..65535 (2 big-endian bytes per sample above 255). Gray images (P2, P5,
+//! PAM GRAYSCALE) with maxval > 255 decode to `.g16`: samples as stored for maxval 65535,
+//! else rescaled to the full range, round(v * 65535 / maxval), so 0..maxval -> 0..65535
+//! like every other layout's 0..maxval -> 0..255. Everything else is rescaled to 8 bits.
 const std = @import("std");
 const Error = @import("error.zig").Error;
 const Image = @import("../root.zig");
@@ -21,13 +24,23 @@ pub const Header = struct {
     magic: Magic,
     width: u32,
     height: u32,
-    /// .g, .ga, .rgb or .rgba; also tells the number of samples per pixel
+    /// .g, .g16 (gray, maxval > 255), .ga, .rgb or .rgba; see `channels`
     tag: PixelTag,
     /// 1 for PBM
     max_val: u16,
     /// offset of the first raster byte (binary) or first sample token (ASCII)
     data_start: usize,
 };
+
+/// Samples per pixel of a netpbm layout.
+fn channels(tag: PixelTag) usize {
+    return if (tag == .g16) 1 else tag.bytesPerPixel();
+}
+
+/// Gray with 16-bit samples keeps them: `.g16`.
+fn deepen(tag: PixelTag, max_val: u32) PixelTag {
+    return if (tag == .g and max_val > 255) .g16 else tag;
+}
 
 fn skipWhitespaceAndComments(data: []const u8, pos: usize) usize {
     var i = pos;
@@ -89,11 +102,11 @@ pub fn decodeHeader(data: []const u8) Error!Header {
         .magic = magic,
         .width = width,
         .height = height,
-        .tag = switch (magic) {
+        .tag = deepen(switch (magic) {
             .P1, .P2, .P4, .P5 => .g,
             .P3, .P6 => .rgb,
             .P7 => unreachable,
-        },
+        }, max_val),
         .max_val = @intCast(max_val),
         .data_start = try rasterStart(data, pos),
     };
@@ -152,7 +165,7 @@ fn decodePamHeader(data: []const u8) Error!Header {
         else => return Error.UnsupportedDepth,
     };
     if (tag.bytesPerPixel() != d) return Error.InvalidChannels;
-    return .{ .magic = .P7, .width = w, .height = h, .tag = tag, .max_val = @intCast(m), .data_start = pos };
+    return .{ .magic = .P7, .width = w, .height = h, .tag = deepen(tag, m), .max_val = @intCast(m), .data_start = pos };
 }
 
 fn parsePamUint(value: []const u8) Error!u32 {
@@ -168,12 +181,17 @@ pub fn info(data: []const u8) Error!Info {
 pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: []u8) Error!void {
     _ = scratch;
     const hdr = try decodeHeader(data);
-    const n_samples = @as(usize, hdr.width) * hdr.height * hdr.tag.bytesPerPixel();
-    if (out.len != n_samples or inf.tag != hdr.tag) return Error.InvalidDataLen;
+    const n_samples = @as(usize, hdr.width) * hdr.height * channels(hdr.tag);
+    if (out.len != n_samples * @as(usize, if (hdr.tag == .g16) 2 else 1) or inf.tag != hdr.tag) return Error.InvalidDataLen;
+    if (hdr.tag == .g16) return switch (hdr.magic) {
+        .P2 => decodeAsciiSamples(Scaler16, data, hdr.data_start, hdr.max_val, std.mem.bytesAsSlice(u16, out)),
+        .P5, .P7 => decodeBinarySamples16(data[hdr.data_start..], hdr.max_val, out),
+        else => unreachable,
+    };
     switch (hdr.magic) {
         .P1 => try decodeAsciiBits(data, hdr.data_start, out),
         .P4 => try decodeBinaryBits(data[hdr.data_start..], hdr.width, out),
-        .P2, .P3 => try decodeAsciiSamples(data, hdr.data_start, hdr.max_val, out),
+        .P2, .P3 => try decodeAsciiSamples(Scaler, data, hdr.data_start, hdr.max_val, out),
         .P5, .P6, .P7 => try decodeBinarySamples(data[hdr.data_start..], hdr.max_val, out),
     }
 }
@@ -228,13 +246,14 @@ fn decodeBinaryBits(raster: []const u8, width: u32, out: []u8) Error!void {
     }
 }
 
-fn decodeAsciiSamples(data: []const u8, start: usize, max: u16, out: []u8) Error!void {
-    const scaler: Scaler = .init(max);
+/// `S`: `Scaler` (8-bit output) or `Scaler16`.
+fn decodeAsciiSamples(comptime S: type, data: []const u8, start: usize, max: u16, out: []align(1) S.Out) Error!void {
+    const scaler: S = .init(max);
     var pos = start;
     var n: usize = 0;
     while (n < out.len) {
         if (data.len - pos >= block_len + 8) {
-            const done = if (max == 255) try decodeBlock(true, data, &pos, scaler, out, &n) else try decodeBlock(false, data, &pos, scaler, out, &n);
+            const done = if (max == std.math.maxInt(S.Out)) try decodeBlock(S, true, data, &pos, scaler, out, &n) else try decodeBlock(S, false, data, &pos, scaler, out, &n);
             if (done) continue;
         }
         // one sample the plain way: near the end, around comments or junk, long numbers
@@ -260,8 +279,8 @@ const block_len = 64;
 /// Parsing one number at a time chains every step on the previous number's length.
 /// Instead, vector compares find where all of the block's numbers start and end, and
 /// each is parsed on its own from an 8-byte load, so the CPU overlaps their work.
-/// `identity`: maxval 255, samples need no scaling.
-fn decodeBlock(comptime identity: bool, data: []const u8, pos: *usize, scaler: Scaler, out: []u8, n: *usize) Error!bool {
+/// `identity`: maxval 255 (65535 for `Scaler16`), samples need no scaling.
+fn decodeBlock(comptime S: type, comptime identity: bool, data: []const u8, pos: *usize, scaler: S, out: []align(1) S.Out, n: *usize) Error!bool {
     // the bit order of a bool-vector bitcast follows the byte order
     if (native_endian != .little) return false;
     const V = @Vector(block_len, u8);
@@ -349,6 +368,7 @@ fn decodeBinarySamples(raster: []const u8, max: u16, out: []u8) Error!void {
 /// with numerators below 2^n and post = n + ceil(log2(max)), mul = ceil(2^post / max)
 /// gives the exact quotient).
 const Scaler = struct {
+    const Out = u8;
     max: u32,
     half: u32,
     mul: u64,
@@ -376,13 +396,72 @@ const Scaler = struct {
     }
 };
 
+/// Gray sample -> 16 bits for one maxval (> 255), rounded to nearest: round(v * 65535 / max);
+/// out-of-range binary samples clamp to max. The f64 quotient is exact enough: v * 65535 is
+/// exact, and a true quotient that is not a tie lies >= 1 / (2 * max) from k + 0.5, far beyond
+/// the division's rounding error, so flooring q + 0.5 matches the integer formula (tested
+/// against it for every sample).
+const Scaler16 = struct {
+    const Out = u16;
+    max: u32,
+
+    fn init(max: u16) Scaler16 {
+        return .{ .max = max };
+    }
+
+    fn apply(s: Scaler16, v: u32) u16 {
+        const x: f64 = @floatFromInt(@as(u32, @min(v, s.max)) * 65535);
+        return @intFromFloat(x / @as(f64, @floatFromInt(s.max)) + 0.5);
+    }
+
+    fn applyV(s: Scaler16, comptime L: usize, samples: @Vector(L, u16)) @Vector(L, u16) {
+        const V = @Vector(L, f64);
+        const m: @Vector(L, u32) = @splat(s.max);
+        const x: V = @floatFromInt(@min(@as(@Vector(L, u32), samples), m) * @as(@Vector(L, u32), @splat(65535)));
+        return @intFromFloat(x / @as(V, @splat(@floatFromInt(s.max))) + @as(V, @splat(0.5)));
+    }
+};
+
+/// P5 / P7 gray, maxval > 255 -> native `.g16` bytes in `out`.
+fn decodeBinarySamples16(raster: []const u8, max: u16, out: []u8) Error!void {
+    if (raster.len < out.len) return Error.UnexpectedEndOfData;
+    if (max == 65535) return simd.nativeFromBig16(raster[0..out.len], out);
+    const s: Scaler16 = .init(max);
+    const dst = std.mem.bytesAsSlice(u16, out);
+    // samples per step: f64 lanes, from the tuning width
+    const L = @import("../Colors/misc.zig").N / 4;
+    var i: usize = 0;
+    while (i + L <= dst.len) : (i += L) {
+        const v = simd.load(L, u16, raster[i * 2 ..]);
+        dst[i..][0..L].* = s.applyV(L, if (native_endian == .little) @byteSwap(v) else v);
+    }
+    for (dst[i..], i..) |*o, k| o.* = s.apply(std.mem.readInt(u16, raster[k * 2 ..][0..2], .big));
+}
+
+/// Native 16-bit samples written big-endian, through a small buffer.
+fn writeBig16(w: *std.Io.Writer, bytes: []const u8) !void {
+    var buf: [4096]u8 = undefined;
+    var i: usize = 0;
+    while (i < bytes.len) {
+        const n = @min(buf.len, bytes.len - i);
+        simd.nativeFromBig16(bytes[i..][0..n], buf[0..n]);
+        try w.writeAll(buf[0..n]);
+        i += n;
+    }
+}
+
 fn convertedPixels(img: *const Image, tag: PixelTag, gpa: std.mem.Allocator) !?Image.Pixels {
     return if (std.meta.activeTag(img.pixels) == tag) null else try img.pixels.convertV(tag, gpa);
 }
 
 /// Binary P5 (`.g`) or P6 (`.rgb`), maxval 255; other layouts are converted.
+/// A `.g16` image written as `.g` keeps its samples: P5 with maxval 65535.
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator, tag: PixelTag) !void {
     std.debug.assert(tag == .g or tag == .rgb);
+    if (tag == .g and img.pixels == .g16) {
+        try w.print("P5\n{} {}\n65535\n", .{ img.width, img.height });
+        return writeBig16(w, img.pixels.asBytes());
+    }
     const converted = try convertedPixels(img, tag, gpa);
     defer if (converted) |c| c.deinit(gpa);
     const magic = if (tag == .g) "P5" else "P6";
@@ -413,27 +492,28 @@ pub fn encodePbm(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !
 /// The PAM layout an image is stored as: gray / RGB, keeping alpha if present.
 pub fn pamTag(tag: PixelTag) PixelTag {
     return switch (tag) {
-        .g, .ga, .rgb, .rgba => tag,
+        .g, .ga, .rgb, .rgba, .g16 => tag,
         .bgr, .ycbcr => .rgb,
         .bgra, .ycbcra => .rgba,
     };
 }
 
-/// P7 with maxval 255 in the layout given by `pamTag`.
+/// P7 with maxval 255 in the layout given by `pamTag` (65535 for `.g16`).
 pub fn encodePam(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     const tag = pamTag(std.meta.activeTag(img.pixels));
     const converted = try convertedPixels(img, tag, gpa);
     defer if (converted) |c| c.deinit(gpa);
     const tuple_type = switch (tag) {
-        .g => "GRAYSCALE",
+        .g, .g16 => "GRAYSCALE",
         .ga => "GRAYSCALE_ALPHA",
         .rgb => "RGB",
         .rgba => "RGB_ALPHA",
         else => unreachable,
     };
-    try w.print("P7\nWIDTH {}\nHEIGHT {}\nDEPTH {}\nMAXVAL 255\nTUPLTYPE {s}\nENDHDR\n", .{
-        img.width, img.height, tag.bytesPerPixel(), tuple_type,
+    try w.print("P7\nWIDTH {}\nHEIGHT {}\nDEPTH {}\nMAXVAL {}\nTUPLTYPE {s}\nENDHDR\n", .{
+        img.width, img.height, channels(tag), @as(u16, if (tag == .g16) 65535 else 255), tuple_type,
     });
+    if (tag == .g16) return writeBig16(w, img.pixels.asBytes());
     try w.writeAll((converted orelse img.pixels).asBytes());
 }
 
@@ -442,14 +522,37 @@ pub fn encodePam(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !
 const testing = std.testing;
 
 /// Decodes `file` and checks it yields exactly `expected` as `tag` pixels.
+/// A gray file with maxval > 255 decodes to `.g16`; given `.g` and 8-bit `expected`
+/// it is compared after the library's 16 -> 8 bit rounding.
 fn expectDecodes(file: []const u8, tag: PixelTag, expected: []const u8) !void {
     const inf = try info(file);
-    try testing.expectEqual(tag, inf.tag);
     const out = try testing.allocator.alloc(u8, try inf.byteLen());
     defer testing.allocator.free(out);
+    if (tag == .g and inf.tag == .g16) {
+        try decodeInto(testing.allocator, file, inf, out);
+        const wide = std.mem.bytesAsSlice(u16, out);
+        try testing.expectEqual(expected.len, wide.len);
+        for (expected, wide) |e, v| try testing.expectEqual(e, misc.to8(v));
+        return;
+    }
+    try testing.expectEqual(tag, inf.tag);
     try decodeInto(testing.allocator, file, inf, out);
     try testing.expectEqualSlices(u8, expected, out);
 }
+
+/// `file` must decode to `.g16` holding exactly `expected`.
+fn expectDecodes16(file: []const u8, expected: []const u16) !void {
+    const inf = try info(file);
+    try testing.expectEqual(PixelTag.g16, inf.tag);
+    const out = try testing.allocator.alloc(u8, try inf.byteLen());
+    defer testing.allocator.free(out);
+    try decodeInto(testing.allocator, file, inf, out);
+    const got = std.mem.bytesAsSlice(u16, out);
+    try testing.expectEqual(expected.len, got.len);
+    for (expected, got) |e, g| try testing.expectEqual(e, g);
+}
+
+const misc = @import("../Colors/misc.zig");
 
 /// `header` (ending in its single whitespace byte) followed by 8-bit `samples` stored at
 /// `max_val`: 16-bit big-endian v*257 for 65535, v*max/255 for small maxvals (exact when
@@ -569,8 +672,10 @@ test "netpbm PAM alpha layouts" {
 test "netpbm maxval scaling rounds to nearest" {
     try expectDecodes("P2 4 1 3\n0 1 2 3\n", .g, &.{ 0, 85, 170, 255 });
     try expectDecodes("P2 3 1 2\n0 1 2\n", .g, &.{ 0, 128, 255 });
-    // 16-bit with an odd maxval: 1 -> 0.255, 2 -> 0.51, 500 -> 127.5, 998 -> 254.49
-    try expectDecodes("P5 5 1 1000\n" ++ [_]u8{ 0, 1, 0, 2, 0x01, 0xF4, 0x03, 0xE6, 0x03, 0xE8 }, .g, &.{ 0, 1, 128, 254, 255 });
+    // 16-bit gray keeps 16 bits, rescaled: 1 -> 65.535, 2 -> 131.07, 500 -> 32767.5, 998 -> 65403.9
+    try expectDecodes16("P5 5 1 1000\n" ++ [_]u8{ 0, 1, 0, 2, 0x01, 0xF4, 0x03, 0xE6, 0x03, 0xE8 }, &.{ 66, 131, 32768, 65404, 65535 });
+    // ...while 16-bit color is rescaled to 8 bits: 500 -> 127.5, 998 -> 254.49
+    try expectDecodes("P6 2 1 1000\n" ++ [_]u8{ 0, 0, 0, 1, 0x01, 0xF4, 0x03, 0xE6, 0x03, 0xE8, 0x03, 0xE8 }, .rgb, &.{ 0, 0, 128, 254, 255, 255 });
     try expectDecodes("P6 1 1 65535\n" ++ [_]u8{ 0xFF, 0xFF, 0x80, 0x00, 0x00, 0x00 }, .rgb, &.{ 255, 128, 0 });
     try testing.expectError(Error.InvalidNum, expectDecodes("P2 1 1 3\n4\n", .g, &.{0}));
     try testing.expectError(Error.InvalidMaxVal, info("P5 1 1 65536\n"));
@@ -692,6 +797,74 @@ test "netpbm reference files in every encoding" {
     }
 }
 
+/// `Scaler16` with an integer division (65535 * 65535 + 32767 < 2^32).
+fn referenceScale16(v: u32, max: u32) u16 {
+    return @intCast((@min(v, max) * 65535 + max / 2) / max);
+}
+
+test "netpbm Scaler16 equals the division for every sample" {
+    const L = misc.N / 4; // as decodeBinarySamples16
+    for ([_]u16{ 256, 257, 300, 511, 1000, 1023, 4095, 9999, 32767, 32768, 65534, 65535 }) |max| {
+        const s: Scaler16 = .init(max);
+        var v: u32 = 0;
+        while (v <= 0xFFFF) : (v += L) {
+            var lanes: [L]u16 = undefined;
+            for (&lanes, 0..) |*l, k| l.* = @intCast(@min(v + k, 0xFFFF));
+            const wide: [L]u16 = s.applyV(L, lanes);
+            for (lanes, wide) |x, got| {
+                const want = referenceScale16(x, max);
+                try testing.expectEqual(want, s.apply(x));
+                try testing.expectEqual(want, got);
+            }
+        }
+    }
+}
+
+test "netpbm 16-bit gray: P2, P5 and PAM at vector-edge widths, encoders keep 16 bits" {
+    const gpa = testing.allocator;
+    const L = misc.N / 4;
+    var prng: std.Random.DefaultPrng = .init(0x6716);
+    const rand = prng.random();
+    for ([_]usize{ 1, 3, L - 1, L, L + 1, 2 * L + 3, 37 }) |w| for ([_]u16{ 65535, 4095, 1000, 256 }) |max| {
+        const raw = try gpa.alloc(u16, w * 2);
+        defer gpa.free(raw);
+        for (raw, 0..) |*r, i| r.* = switch (i % 4) {
+            0 => 0,
+            1 => max,
+            else => rand.uintAtMost(u16, max),
+        };
+        const want = try gpa.alloc(u16, raw.len);
+        defer gpa.free(want);
+        for (raw, want) |r, *o| o.* = referenceScale16(r, max);
+        for ([_][]const u8{ "P2", "P5", "P7" }) |magic| {
+            var file: std.Io.Writer.Allocating = .init(gpa);
+            defer file.deinit();
+            if (magic[1] == '7') {
+                try file.writer.print("P7\nWIDTH {}\nHEIGHT 2\nDEPTH 1\nMAXVAL {}\nTUPLTYPE GRAYSCALE\nENDHDR\n", .{ w, max });
+            } else try file.writer.print("{s}\n{} 2\n{}\n", .{ magic, w, max });
+            for (raw) |r| if (magic[1] == '2') try file.writer.print("{} ", .{r}) else try file.writer.writeInt(u16, r, .big);
+            expectDecodes16(file.written(), want) catch |err| {
+                std.debug.print("{s} width {} maxval {}\n", .{ magic, w, max });
+                return err;
+            };
+        }
+        // PGM / PAM / PNM write .g16 as maxval 65535: the decoded samples come back exactly
+        const bytes = try gpa.dupe(u8, std.mem.sliceAsBytes(want));
+        defer gpa.free(bytes);
+        const img: Image = .{ .width = @intCast(w), .height = 2, .pixels = .fromBytes(.g16, bytes), .fmt = .r16_unorm };
+        for ([_]Image.ImageTag{ .pgm, .pam, .pnm }) |t| {
+            const back = try roundTrip(&img, t);
+            defer back.deinit(gpa);
+            try testing.expectEqual(PixelTag.g16, std.meta.activeTag(back.pixels));
+            try testing.expectEqualSlices(u8, bytes, back.pixels.asBytes());
+        }
+        // 8-bit-only netpbm formats round 16 -> 8 bits
+        const ppm = try roundTrip(&img, .ppm);
+        defer ppm.deinit(gpa);
+        for (want, 0..) |v, i| try testing.expectEqual(misc.to8(v), ppm.pixels.asBytes()[i * 3]);
+    };
+}
+
 /// The scaling every sample went through before `Scaler`: one division each.
 fn referenceScale(v: u32, max: u32) u8 {
     return @intCast(@min(255, (v * 255 + max / 2) / max));
@@ -747,7 +920,14 @@ fn decodeReference(data: []const u8, out: []u8) Error!void {
                 o.* = if ((raster[y * row_bytes + x / 8] >> @intCast(7 - x % 8)) & 1 == 1) 0 else 255;
             };
         },
-        .P2, .P3 => {
+        .P2, .P3 => if (hdr.tag == .g16) {
+            var pos = hdr.data_start;
+            for (std.mem.bytesAsSlice(u16, out)) |*o| {
+                const v = try readUint(data, &pos);
+                if (v > hdr.max_val) return Error.InvalidNum;
+                o.* = referenceScale16(v, hdr.max_val);
+            }
+        } else {
             var pos = hdr.data_start;
             for (out) |*o| {
                 const v = try readUint(data, &pos);
@@ -757,7 +937,10 @@ fn decodeReference(data: []const u8, out: []u8) Error!void {
         },
         .P5, .P6, .P7 => {
             const raster = data[hdr.data_start..];
-            if (hdr.max_val <= 255) {
+            if (hdr.tag == .g16) {
+                if (raster.len < out.len) return Error.UnexpectedEndOfData;
+                for (std.mem.bytesAsSlice(u16, out), 0..) |*o, i| o.* = referenceScale16(std.mem.readInt(u16, raster[i * 2 ..][0..2], .big), hdr.max_val);
+            } else if (hdr.max_val <= 255) {
                 if (raster.len < out.len) return Error.UnexpectedEndOfData;
                 for (out, raster[0..out.len]) |*o, v| o.* = referenceScale(v, hdr.max_val);
             } else {

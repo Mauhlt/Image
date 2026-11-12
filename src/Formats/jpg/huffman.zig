@@ -112,6 +112,25 @@ pub const DecTable = struct {
     }
 };
 
+/// Builds the tables of one DHT segment body into `dc` (class 0) / `ac` (class 1).
+pub fn parseDht(seg: []const u8, dc: *[4]?DecTable, ac: *[4]?DecTable) Error!void {
+    var sp: usize = 0;
+    while (sp < seg.len) {
+        const class = seg[sp] >> 4;
+        const id = seg[sp] & 0xF;
+        sp += 1;
+        if (class > 1 or id > 3 or sp + 16 > seg.len) return Error.InvalidHeader;
+        const bits = seg[sp..][0..16].*;
+        sp += 16;
+        var total: usize = 0;
+        for (bits) |b| total += b;
+        if (sp + total > seg.len) return Error.InvalidChunkLen;
+        const table = try DecTable.init(.{ .bits = bits, .values = seg[sp..][0..total] });
+        sp += total;
+        if (class == 0) dc[id] = table else ac[id] = table;
+    }
+}
+
 pub const EncEntry = struct { code: u16 = 0, len: u8 = 0 };
 
 /// Encoding table indexed by symbol.

@@ -1,9 +1,12 @@
 //! PNG: all color types (gray, gray+alpha, rgb, rgba, palette), bit depths 1-16
-//! (16-bit is reduced to 8 by dropping the low byte), tRNS transparency,
+//! (16-bit gray without tRNS decodes to `.g16`; other 16-bit layouts are reduced to 8
+//! bits by dropping the low byte), tRNS transparency,
 //! multiple (and zero-length) IDAT chunks, Adam7 interlacing.
 //! Unknown critical chunks are rejected, unknown ancillary chunks skipped.
-//! Encode: 8-bit g / ga / rgb / rgba (bgr(a)/ycbcr(a) are converted), adaptive per-row filter.
+//! Encode: 8-bit g / ga / rgb / rgba (bgr(a)/ycbcr(a) are converted), 16-bit gray from
+//! `.g16`, adaptive per-row filter.
 const std = @import("std");
+const inflate = @import("../../inflate/inflate.zig");
 const Error = @import("../error.zig").Error;
 
 const Chunk = @import("chunk.zig");
@@ -13,6 +16,8 @@ const filter = @import("filter.zig");
 const Image = @import("../../root.zig");
 const Info = @import("../../info.zig");
 const PixelTag = @import("../../Colors/pixels.zig").PixelTag;
+const simd = @import("../../Colors/simd.zig");
+const native_endian = @import("builtin").cpu.arch.endian();
 
 pub const SIG = [_]u8{ 137, 80, 78, 71, 13, 10, 26, 10 };
 
@@ -30,7 +35,8 @@ const Parsed = struct {
     fn tag(self: *const Parsed) PixelTag {
         const has_trns = self.trns.len > 0;
         return switch (self.hdr.color_type) {
-            .g => if (has_trns) .ga else .g,
+            // a tRNS key needs alpha, which `.g16` lacks: that stays 8-bit `.ga`
+            .g => if (has_trns) .ga else if (self.hdr.bit_depth == .bit16) .g16 else .g,
             .ga => .ga,
             .rgb => if (has_trns) .rgba else .rgb,
             .rgba => .rgba,
@@ -161,12 +167,15 @@ fn decodeWith(comptime Rows: type, scratch: std.mem.Allocator, data: []const u8,
     {
         const idat = try idatStream(scratch, data, &p);
         defer if (p.idat_chunks > 1) scratch.free(idat);
-        var reader: std.Io.Reader = .fixed(idat);
-        // no window buffer: inflate straight into `raw`, which also serves as the
-        // history, instead of through a 64 KiB window that is then copied out
-        var decompress: std.compress.flate.Decompress = .init(&reader, .zlib, &.{});
-        var writer: std.Io.Writer = .fixed(raw);
-        decompress.reader.streamExact(&writer, raw.len) catch return Error.DecompressionFailed;
+        // one-shot inflate straight into `raw` (also the match history), Adler-32
+        // checked; a stream that is truncated or runs on past the image data falls
+        // back to streaming exactly `raw.len` bytes, as other decoders tolerate it
+        if (inflate.decompress(.zlib, idat, raw, .{})) |r| {
+            if (r.out_len != raw.len) try streamInflate(idat, raw);
+        } else |e| switch (e) {
+            error.OutputTooSmall, error.EndOfStream => try streamInflate(idat, raw),
+            else => return Error.DecompressionFailed,
+        }
     }
 
     // defilter in place, then scatter each row into its pass's pixel positions
@@ -247,17 +256,30 @@ fn sumAbs(row: []const u8) u64 {
     return sum;
 }
 
+/// std's streaming inflate of exactly `raw.len` bytes (no checksum check).
+fn streamInflate(idat: []const u8, raw: []u8) !void {
+    var reader: std.Io.Reader = .fixed(idat);
+    var decompress: std.compress.flate.Decompress = .init(&reader, .zlib, &.{});
+    var writer: std.Io.Writer = .fixed(raw);
+    decompress.reader.streamExact(&writer, raw.len) catch return Error.DecompressionFailed;
+}
+
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
-    // PNG stores g / ga / rgb / rgba; convert anything else
+    // PNG stores g / ga / rgb / rgba (8-bit) and g16; convert anything else
     const tag: PixelTag = switch (img.pixels) {
         .g => .g,
+        .g16 => .g16,
         .ga => .ga,
         .rgb, .bgr, .ycbcr => .rgb,
         .rgba, .bgra, .ycbcra => .rgba,
     };
     const converted = if (std.meta.activeTag(img.pixels) == tag) null else try img.pixels.convertV(tag, gpa);
     defer if (converted) |c| c.deinit(gpa);
-    const src = (converted orelse img.pixels).asBytes();
+    // 16-bit samples are stored big-endian
+    const swapped: ?[]u8 = if (tag == .g16 and native_endian == .little) try gpa.alloc(u8, img.pixels.asBytes().len) else null;
+    defer if (swapped) |s| gpa.free(s);
+    if (swapped) |s| simd.nativeFromBig16(img.pixels.asBytes(), s);
+    const src = swapped orelse (converted orelse img.pixels).asBytes();
 
     const hdr: Header = .fromImage(img);
     const bpp: usize = tag.bytesPerPixel();
@@ -622,7 +644,8 @@ test "png matches Windows' decoder" {
         defer ref.deinit(gpa);
         try std.testing.expectEqual(ref.width, img.width);
         try std.testing.expectEqual(ref.height, img.height);
-        // WIC rounds 16-bit gray to 8 bits where we keep the high byte: some are off by one
+        // 16-bit gray decodes to .g16, which `convert` rounds to 8 bits as round(v / 257);
+        // WIC narrows a little differently: some are off by one
         const tol: u8 = if (comptime std.mem.eql(u8, name, "basi0g16")) 1 else 0;
         const a = std.mem.bytesAsSlice([4]u8, img.pixels.asBytes());
         const b = std.mem.bytesAsSlice([4]u8, ref.pixels.asBytes());
@@ -747,3 +770,48 @@ test "png malformed tRNS is ignored" {
         try expectSamePixels(&ref, &img);
     }
 }
+
+test "png 16-bit gray decodes to g16 and round trips exactly" {
+    const gpa = std.testing.allocator;
+    var threaded: std.Io.Threaded = .init(gpa, .{});
+    defer threaded.deinit();
+    const io = threaded.io();
+    // PngSuite's 16-bit gray: the samples as stored, big-endian in the file
+    const data = try readFixture(io, gpa, "basn0g16.png");
+    defer gpa.free(data);
+    const img = try Image.decode(.png, gpa, data);
+    defer img.deinit(gpa);
+    try std.testing.expectEqual(PixelTag.g16, std.meta.activeTag(img.pixels));
+    try std.testing.expectEqual(vk_r16, img.fmt);
+
+    var prng: std.Random.DefaultPrng = .init(0x916);
+    const random = prng.random();
+    const N = @import("../../Colors/misc.zig").N;
+    for ([_]u32{ 1, 3, N - 1, N, N + 1, 2 * N + 3, 37 }) |w| {
+        const h = 3;
+        const bytes = try gpa.alloc(u8, @as(usize, w) * h * 2);
+        const samples = std.mem.bytesAsSlice(u16, bytes);
+        for (samples, 0..) |*s, i| s.* = switch (i % 5) {
+            0 => 0,
+            1 => 1,
+            2 => 4095,
+            3 => 65535,
+            else => random.int(u16),
+        };
+        const src: Image = .{ .width = w, .height = h, .pixels = .fromBytes(.g16, bytes), .fmt = vk_r16 };
+        defer src.deinit(gpa);
+        var aw: std.Io.Writer.Allocating = .init(gpa);
+        defer aw.deinit();
+        try src.encode(.png, &aw.writer, gpa);
+        // stored as 16-bit gray, big-endian
+        const hdr: Header = try .decode(try Chunk.decode(aw.written()[SIG.len..]));
+        try std.testing.expectEqual(Header.BitDepth.bit16, hdr.bit_depth);
+        try std.testing.expectEqual(Header.ColorType.g, hdr.color_type);
+        try expectMatchesOracle(gpa, aw.written());
+        const back = try Image.decode(.png, gpa, aw.written());
+        defer back.deinit(gpa);
+        try expectSamePixels(&src, &back);
+    }
+}
+
+const vk_r16 = Info.fmtFor(.g16, true);

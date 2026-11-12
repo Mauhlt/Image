@@ -33,11 +33,10 @@ pub const Format = enum {
         };
     }
 
-    /// null for BC2: the Vulkan bindings in use have no bc2_* entries (VK values 135/136)
-    pub fn vkFormat(self: Format, srgb: bool) ?vk.Format {
+    pub fn vkFormat(self: Format, srgb: bool) vk.Format {
         return switch (self) {
             .bc1 => if (srgb) .bc1_rgba_srgb_block else .bc1_rgba_unorm_block,
-            .bc2 => null,
+            .bc2 => if (srgb) .bc2_srgb_block else .bc2_unorm_block,
             .bc3 => if (srgb) .bc3_srgb_block else .bc3_unorm_block,
             .bc4 => .bc4_unorm_block,
             .bc5 => .bc5_unorm_block,
@@ -50,6 +49,8 @@ pub const Format = enum {
         return switch (f) {
             .bc1_rgb_unorm_block, .bc1_rgba_unorm_block => .{ .bc1, false },
             .bc1_rgb_srgb_block, .bc1_rgba_srgb_block => .{ .bc1, true },
+            .bc2_unorm_block => .{ .bc2, false },
+            .bc2_srgb_block => .{ .bc2, true },
             .bc3_unorm_block => .{ .bc3, false },
             .bc3_srgb_block => .{ .bc3, true },
             .bc4_unorm_block, .bc4_snorm_block => .{ .bc4, false },

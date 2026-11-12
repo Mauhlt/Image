@@ -7,7 +7,6 @@ const std = @import("std");
 const Error = @import("../error.zig").Error;
 const Texture = @import("../../texture.zig");
 const Header = @import("header.zig");
-const bc = @import("../bc/bc.zig");
 
 pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Texture {
     const hdr: Header = try .decode(data);
@@ -27,15 +26,6 @@ pub fn decode(gpa: std.mem.Allocator, data: []const u8) !Texture {
     var pos = hdr.data_offset;
     for (0..tex.layers) |layer| for (0..tex.faces) |face| for (0..tex.levels) |level| {
         const dst = tex.slice(@intCast(level), @intCast(layer), @intCast(face));
-        if (hdr.bc2) {
-            const w = tex.levelWidth(@intCast(level));
-            const h = tex.levelHeight(@intCast(level));
-            const n = bc.encodedLen(.bc2, w, h);
-            if (pos + n > data.len) return Error.UnexpectedEndOfData;
-            try bc.decodeImage(.bc2, data[pos..][0..n], w, h, dst);
-            pos += n;
-            continue;
-        }
         if (pos + dst.len > data.len) return Error.UnexpectedEndOfData;
         @memcpy(dst, data[pos..][0..dst.len]);
         pos += dst.len;
