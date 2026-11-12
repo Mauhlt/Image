@@ -1,6 +1,9 @@
 const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
+    // Only passed on to Vulkan (Image's modules inherit the optimize mode
+    // of whatever compiles them).
+    const optimize = b.standardOptimizeOption(.{});
 
     // SIMD tuning width in bytes; unset = std.simd.suggestVectorLength(u8) for the target.
     // Set it to run a wider (or narrower) build's vector code on this machine.
@@ -26,13 +29,10 @@ pub fn build(b: *std.Build) void {
     mod.addImport("build_options", options_mod);
     mod.addImport("ImageCheck", check_mod);
 
-    // Libraries
-    const libraries = [_][]const u8{"Vulkan"};
-    for (libraries) |library| {
-        const dep = b.dependency(library, .{});
-        const new_mod = dep.module(library);
-        mod.addImport(library, new_mod);
-    }
+    // Vulkan, with the same arguments other packages (Renderer) pass, so a
+    // program using Image and Renderer gets one shared "Vulkan" module:
+    // a source file may belong to only one module per compilation.
+    mod.addImport("Vulkan", b.dependency("Vulkan", .{ .target = target, .optimize = optimize }).module("Vulkan"));
 
     const mod_tests = b.addTest(.{
         .root_module = mod,
@@ -63,11 +63,7 @@ pub fn build(b: *std.Build) void {
     });
     mod_release.addImport("build_options", options_mod);
     mod_release.addImport("ImageCheck", check_mod);
-    for (libraries) |library| {
-        const dep = b.dependency(library, .{});
-        const new_mod = dep.module(library);
-        mod_release.addImport(library, new_mod);
-    }
+    mod_release.addImport("Vulkan", b.dependency("Vulkan", .{ .target = target, .optimize = .ReleaseFast }).module("Vulkan"));
 
     const mod_tests_release = b.addTest(.{
         .root_module = mod_release,
