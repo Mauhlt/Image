@@ -181,7 +181,7 @@ pub const Decompressor = struct {
         var i: usize = 0;
         while (i < total) {
             b.refill();
-            const e = d.pre[b.buf & mask(pre_bits)];
+            const e = d.pre[low(b.buf, pre_bits)];
             if (e & EXC != 0) return error.InvalidCode;
             b.consume(e & 0xff);
             const sym = e >> 16;
@@ -363,6 +363,12 @@ inline fn mask(n: anytype) u64 {
     return (@as(u64, 1) << @intCast(n)) - 1;
 }
 
+/// The low `n` bits of `v` as a table index (n <= 15, so it fits any usize:
+/// wasm32 and other 32-bit targets index with u32).
+inline fn low(v: u64, n: anytype) usize {
+    return @truncate(v & mask(n));
+}
+
 // ───────────────────────────── blocks ─────────────────────────────
 
 fn stored(b: *Bits, o: *Out) Error!void {
@@ -400,10 +406,10 @@ fn huffmanBlock(b: *Bits, o: *Out, t: *const Tables) Error!void {
         }
         // one symbol, every step checked
         b.refill();
-        var e = lt[b.buf & mask(lit_bits)];
+        var e = lt[low(b.buf, lit_bits)];
         if (e & SUB != 0) {
             b.consume(e & 0xff);
-            e = lt[(e >> 16) + (b.buf & mask((e >> 8) & 0xf))];
+            e = lt[(e >> 16) + low(b.buf, (e >> 8) & 0xf)];
         }
         const saved = b.buf;
         b.consume(e & 0xff);
@@ -419,10 +425,10 @@ fn huffmanBlock(b: *Bits, o: *Out, t: *const Tables) Error!void {
         }
         const len = (e >> 16) + extra(saved, e);
         b.refill();
-        var de = dt[b.buf & mask(dist_bits)];
+        var de = dt[low(b.buf, dist_bits)];
         if (de & SUB != 0) {
             b.consume(de & 0xff);
-            de = dt[(de >> 16) + (b.buf & mask((de >> 8) & 0xf))];
+            de = dt[(de >> 16) + low(b.buf, (de >> 8) & 0xf)];
         }
         if (de & EXC != 0) return if (b.overread()) error.EndOfStream else error.InvalidCode;
         const dsaved = b.buf;
@@ -470,7 +476,7 @@ fn fastLoop(b: *Bits, o: *Out, t: *const Tables, out_stop: usize) Error!bool {
     buf |= std.mem.readInt(u64, in[ip..][0..8], .little) << @as(u6, @truncate(left));
     ip += 7 - ((left >> 3) & 7);
     left |= 56;
-    var e = t.lit[buf & mask(lit_bits)];
+    var e = t.lit[low(buf, lit_bits)];
     loop: while (ip <= in_last and op <= out_last) {
         // refill: one 8-byte load, 56..63 valid bits after (the low bits `e` was
         // looked up from are unchanged)
@@ -489,21 +495,21 @@ fn fastLoop(b: *Bits, o: *Out, t: *const Tables, out_stop: usize) Error!bool {
             // (<= 11 + 4 + 5 bits), fit in 56
             out[op] = @truncate(e >> 16);
             op += 1;
-            e = t.lit[buf & mask(lit_bits)];
+            e = t.lit[low(buf, lit_bits)];
             saved = buf;
             buf >>= @as(u6, @truncate(e));
             left -%= e;
             if (e & LITERAL != 0) {
                 out[op] = @truncate(e >> 16);
                 op += 1;
-                e = t.lit[buf & mask(lit_bits)];
+                e = t.lit[low(buf, lit_bits)];
                 saved = buf;
                 buf >>= @as(u6, @truncate(e));
                 left -%= e;
                 if (e & LITERAL != 0) {
                     out[op] = @truncate(e >> 16);
                     op += 1;
-                    e = t.lit[buf & mask(lit_bits)];
+                    e = t.lit[low(buf, lit_bits)];
                     continue :loop;
                 }
             }
@@ -511,14 +517,14 @@ fn fastLoop(b: *Bits, o: *Out, t: *const Tables, out_stop: usize) Error!bool {
         // `e` is consumed and `saved` holds the bits from before it
         if (e & EXC != 0) {
             if (e & SUB != 0) {
-                e = t.lit[(e >> 16) + (buf & mask((e >> 8) & 0xf))];
+                e = t.lit[(e >> 16) + low(buf, (e >> 8) & 0xf)];
                 saved = buf;
                 buf >>= @as(u6, @truncate(e));
                 left -%= e;
                 if (e & LITERAL != 0) {
                     out[op] = @truncate(e >> 16);
                     op += 1;
-                    e = t.lit[buf & mask(lit_bits)];
+                    e = t.lit[low(buf, lit_bits)];
                     continue :loop;
                 }
             }
@@ -535,19 +541,19 @@ fn fastLoop(b: *Bits, o: *Out, t: *const Tables, out_stop: usize) Error!bool {
         buf |= std.mem.readInt(u64, in[ip..][0..8], .little) << @as(u6, @truncate(left));
         ip += 7 - ((left >> 3) & 7);
         left |= 56;
-        var de = t.dist[buf & mask(dist_bits)];
+        var de = t.dist[low(buf, dist_bits)];
         if (de & EXC != 0) {
             if (de & SUB == 0) return error.InvalidCode;
             buf >>= @as(u6, @truncate(de));
             left -%= de;
-            de = t.dist[(de >> 16) + (buf & mask((de >> 8) & 0xf))];
+            de = t.dist[(de >> 16) + low(buf, (de >> 8) & 0xf)];
             if (de & EXC != 0) return error.InvalidCode;
         }
         saved = buf;
         buf >>= @as(u6, @truncate(de));
         left -%= de;
         const dist = (de >> 16) + extraFast(saved, de);
-        e = t.lit[buf & mask(lit_bits)]; // >= 28 bits left
+        e = t.lit[low(buf, lit_bits)]; // >= 28 bits left
 
         if (dist > op) {
             // reaches into `head` or past the member start: checked path

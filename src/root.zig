@@ -36,6 +36,10 @@ pub const PPM = @import("Formats/ppm/ppm.zig");
 pub const QOI = @import("Formats/qoi/qoi.zig");
 pub const TGA = @import("Formats/tga/tga.zig");
 pub const WEBP = @import("Formats/webp/webp.zig");
+/// Pre-decode validation for every format above (and the size limits a
+/// caller wants): `check.check(bytes, limits)` -> format, size, decode cost.
+/// Also its own module, "ImageCheck", with no Vulkan dependency.
+pub const check = @import("ImageCheck");
 /// One-shot DEFLATE / zlib / gzip decoder with checksum verification, plus fast
 /// CRC-32 and Adler-32 (`inflate.crc32`, `inflate.adler32`).
 pub const inflate = @import("inflate/inflate.zig");
@@ -65,6 +69,18 @@ pub fn Codec(comptime tag: ImageTag) ?type {
         .heic => HEIC,
         .gif, .paint, .tif => null,
     };
+}
+
+/// The codec tag for a format `check` found, or null for formats that
+/// are not codecs (textures: see `Texture`) or not supported.
+pub fn tagOf(fmt: check.Format) ?ImageTag {
+    const tag = std.meta.stringToEnum(ImageTag, @tagName(fmt)) orelse return null;
+    return if (isSupported(tag)) tag else null;
+}
+
+/// The codec for `data`, from its signature (`check.detect`).
+pub fn detect(data: []const u8) ?ImageTag {
+    return tagOf(check.detect(data) orelse return null);
 }
 
 pub fn isSupported(tag: ImageTag) bool {
@@ -227,6 +243,56 @@ test {
     _ = @import("Formats/jpegls/jpegls.zig");
     _ = @import("inflate/inflate.zig");
     inline for (.{ BMP, HEIC, JPG, JPG_LOSSLESS, JPEGLS, PAM, PBM, PGM, PNG, PNM, PPM, QOI, TGA, WEBP }) |C| std.testing.refAllDecls(C);
+}
+
+// Every reference file: whatever Image decodes, `check` accepts with the same
+// size (HEIC: before the clean-aperture crop, so at least the decoded size),
+// and a PNG whose structure Image rejects, `check` rejects too.
+test "check agrees with the decoders on every reference file" {
+    const gpa = std.testing.allocator;
+    const io = std.testing.io;
+    var dir = try std.Io.Dir.cwd().openDir(io, "src/Data/Read", .{ .iterate = true });
+    defer dir.close(io);
+    var walker = try dir.walk(gpa);
+    defer walker.deinit();
+    var checked: usize = 0;
+    while (try walker.next(io)) |entry| {
+        if (entry.kind != .file) continue;
+        const tag = tagFromExt(entry.basename) catch continue;
+        if (!isSupported(tag)) continue;
+        const data = try dir.readFileAlloc(io, entry.path, gpa, .limited(64 << 20));
+        defer gpa.free(data);
+        const fmt: check.Format = switch (tag) {
+            .pnm => check.detect(data) orelse .ppm,
+            inline else => |t| if (@hasField(check.Format, @tagName(t))) @field(check.Format, @tagName(t)) else unreachable,
+        };
+        const decoded = decode(tag, gpa, data) catch |err| {
+            if (tag == .png) {
+                if (PNG.info(data)) |_| {} else |_| if (check.checkAs(.png, data, .none)) |_| {
+                    std.debug.print("{s}: Image rejects ({t}), check accepts\n", .{ entry.path, err });
+                    return error.TestUnexpectedResult;
+                } else |_| {}
+            }
+            continue;
+        };
+        defer decoded.deinit(gpa);
+        const ci = check.checkAs(fmt, data, .none) catch |err| {
+            std.debug.print("{s}: decodes, but check says {t}\n", .{ entry.path, err });
+            return err;
+        };
+        if (tag == .heic) {
+            try std.testing.expect(ci.width >= decoded.width and ci.height >= decoded.height);
+        } else {
+            std.testing.expectEqual(decoded.width, ci.width) catch |e| {
+                std.debug.print("{s}: width\n", .{entry.path});
+                return e;
+            };
+            try std.testing.expectEqual(decoded.height, ci.height);
+        }
+        if (tag != .tga) try std.testing.expectEqual(fmt, check.detect(data).?);
+        checked += 1;
+    }
+    try std.testing.expect(checked > 100);
 }
 
 /// Test helper: converts both images to `tag` and compares pixels.

@@ -435,7 +435,6 @@ fn decodeRebuilt(gpa: std.mem.Allocator, png: []const u8, edit: Rebuild) !Image 
 
 test {
     _ = filter;
-    _ = @import("crc.zig");
     _ = @import("expand.zig");
     _ = @import("scalar.zig");
 }

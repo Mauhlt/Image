@@ -3,32 +3,13 @@ const Error = @import("../error.zig").Error;
 const Image = @import("../../root.zig");
 const Chunk = @import("chunk.zig");
 
+/// The IHDR rules live in Image.check (shared with the pre-decode checker).
+const ihdr = @import("ImageCheck").png;
+
 /// Matches same enum names as pixels
-pub const ColorType = enum(u8) {
-    g = 0,
-    rgb = 2,
-    i = 3, // palette indices
-    ga = 4,
-    rgba = 6,
-
-    pub fn channels(self: ColorType) u8 {
-        return switch (self) {
-            .g, .i => 1,
-            .ga => 2,
-            .rgb => 3,
-            .rgba => 4,
-        };
-    }
-};
-
+pub const ColorType = ihdr.ColorType;
 /// Bits per color
-pub const BitDepth = enum(u8) {
-    bit1 = 1,
-    bit2 = 2,
-    bit4 = 4,
-    bit8 = 8,
-    bit16 = 16,
-};
+pub const BitDepth = ihdr.BitDepth;
 
 pub const CompressionMethod = enum(u8) {
     none = 0,
@@ -42,10 +23,7 @@ pub const FilterMethod = enum(u8) {
     paeth = 4,
 };
 
-pub const InterlaceMethod = enum(u8) {
-    none = 0,
-    adam7 = 1,
-};
+pub const InterlaceMethod = ihdr.InterlaceMethod;
 
 width: u32, // 4
 height: u32, // 8
@@ -57,7 +35,7 @@ interlace_method: InterlaceMethod, // 13
 
 /// Bits per pixel in the (filtered) data stream.
 pub fn bitsPerPixel(self: *const @This()) usize {
-    return @as(usize, self.color_type.channels()) * @intFromEnum(self.bit_depth);
+    return @as(usize, self.color_type.channels()) * @backingInt(self.bit_depth);
 }
 
 /// Bytes per scanline, excluding the filter byte.
@@ -77,32 +55,23 @@ pub fn decode(chunk: Chunk) !@This() {
     const height = std.mem.readInt(u32, chunk.data[4..][0..4], .big);
     _, const overflow = @mulWithOverflow(width, height);
     if (overflow > 0) return Error.Overflow;
-    const bit_depth = std.enums.fromInt(BitDepth, chunk.data[8]) orelse //
-        return Error.UnsupportedBitsPerPixel;
-    const color_type = std.enums.fromInt(ColorType, chunk.data[9]) orelse //
-        return Error.UnsupportedColorspace;
-    const compression_method = std.enums.fromInt(CompressionMethod, chunk.data[10]) orelse //
-        return Error.UnsupportedCompression;
-    const filter_method = std.enums.fromInt(FilterMethod, chunk.data[11]) orelse //
-        return Error.UnsupportedFilterMethod;
-    const interlace_method = std.enums.fromInt(InterlaceMethod, chunk.data[12]) orelse //
-        return Error.UnsupportedInterlaceMethod;
-    if (width == 0 or height == 0) return Error.InvalidDimensions;
-    // only some (color type, depth) pairs are legal
-    const ok = switch (color_type) {
-        .g => true,
-        .i => @intFromEnum(bit_depth) <= 8,
-        .rgb, .ga, .rgba => @intFromEnum(bit_depth) >= 8,
+    const h = ihdr.Header.parse(chunk.data) catch |e| return switch (e) {
+        error.InvalidBitDepth => Error.UnsupportedBitsPerPixel,
+        error.InvalidColorType => Error.UnsupportedColorspace,
+        error.InvalidCompression => Error.UnsupportedCompression,
+        error.InvalidFilterMethod => Error.UnsupportedFilterMethod,
+        error.InvalidInterlaceMethod => Error.UnsupportedInterlaceMethod,
+        error.InvalidDimensions => Error.InvalidDimensions,
+        else => Error.InvalidHeader,
     };
-    if (!ok) return Error.UnsupportedBitsPerPixel;
     return .{
-        .width = width,
-        .height = height,
-        .bit_depth = bit_depth,
-        .color_type = color_type,
-        .compression_method = compression_method,
-        .filter_method = filter_method,
-        .interlace_method = interlace_method,
+        .width = h.width,
+        .height = h.height,
+        .bit_depth = h.bit_depth,
+        .color_type = h.color_type,
+        .compression_method = .none,
+        .filter_method = .none,
+        .interlace_method = h.interlace_method,
     };
 }
 
@@ -128,11 +97,11 @@ pub fn fromImage(img: *const Image) @This() {
 pub fn encode(self: *const @This(), buf: *[13]u8) !void {
     std.mem.writeInt(u32, buf[0..4], self.width, .big);
     std.mem.writeInt(u32, buf[4..8], self.height, .big);
-    buf[8] = @intFromEnum(self.bit_depth);
-    buf[9] = @intFromEnum(self.color_type);
-    buf[10] = @intFromEnum(self.compression_method);
-    buf[11] = @intFromEnum(self.filter_method);
-    buf[12] = @intFromEnum(self.interlace_method);
+    buf[8] = @backingInt(self.bit_depth);
+    buf[9] = @backingInt(self.color_type);
+    buf[10] = @backingInt(self.compression_method);
+    buf[11] = @backingInt(self.filter_method);
+    buf[12] = @backingInt(self.interlace_method);
 }
 
 pub fn format(self: @This(), w: *std.Io.Writer) !void {
@@ -150,10 +119,10 @@ pub fn formatBuf(buf: *const [13]u8) !void {
     std.debug.print("{} - {}\n{t}\n{t}\n{t}\n{t}\n{t}\n", .{
         std.mem.readInt(u32, buf[0..4], .big),
         std.mem.readInt(u32, buf[4..8], .big),
-        @as(BitDepth, @enumFromInt(buf[8])),
-        @as(ColorType, @enumFromInt(buf[9])),
-        @as(CompressionMethod, @enumFromInt(buf[10])),
-        @as(FilterMethod, @enumFromInt(buf[11])),
-        @as(InterlaceMethod, @enumFromInt(buf[12])),
+        @as(BitDepth, @fromBackingInt(@intCast(buf[8]))),
+        @as(ColorType, @fromBackingInt(@intCast(buf[9]))),
+        @as(CompressionMethod, @fromBackingInt(@intCast(buf[10]))),
+        @as(FilterMethod, @fromBackingInt(@intCast(buf[11]))),
+        @as(InterlaceMethod, @fromBackingInt(@intCast(buf[12]))),
     });
 }
