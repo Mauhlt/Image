@@ -61,3 +61,13 @@ NEED TO SUPPLY YOUR OWN RENDERER FOR NOW.
 5. Visualize data 
 6. Apply Filters 
 7. Extract Color Palette 
+
+## Validating untrusted files: `Image.check`
+`src/check` (module "ImageCheck", re-exported as `Image.check`) validates an
+encoded image's structure before anything is decoded, for every format
+above: `check.check(bytes, limits)` detects the format from its signature,
+walks its header / chunks / segments / boxes and returns the format, the
+size and an estimate of the decoder's memory, or a precise error
+(`InvalidCrc`, `Truncated`, `ImageTooLarge`, ...). `checkAs` takes the
+format from the caller, `checkHeader` only reads as far as the size.
+It needs only std (no Vulkan) and builds for wasm32-freestanding.
