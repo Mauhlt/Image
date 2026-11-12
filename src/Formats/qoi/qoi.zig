@@ -72,7 +72,7 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
 
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     const tag: PixelTag = switch (img.pixels) {
-        .g, .rgb, .bgr, .ycbcr => .rgb,
+        .g, .g16, .rgb, .bgr, .ycbcr => .rgb, // 8 bits per channel only
         .ga, .rgba, .bgra, .ycbcra => .rgba,
     };
     const converted = if (std.meta.activeTag(img.pixels) == tag) null else try img.pixels.convertV(tag, gpa);

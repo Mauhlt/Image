@@ -19,6 +19,8 @@ ac_tables: [4]?huffman.DecTable = @splat(null),
 restart_interval: u16 = 0,
 /// SOF2: coefficients arrive over several scans (see progressive.zig)
 progressive: bool = false,
+/// SOF3: a lossless frame; parsing stopped at its marker (lossless.zig reads it)
+lossless: bool = false,
 /// indices into `components`, in scan order
 scan: [4]u8 = undefined,
 n_scan: u8 = 0,
@@ -35,7 +37,7 @@ pub const ParseUntil = enum { frame, scan };
 
 /// `.frame` stops after SOF (cheap, for `info`), `.scan` parses through the first SOS.
 pub fn decode(data: []const u8, until: ParseUntil) Error!@This() {
-    if (data.len < 4 or data[0] != 0xFF or data[1] != @intFromEnum(Marker.SOI))
+    if (data.len < 4 or data[0] != 0xFF or data[1] != @backingInt(Marker.SOI))
         return Error.UnexpectedSignature;
     var hdr: @This() = .{};
     if (!try hdr.parse(data, 2, until)) return Error.MissingScan;
@@ -49,55 +51,31 @@ pub fn nextScan(self: *@This(), data: []const u8, pos: usize) Error!bool {
     return self.parse(data, pos, .scan);
 }
 
-/// Offset of the marker that ends the entropy-coded data starting at `start`
-/// (skipping stuffed 0xFF00 bytes and RSTn markers), or `data.len`.
-pub fn entropyEnd(data: []const u8, start: usize) usize {
-    var i = start;
-    while (i + 1 < data.len) : (i += 1) {
-        if (data[i] != 0xFF) continue;
-        const m = data[i + 1];
-        if (m == 0x00 or (m >= 0xD0 and m <= 0xD7)) {
-            i += 1;
-            continue;
-        }
-        if (m == 0xFF) continue; // fill byte before a marker
-        return i;
-    }
-    return data.len;
-}
+pub const entropyEnd = misc.entropyEnd;
 
 /// Parses segments from the marker at `start` until a frame (`.frame`) or a
-/// scan (`.scan`) is found (true), or EOI (false).
+/// scan (`.scan`) is found (true), or EOI (false). A lossless (SOF3) frame stops
+/// the parse at once with `lossless` set: lossless.zig reads those streams.
 fn parse(self: *@This(), data: []const u8, start: usize, until: ParseUntil) Error!bool {
-    var pos = start;
-    while (true) {
-        // markers may be preceded by any number of 0xFF fill bytes
-        if (pos >= data.len or data[pos] != 0xFF) return Error.InvalidMarker;
-        while (pos < data.len and data[pos] == 0xFF) pos += 1;
-        if (pos >= data.len) return Error.UnexpectedEndOfData;
-        const marker: Marker = @enumFromInt(data[pos]);
-        pos += 1;
-        switch (marker) {
-            .SOI, .RST0, .RST1, .RST2, .RST3, .RST4, .RST5, .RST6, .RST7 => continue,
+    var it: misc.Segments = .{ .data = data, .pos = start };
+    while (try it.next()) |s| {
+        const seg = s.body;
+        switch (s.marker) {
+            .SOI, .TEM, .RST0, .RST1, .RST2, .RST3, .RST4, .RST5, .RST6, .RST7 => {},
             .EOI => return false,
-            else => {},
-        }
-        if (pos + 2 > data.len) return Error.UnexpectedEndOfData;
-        const seg_len = std.mem.readInt(u16, data[pos..][0..2], .big);
-        if (seg_len < 2 or pos + seg_len > data.len) return Error.UnexpectedEndOfData;
-        const seg = data[pos + 2 .. pos + seg_len];
-        pos += seg_len;
-
-        switch (marker) {
             .SOF0, .SOF1, .SOF2 => {
                 try self.decodeFrame(seg);
-                self.progressive = marker == .SOF2;
+                self.progressive = s.marker == .SOF2;
                 if (until == .frame) return true;
             },
-            // differential, lossless and arithmetic-coded frames
-            .SOF3, .SOF5, .SOF6, .SOF7, .SOF9, .SOF10, .SOF11, .SOF13, .SOF14, .SOF15 => return Error.UnsupportedFeature,
+            .SOF3 => {
+                self.lossless = true;
+                return true;
+            },
+            // differential and arithmetic-coded frames
+            .SOF5, .SOF6, .SOF7, .SOF9, .SOF10, .SOF11, .SOF13, .SOF14, .SOF15 => return Error.UnsupportedFeature,
             .DQT => try self.decodeQuant(seg),
-            .DHT => try self.decodeHuffman(seg),
+            .DHT => try huffman.parseDht(seg, &self.dc_tables, &self.ac_tables),
             .DRI => {
                 if (seg.len < 2) return Error.InvalidChunkLen;
                 self.restart_interval = std.mem.readInt(u16, seg[0..2], .big);
@@ -105,12 +83,13 @@ fn parse(self: *@This(), data: []const u8, start: usize, until: ParseUntil) Erro
             .SOS => {
                 if (self.n_components == 0) return Error.MissingFrame;
                 try self.decodeScan(seg);
-                self.scan_start = pos;
+                self.scan_start = it.pos;
                 return true;
             },
             else => {}, // APPn, COM, ... skipped
         }
     }
+    return Error.InvalidMarker; // ran out of data before a frame / scan / EOI
 }
 
 fn decodeFrame(self: *@This(), seg: []const u8) Error!void {
@@ -154,24 +133,6 @@ fn decodeQuant(self: *@This(), seg: []const u8) Error!void {
             sp += 128;
         }
         self.qtables[tq] = table;
-    }
-}
-
-fn decodeHuffman(self: *@This(), seg: []const u8) Error!void {
-    var sp: usize = 0;
-    while (sp < seg.len) {
-        const class = seg[sp] >> 4;
-        const id = seg[sp] & 0xF;
-        sp += 1;
-        if (class > 1 or id > 3 or sp + 16 > seg.len) return Error.InvalidHeader;
-        const bits = seg[sp..][0..16].*;
-        sp += 16;
-        var total: usize = 0;
-        for (bits) |b| total += b;
-        if (sp + total > seg.len) return Error.InvalidChunkLen;
-        const table = try huffman.DecTable.init(.{ .bits = bits, .values = seg[sp..][0..total] });
-        sp += total;
-        if (class == 0) self.dc_tables[id] = table else self.ac_tables[id] = table;
     }
 }
 

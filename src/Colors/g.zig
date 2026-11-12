@@ -1,6 +1,7 @@
 const std = @import("std");
 const Order = @import("order.zig").Singlets;
 const misc = @import("misc.zig");
+const G16 = @import("g16.zig").G16;
 
 const RGB = @import("rgb.zig").RGB;
 const BGR = @import("bgr.zig").BGR;
@@ -60,6 +61,11 @@ pub const G = extern struct {
 
     pub fn toYcbcra(self: G) YCbCrA {
         return .{ .y = self.g };
+    }
+
+    /// v * 257: exact, 255 -> 65535.
+    pub fn toG16(self: G) G16 {
+        return .{ .g = misc.from8(self.g) };
     }
 
     pub fn eql(self: G, other: G) bool {

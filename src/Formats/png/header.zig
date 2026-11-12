@@ -110,9 +110,9 @@ pub fn fromImage(img: *const Image) @This() {
     return .{
         .width = img.width,
         .height = img.height,
-        .bit_depth = .bit8,
+        .bit_depth = if (img.pixels == .g16) .bit16 else .bit8,
         .color_type = switch (img.pixels) {
-            .g => .g,
+            .g, .g16 => .g,
             .ga => .ga,
             .rgb => .rgb,
             .rgba => .rgba,

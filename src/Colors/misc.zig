@@ -14,6 +14,33 @@ const U8 = @Vector(N, u8); // based on NI
 const T: type = i32;
 const TV: type = @Vector(N, T);
 
+const U16 = @Vector(N, u16);
+const U32 = @Vector(N, u32);
+
+/// 16-bit gray -> 8 bits: round(v / 257) = round(v * 255 / 65535), exactly, so
+/// `to8(from8(x)) == x`. (t - t / 256) / 256 with t = v + 128 is that quotient
+/// without a division (checked against it for all 65536 inputs in the tests).
+pub fn to8(v: u16) u8 {
+    const t: u32 = @as(u32, v) + 128;
+    return @intCast((t - (t >> 8)) >> 8);
+}
+
+/// 8-bit gray -> 16 bits: v * 257 (0 -> 0, 255 -> 65535; both bytes = v).
+pub fn from8(v: u8) u16 {
+    return @as(u16, v) * 257;
+}
+
+/// `to8` on N samples (u32 lanes: t reaches 65663).
+pub fn to8V(v: U16) U8 {
+    const t = @as(U32, v) + @as(U32, @splat(128));
+    return @intCast((t - (t >> @splat(8))) >> @splat(8));
+}
+
+/// `from8` on N samples.
+pub fn from8V(v: U8) U16 {
+    return @as(U16, v) * @as(U16, @splat(257));
+}
+
 inline fn clamp(v: T) u8 {
     return @intCast(@min(@max(@as(T, @intCast(v)), @as(T, 0)), @as(T, 255)));
 }

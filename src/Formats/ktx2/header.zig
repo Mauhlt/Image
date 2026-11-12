@@ -2,6 +2,7 @@
 const std = @import("std");
 const vk = @import("Vulkan");
 const Error = @import("../error.zig").Error;
+const Info = @import("../../info.zig");
 
 pub const IDENTIFIER = [12]u8{ 0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, '\r', '\n', 0x1A, '\n' };
 pub const HEADER_SIZE = 80;
@@ -83,7 +84,7 @@ const Sample = struct { offset: u16, bits: u8, channel: u8, upper: u32 };
 
 /// Basic DFD block for the formats this library writes.
 pub fn writeDfd(fmt: vk.Format, out: *std.ArrayList(u8), gpa: std.mem.Allocator) !void {
-    const srgb = std.mem.indexOf(u8, @tagName(fmt), "srgb") != null;
+    const srgb = Info.isSrgb(fmt);
     var model: u8 = 1; // RGBSDA
     var block: [4]u8 = .{ 0, 0, 0, 0 }; // dimension - 1
     var bytes: u8 = 4;
@@ -109,8 +110,8 @@ pub fn writeDfd(fmt: vk.Format, out: *std.ArrayList(u8), gpa: std.mem.Allocator)
                     samples_buf[0] = .{ .offset = 0, .bits = 63, .channel = 0, .upper = full };
                     samples = samples_buf[0..1];
                 },
-                .bc3_unorm_block, .bc3_srgb_block => {
-                    model = 130;
+                .bc2_unorm_block, .bc2_srgb_block, .bc3_unorm_block, .bc3_srgb_block => {
+                    model = if (fmt == .bc2_unorm_block or fmt == .bc2_srgb_block) 129 else 130; // KHR_DF_MODEL_BC2 / BC3
                     bytes = 16;
                     samples_buf[0] = .{ .offset = 0, .bits = 63, .channel = 15 | @as(u8, if (srgb) 0x10 else 0), .upper = full };
                     samples_buf[1] = .{ .offset = 64, .bits = 63, .channel = 0, .upper = full };

@@ -299,7 +299,7 @@ fn unpremultiply(out: []u8, bpp: usize) void {
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     if (img.width > 0xFFFF or img.height > 0xFFFF) return Error.InvalidDimensions;
     const tag: PixelTag = switch (img.pixels) {
-        .g => .g,
+        .g, .g16 => .g, // 8-bit only: 16-bit gray is rounded
         .ga => .ga,
         .rgb, .bgr, .ycbcr => .bgr,
         .rgba, .bgra, .ycbcra => .bgra,

@@ -141,7 +141,7 @@ pub fn load(
 }
 
 fn batchFmt(tag: PixelTag, first: Info) vk.Format {
-    return if (tag == first.tag) first.fmt else Info.fmtFor(tag, std.mem.endsWith(u8, @tagName(first.fmt), "srgb"));
+    return if (tag == first.tag) first.fmt else Info.fmtFor(tag, Info.isSrgb(first.fmt));
 }
 
 fn dstLen(inf: Info, tag: PixelTag) !usize {

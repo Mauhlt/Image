@@ -1,5 +1,6 @@
 test "Colors" {
     _ = @import("g.zig");
+    _ = @import("g16.zig");
     _ = @import("rgb.zig");
     _ = @import("bgr.zig");
     _ = @import("ycbcr.zig");

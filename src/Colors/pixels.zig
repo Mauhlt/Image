@@ -5,6 +5,7 @@ const Position = @import("position.zig");
 const OrderTag = @import("order.zig").OrderTag;
 
 const G = @import("g.zig").G;
+const G16 = @import("g16.zig").G16;
 const RGB = @import("rgb.zig").RGB;
 const BGR = @import("bgr.zig").BGR;
 const YCbCr = @import("ycbcr.zig").YCbCr;
@@ -30,11 +31,14 @@ pub const PixelTag = enum(u8) {
     rgba,
     bgra,
     ycbcra,
+    /// 16-bit gray, native endian (>8-bit gray sources: 16-bit PNG, PGM/PAM maxval > 255,
+    /// lossless JPEG / JPEG-LS). Converts to the 8-bit layouts as round(v / 257).
+    g16,
 
     pub fn bytesPerPixel(self: PixelTag) u16 {
         return switch (self) {
             .g => 1,
-            .ga => 2,
+            .ga, .g16 => 2,
             .rgb, .bgr, .ycbcr => 3,
             .rgba, .bgra, .ycbcra => 4,
         };
@@ -52,6 +56,8 @@ pub const Pixels = union(PixelTag) {
     bgra: []BGRA,
     ycbcra: []YCbCrA,
 
+    g16: []G16,
+
     /// Assumes data is:
     ///     - correct alignment (u24 vs u32)
     ///     - correct order (rgb vs bgr)
@@ -66,7 +72,7 @@ pub const Pixels = union(PixelTag) {
     }
 
     /// Reinterprets `bytes` as pixels of `tag` without copying.
-    /// Every pixel struct is an `extern struct` of u8s (align 1), so any byte slice
+    /// Every pixel struct is an `extern struct` of align-1 fields, so any byte slice
     /// whose length is a multiple of `tag.bytesPerPixel()` is valid.
     /// Ownership of `bytes` moves to the returned value (free with `deinit`).
     pub fn fromBytes(tag: PixelTag, bytes: []u8) Pixels {
@@ -99,7 +105,8 @@ pub const Pixels = union(PixelTag) {
     ) !Pixels {
         const bpp = comptime pixel_tag.bytesPerPixel();
         if (data.len == 0 or data.len % bpp != 0) return error.InvalidDataLength;
-        if (bpp == 1) return init(pixel_tag, gpa, data);
+        // one channel: nothing to reorder
+        if (bpp == 1 or pixel_tag == .g16) return init(pixel_tag, gpa, data);
         const Elem = std.meta.Elem(@FieldType(Pixels, @tagName(pixel_tag)));
         const Order = @typeInfo(@TypeOf(Elem.initOrder)).@"fn".params[1].type.?;
         const order = std.enums.fromInt(Order, @intFromEnum(data_order)) orelse //
@@ -194,7 +201,7 @@ pub const Pixels = union(PixelTag) {
         const dst_px: []DstElem = @ptrCast(dst);
         std.debug.assert(src_px.len == dst_px.len);
 
-        const kernel = @field(Pixels, methodVName(src_tag, dst_tag));
+        const kernel = comptime vectorKernel(src_tag, dst_tag);
         const src_step = comptime src_tag.bytesPerPixel() * misc.N;
         const dst_step = comptime dst_tag.bytesPerPixel() * misc.N;
         var k: usize = 0; // pixels done
@@ -203,6 +210,28 @@ pub const Pixels = union(PixelTag) {
         }
         const method = comptime methodName(dst_tag);
         for (src_px[k..], dst_px[k..]) |s, *d| d.* = @field(SrcElem, method)(s);
+    }
+
+    /// The `<dst>From<Src>` kernel; g16 goes through 8-bit gray (`misc.to8V` /
+    /// `misc.from8V`), so it matches the scalar `G16.toX` / `X.toG16` exactly.
+    fn vectorKernel(comptime src_tag: PixelTag, comptime dst_tag: PixelTag) fn (
+        *const [src_tag.bytesPerPixel() * misc.N]u8,
+    ) @Vector(dst_tag.bytesPerPixel() * misc.N, u8) {
+        const Src = [src_tag.bytesPerPixel() * misc.N]u8;
+        const Dst = @Vector(dst_tag.bytesPerPixel() * misc.N, u8);
+        if (src_tag == .g16) return struct {
+            fn k(src: *const Src) Dst {
+                const g: [misc.N]u8 = misc.to8V(simd.load(misc.N, u16, src));
+                return if (dst_tag == .g) g else @field(Pixels, methodVName(.g, dst_tag))(&g);
+            }
+        }.k;
+        if (dst_tag == .g16) return struct {
+            fn k(src: *const Src) Dst {
+                const g: U8_1 = if (src_tag == .g) src.* else @field(Pixels, methodVName(src_tag, .g))(src);
+                return @bitCast(misc.from8V(g));
+            }
+        }.k;
+        return @field(Pixels, methodVName(src_tag, dst_tag));
     }
 
     fn methodVName(comptime src: PixelTag, comptime dst: PixelTag) []const u8 {
@@ -1755,6 +1784,66 @@ test "convertV matches convert for every pair and pixel count" {
                     std.debug.print("convertV mismatch: {t} -> {t}, {} pixels\n", .{ from, to, n });
                     return err;
                 };
+            }
+        }
+    }
+}
+
+test "g16 <-> 8-bit layouts: vector kernels vs scalar reference at vector-edge widths" {
+    const gpa = std.testing.allocator;
+    const N = misc.N;
+    var prng = std.Random.DefaultPrng.init(0x616);
+    const rand = prng.random();
+    const widths = [_]usize{ 1, N - 1, N, N + 1, 2 * N + 3 };
+    for (widths) |n| {
+        // g16 -> every 8-bit layout: round(v / 257) = (v * 255 + 32767) / 65535 as gray
+        const wide = try gpa.alloc(u16, n);
+        defer gpa.free(wide);
+        for (wide, 0..) |*v, i| v.* = switch (i % 4) {
+            0 => 0,
+            1 => 65535,
+            2 => @intCast(128 + 257 * (i % 255)), // around the rounding edges
+            else => rand.int(u16),
+        };
+        const g16: Pixels = try .init(.g16, gpa, std.mem.sliceAsBytes(wide));
+        defer g16.deinit(gpa);
+        const want8 = try gpa.alloc(u8, n);
+        defer gpa.free(want8);
+        for (wide, want8) |v, *w| w.* = @intCast((@as(u32, v) * 255 + 32767) / 65535);
+        const g8: Pixels = try .init(.g, gpa, want8);
+        defer g8.deinit(gpa);
+        inline for (comptime std.enums.values(PixelTag)) |to| {
+            if (to == .g16) continue;
+            const ref = try g8.convert(to, gpa);
+            defer ref.deinit(gpa);
+            const v = try g16.convertV(to, gpa);
+            defer v.deinit(gpa);
+            const sc = try g16.convert(to, gpa);
+            defer sc.deinit(gpa);
+            std.testing.expectEqualSlices(u8, ref.asBytes(), v.asBytes()) catch |err| {
+                std.debug.print("g16 -> {t}, {} pixels\n", .{ to, n });
+                return err;
+            };
+            try std.testing.expectEqualSlices(u8, ref.asBytes(), sc.asBytes());
+        }
+
+        // g -> g16 is exact: v * 257; other layouts go through their gray
+        const narrow = try gpa.alloc(u8, n * 4);
+        defer gpa.free(narrow);
+        rand.bytes(narrow);
+        inline for (comptime std.enums.values(PixelTag)) |from| {
+            if (from == .g16) continue;
+            const src: Pixels = try .init(from, gpa, narrow[0 .. n * from.bytesPerPixel()]);
+            defer src.deinit(gpa);
+            const gray = try src.convert(.g, gpa);
+            defer gray.deinit(gpa);
+            const v = try src.convertV(.g16, gpa);
+            defer v.deinit(gpa);
+            const sc = try src.convert(.g16, gpa);
+            defer sc.deinit(gpa);
+            for (gray.g, v.g16, sc.g16) |px, a, b| {
+                try std.testing.expectEqual(@as(u16, px.g) * 257, a.g);
+                try std.testing.expectEqual(a.g, b.g);
             }
         }
     }

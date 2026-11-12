@@ -2,6 +2,7 @@ const std = @import("std");
 const Order = @import("order.zig").Quadruplets;
 const _order = @import("order.zig");
 const misc = @import("misc.zig");
+const G16 = @import("g16.zig").G16;
 
 const G = @import("g.zig").G;
 const RGB = @import("rgb.zig").RGB;
@@ -35,6 +36,11 @@ pub const RGBA = extern struct {
             .b = data[idx[2]],
             .a = data[idx[3]],
         };
+    }
+
+    /// The 8-bit gray (`toG`) widened by v * 257.
+    pub fn toG16(self: RGBA) G16 {
+        return .{ .g = misc.from8(self.toG().g) };
     }
 
     pub fn toG(self: RGBA) G {

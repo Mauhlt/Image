@@ -193,7 +193,7 @@ const Palette = struct {
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     // BMP stores gray (palette), BGR or BGRA; convert anything else
     const tag: PixelTag = switch (img.pixels) {
-        .g, .ga => .g,
+        .g, .ga, .g16 => .g, // 8-bit only: 16-bit gray is rounded
         .rgb, .bgr, .ycbcr => .bgr,
         .rgba, .bgra, .ycbcra => .bgra,
     };
