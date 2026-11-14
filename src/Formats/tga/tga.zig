@@ -143,9 +143,9 @@ fn rgb555(comptime out_bpp: usize, in: []const u8, o: []u8) void {
     var i: usize = 0;
     while (i + L <= n) : (i += L) {
         const v: @Vector(L, u32) = simd.loadLittle(L, u16, in[i * 2 ..]);
-        var words = expand5V(v) | expand5V(v >> @splat(5)) << @splat(8) | expand5V(v >> @splat(10)) << @splat(16);
+        var words = expand5V(v) | (expand5V(v >> @splat(5)) << @splat(8)) | (expand5V(v >> @splat(10)) << @splat(16));
         // alpha: bit 15 -> 0 or 255
-        if (out_bpp == 4) words |= (v >> @splat(15)) * @as(@Vector(L, u32), @splat(255)) << @splat(24);
+        if (out_bpp == 4) words |= ((v >> @splat(15)) * @as(@Vector(L, u32), @splat(255))) << @splat(24);
         o[i * out_bpp ..][0 .. L * out_bpp].* = simd.pixelBytes(out_bpp, L, words);
     }
     for (i..n) |k| @memcpy(o[k * out_bpp ..][0..out_bpp], expand(16, false, in[k * 2 ..][0..2])[0..out_bpp]);
@@ -460,7 +460,7 @@ fn store(depth: u8, gray: bool, p: [4]u8, out: *std.ArrayList(u8), gpa: std.mem.
     switch (depth) {
         8 => try out.append(gpa, p[0]),
         15, 16 => if (gray) try out.appendSlice(gpa, &.{ p[0], p[3] }) else {
-            const v: u16 = @as(u16, p[0] >> 3) | @as(u16, p[1] >> 3) << 5 | @as(u16, p[2] >> 3) << 10 |
+            const v: u16 = @as(u16, p[0] >> 3) | (@as(u16, p[1] >> 3) << 5) | (@as(u16, p[2] >> 3) << 10) |
                 @as(u16, if (depth == 15 or p[3] != 0) 0x8000 else 0);
             try out.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u16, v)));
         },

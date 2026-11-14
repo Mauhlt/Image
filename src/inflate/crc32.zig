@@ -109,7 +109,7 @@ fn xPowModP(n: usize) u64 {
     }
     var out: u64 = 0;
     for (0..32) |j| {
-        if (r >> @intCast(j) & 1 != 0) out |= @as(u64, 1) << @intCast(63 - j);
+        if ((r >> @intCast(j)) & 1 != 0) out |= @as(u64, 1) << @intCast(63 - j);
     }
     return out;
 }

@@ -102,7 +102,7 @@ pub const Decompressor = struct {
                 const cmf = in[0];
                 const flg = in[1];
                 // method 8, window <= 32 KiB, header check, no preset dictionary
-                if (cmf & 0x0f != 8 or cmf >> 4 > 7 or (@as(u16, cmf) << 8 | flg) % 31 != 0 or flg & 0x20 != 0)
+                if (cmf & 0x0f != 8 or cmf >> 4 > 7 or ((@as(u16, cmf) << 8) | flg) % 31 != 0 or flg & 0x20 != 0)
                     return error.BadZlibHeader;
                 if (opts.verify) o.startCheck(.adler32);
                 p = try d.deflate(in, 2, &o);

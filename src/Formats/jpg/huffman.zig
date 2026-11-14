@@ -158,7 +158,7 @@ test "huffman tables agree" {
             try std.testing.expect(e.len > 0);
             if (e.len <= LOOKAHEAD) {
                 const idx = @as(u32, e.code) << @intCast(LOOKAHEAD - e.len);
-                try std.testing.expectEqual(@as(u16, e.len) << 8 | sym, dec.lookup[idx]);
+                try std.testing.expectEqual((@as(u16, e.len) << 8) | sym, dec.lookup[idx]);
             } else {
                 try std.testing.expect(@as(i32, e.code) <= dec.maxcode[e.len]);
                 try std.testing.expectEqual(sym, dec.values[@intCast(@as(i32, e.code) + dec.delta[e.len])]);

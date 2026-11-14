@@ -75,7 +75,7 @@ const BoolDecoder = struct {
         var range: u32 = undefined; // the new range, not minus one
         if (branchless) {
             range = if (bit) self.range_m1 - split else split + 1;
-            self.value -= @as(u64, split + 1) * @intFromBool(bit) << pos;
+            self.value -= (@as(u64, split + 1) * @intFromBool(bit)) << pos;
         } else if (bit) {
             range = self.range_m1 - split;
             self.value -= @as(u64, split + 1) << pos;
@@ -229,7 +229,7 @@ const Decoder = struct {
     /// Frame tag and key frame header (9.1). `data` is the VP8 chunk payload.
     fn init(gpa: std.mem.Allocator, data: []const u8) !Decoder {
         if (data.len < 10) return Error.UnexpectedEndOfData;
-        const tag = @as(u32, data[0]) | @as(u32, data[1]) << 8 | @as(u32, data[2]) << 16;
+        const tag = @as(u32, data[0]) | (@as(u32, data[1]) << 8) | (@as(u32, data[2]) << 16);
         if (tag & 1 != 0) return Error.UnsupportedFeature; // inter frame: video only
         if (!std.mem.eql(u8, data[3..6], &.{ 0x9d, 0x01, 0x2a })) return Error.UnexpectedSignature;
         const first_len: usize = tag >> 5;
@@ -1156,7 +1156,7 @@ fn transpose4(m: [4]Row4) [4]Row4 {
 
 /// Four 0/1 flags <-> bits.
 fn pack(x: [4]u8, shift: u5) u32 {
-    const u = @as(u32, x[0]) | @as(u32, x[1]) << 1 | @as(u32, x[2]) << 2 | @as(u32, x[3]) << 3;
+    const u = @as(u32, x[0]) | (@as(u32, x[1]) << 1) | (@as(u32, x[2]) << 2) | (@as(u32, x[3]) << 3);
     return u << shift;
 }
 fn unpack(bits: u8) [4]u8 {

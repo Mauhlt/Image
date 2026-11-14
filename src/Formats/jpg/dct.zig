@@ -56,7 +56,7 @@ pub fn inverse(coeffs: *const [64]f32) [64]f32 {
     // columns: out[y] = sum_v C[v][y] * tmp[v]
     var out: [8]V8 = @splat(@splat(0));
     for (tmp[0..n_rows], 0..) |t, v| {
-        inline for (&out, 0..) |*o, y| o.* += @as(V8, @splat(BASIS_T[y][v])) * t;
+        inline for (&out, 0..) |*o, y| o.* += @as(V8, @splat(@as([8]f32, BASIS_T[y])[v])) * t;
     }
     var samples: [64]f32 = undefined;
     inline for (out, 0..) |o, y| samples[y * 8 ..][0..8].* = o;
@@ -83,7 +83,7 @@ pub fn forward(samples: *const [64]f32) [64]f32 {
     var out: [64]f32 = undefined;
     for (0..8) |v| {
         var acc: V8 = @splat(0);
-        inline for (0..8) |y| acc += @as(V8, @splat(BASIS[v][y])) * tmp[y];
+        inline for (0..8) |y| acc += @as(V8, @splat(@as([8]f32, BASIS[v])[y])) * tmp[y];
         out[v * 8 ..][0..8].* = acc;
     }
     return out;
@@ -115,7 +115,7 @@ test "sparse inverse equals the dense matrix product exactly" {
             var out: [64]f32 = undefined;
             for (0..8) |y| {
                 var acc: V8 = @splat(0);
-                inline for (0..8) |v| acc += @as(V8, @splat(BASIS[v][y])) * tmp[v];
+                inline for (0..8) |v| acc += @as(V8, @splat(@as([8]f32, BASIS[v])[y])) * tmp[v];
                 out[y * 8 ..][0..8].* = acc;
             }
             return out;

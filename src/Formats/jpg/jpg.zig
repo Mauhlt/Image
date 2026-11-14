@@ -495,7 +495,7 @@ test "decode output is unchanged from the scalar decoder" {
     const H = 23;
     var data: [W * H * 3]u8 = undefined;
     for (0..H) |y| for (0..W) |x| {
-        data[(y * W + x) * 3 ..][0..3].* = .{ @truncate(x * 7 + y), @truncate(y * 13 ^ x), @truncate((x + y) * 5) };
+        data[(y * W + x) * 3 ..][0..3].* = .{ @truncate(x * 7 + y), @truncate((y * 13) ^ x), @truncate((x + y) * 5) };
     };
     const src: Image = .{ .width = W, .height = H, .fmt = .r8g8b8_srgb, .pixels = try .init(.rgb, gpa, &data) };
     defer src.deinit(gpa);

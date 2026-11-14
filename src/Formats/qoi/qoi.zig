@@ -177,7 +177,7 @@ fn decodeOps(comptime ch: usize, data: []const u8, out: []u8) !void {
 
 /// r | g << 8 | b << 16 | a << 24: the channels in memory order
 fn pack(r: u8, g: u8, b: u8, a: u8) u32 {
-    return @as(u32, r) | @as(u32, g) << 8 | @as(u32, b) << 16 | @as(u32, a) << 24;
+    return @as(u32, r) | (@as(u32, g) << 8) | (@as(u32, b) << 16) | (@as(u32, a) << 24);
 }
 
 /// Writes `run` copies of pixel `word` at the start of `at`. Unchecked, this
@@ -202,8 +202,8 @@ inline fn fillRun(comptime ch: usize, comptime checked: bool, at: []u8, word: u3
     }
     // 16 bytes of the pattern hold 5 rgb pixels and a byte (fixed: the 15-byte period)
     const p: u64 = word & 0xFF_FFFF;
-    const lo = p | p << 24 | p << 48; // r g b r g b r g
-    const hi = p >> 16 | p << 8 | p << 32 | p << 56; // b r g b r g b r
+    const lo = p | (p << 24) | (p << 48); // r g b r g b r g
+    const hi = (p >> 16) | (p << 8) | (p << 32) | (p << 56); // b r g b r g b r
     const v: @Vector(2, u64) = .{ std.mem.nativeToLittle(u64, lo), std.mem.nativeToLittle(u64, hi) };
     var k: usize = 0;
     while (k < run * 3) : (k += 15) std.mem.bytesAsValue(@Vector(2, u64), at[k..][0..16]).* = v;
@@ -244,7 +244,7 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         }
 
         const index = hashRGB(px);
-        if (filled >> @intCast(index) & 1 == 1 and table[index].eql(px)) {
+        if ((filled >> @intCast(index)) & 1 == 1 and table[index].eql(px)) {
             const byte = (@as(u8, @intFromEnum(BitTags.index)) << 6) | index;
             try w.writeByte(byte);
             continue;
@@ -259,8 +259,8 @@ fn encodeRgb(w: *std.Io.Writer, rgbs: []RGB) !void {
         };
         if ((drgb.r < 4) and (drgb.g < 4) and (drgb.b < 4)) {
             const byte = (@as(u8, @intFromEnum(BitTags.diff)) << 6) | //
-                (drgb.r & 0x03) << 4 | //
-                (drgb.g & 0x03) << 2 | //
+                ((drgb.r & 0x03) << 4) | //
+                ((drgb.g & 0x03) << 2) | //
                 (drgb.b & 0x03);
             try w.writeByte(byte);
 
@@ -320,7 +320,7 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
 
         const index = hashRGBA(px);
         if (table[index].eql(px)) {
-            const byte = @as(u8, @intFromEnum(BitTags.index)) << 6 | index;
+            const byte = (@as(u8, @intFromEnum(BitTags.index)) << 6) | index;
             try w.writeByte(byte);
             continue;
         }
@@ -332,8 +332,8 @@ fn encodeRgba(w: *std.Io.Writer, rgbas: []RGBA) !void {
             const db = px.b -% prev.b;
 
             if ((dr +% 2) < 4 and (dg +% 2) < 4 and (db +% 2) < 4) {
-                const byte = @as(u8, //
-                    @intFromEnum(BitTags.diff)) << 6 | //
+                const byte = (@as(u8, //
+                    @intFromEnum(BitTags.diff)) << 6) | //
                     (((dr +% 2) & 0x03) << 4) | //
                     (((dg +% 2) & 0x03) << 2) | //
                     ((db +% 2) & 0x03);

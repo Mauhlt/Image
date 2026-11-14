@@ -383,7 +383,7 @@ const Scaler = struct {
     }
 
     fn apply(s: Scaler, v: u32) u8 {
-        return @intCast((@as(u64, @min(v, s.max)) * 255 + s.half) * s.mul >> s.post);
+        return @intCast(((@as(u64, @min(v, s.max)) * 255 + s.half) * s.mul) >> s.post);
     }
 
     /// `apply` on `L` samples in `W` lanes: u64 always fits, u32 does for maxval <= 255
@@ -392,7 +392,7 @@ const Scaler = struct {
         const V = @Vector(L, W);
         const v = @min(@as(V, samples), @as(V, @splat(@intCast(s.max))));
         const post: std.math.Log2Int(W) = @intCast(s.post);
-        return @intCast((v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(@intCast(s.mul))) >> @splat(post));
+        return @intCast(((v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(@intCast(s.mul)))) >> @splat(post));
     }
 };
 

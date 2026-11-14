@@ -829,7 +829,7 @@ test "DNL defined height" {
     const enc = try encode(gpa, 6, 5, 8, 1, img);
     defer gpa.free(enc);
     // zero the SOF3 height (offset: SOI 2 + marker 2 + len 2 + P 1) and append DNL
-    var buf: std.ArrayListUnmanaged(u8) = .empty;
+    var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(gpa);
     try buf.appendSlice(gpa, enc[0 .. enc.len - 2]);
     buf.items[7] = 0;

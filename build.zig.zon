@@ -2,7 +2,7 @@
     .name = .Image,
     .version = "0.0.0",
     .fingerprint = 0x4fc2b5b4c083dd3,
-    .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
+    .minimum_zig_version = "0.18.0-dev.1005+75d48dfff",
     .dependencies = .{
         // The de-facto Vulkan bindings: the sibling checkout, so Image,
         // Renderer and everything built on them use the same one.

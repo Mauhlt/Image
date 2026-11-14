@@ -41,7 +41,7 @@ pub const Channel = struct {
         fn apply(s: Scale, comptime L: usize, px: @Vector(L, u32)) @Vector(L, u32) {
             const V = @Vector(L, u32);
             const v = (px & @as(V, @splat(s.mask))) >> @splat(s.drop);
-            return (v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(s.mul)) >> @splat(s.post);
+            return ((v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(s.mul))) >> @splat(s.post);
         }
     };
 
@@ -133,7 +133,7 @@ pub const Bitfields = struct {
         var x: usize = 0;
         while (x + L <= width) : (x += L) {
             const px: @Vector(L, u32) = simd.loadLittle(L, T, src[x * n ..]);
-            var words = b.apply(L, px) | g.apply(L, px) << @splat(8) | r.apply(L, px) << @splat(16);
+            var words = b.apply(L, px) | (g.apply(L, px) << @splat(8)) | (r.apply(L, px) << @splat(16));
             if (out_bpp == 4) words |= a.apply(L, px) << @splat(24);
             dst[x * out_bpp ..][0 .. L * out_bpp].* = simd.pixelBytes(out_bpp, L, words);
         }
@@ -159,7 +159,7 @@ test "vector channel scaling equals the table" {
         const max = mask >> @intCast(shift);
         var v: u64 = 0;
         while (v <= max) : (v += if (bits <= 8) 1 else max / 997 + 1) {
-            for (&px, 0..) |*p, k| p.* = (@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | ~mask & 0x5A5A_5A5A;
+            for (&px, 0..) |*p, k| p.* = ((@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | ~mask) & 0x5A5A_5A5A;
             const got: [L]u32 = c.scale.apply(L, px);
             for (px, got) |p, g| try std.testing.expectEqual(@as(u32, c.get(p)), g);
         }

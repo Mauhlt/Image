@@ -693,7 +693,7 @@ fn decodeLine(br: *BitReader, st: *State, p: *const Params, prev: []const i32, c
 const testing = std.testing;
 
 const TestWriter = struct {
-    out: std.ArrayListUnmanaged(u8) = .empty,
+    out: std.ArrayList(u8) = .empty,
     byte: u8 = 0,
     nbits: u4 = 0,
     cap: u4 = 8,
@@ -819,7 +819,7 @@ pub const TestOptions = struct {
 
 /// Test / benchmark encoder (bit-at-a-time, unoptimised; not a supported API).
 pub fn testEncode(gpa: std.mem.Allocator, w: u16, h: u16, precision: u8, nc: u8, samples: []const u16, opts: TestOptions) ![]u8 {
-    var o: std.ArrayListUnmanaged(u8) = .empty;
+    var o: std.ArrayList(u8) = .empty;
     errdefer o.deinit(gpa);
     const be = struct {
         fn u16be(v: u16) [2]u8 {

@@ -56,7 +56,7 @@ pub fn update(adler: u32, bytes: []const u8) u32 {
         s1 += b;
         s2 += s1;
     }
-    return @intCast((s2 % base) << 16 | (s1 % base));
+    return @intCast(((s2 % base) << 16) | (s1 % base));
 }
 
 pub fn hash(bytes: []const u8) u32 {
@@ -71,7 +71,7 @@ fn slow(adler: u32, bytes: []const u8) u32 {
         s1 = (s1 + b) % base;
         s2 = (s2 + s1) % base;
     }
-    return s2 << 16 | s1;
+    return (s2 << 16) | s1;
 }
 
 test "adler32 matches reference for every length, all-0xff worst case, chaining" {
