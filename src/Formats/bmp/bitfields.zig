@@ -159,7 +159,7 @@ test "vector channel scaling equals the table" {
         const max = mask >> @intCast(shift);
         var v: u64 = 0;
         while (v <= max) : (v += if (bits <= 8) 1 else max / 997 + 1) {
-            for (&px, 0..) |*p, k| p.* = ((@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | ~mask) & 0x5A5A_5A5A;
+            for (&px, 0..) |*p, k| p.* = (@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | (~mask & 0x5A5A_5A5A);
             const got: [L]u32 = c.scale.apply(L, px);
             for (px, got) |p, g| try std.testing.expectEqual(@as(u32, c.get(p)), g);
         }
