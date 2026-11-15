@@ -9,7 +9,7 @@ pub const decodeInto = netpbm.decodeInto;
 /// Binary P5 for gray images, P6 otherwise. PNM has no alpha: it is dropped (use PAM to keep it).
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     const gray = switch (img.pixels) {
-        .g, .ga => true,
+        .g, .ga, .g16 => true,
         else => false,
     };
     return netpbm.encode(img, w, gpa, if (gray) .g else .rgb);

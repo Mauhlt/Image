@@ -1,6 +1,6 @@
 const std = @import("std");
 const Error = @import("../error.zig").Error;
-const Crc32 = @import("crc.zig").Crc32;
+const Crc32 = @import("ImageCheck").crc.Crc32;
 
 pub const Tag = enum(u32) {
     unsupported,

@@ -41,7 +41,7 @@ pub const Channel = struct {
         fn apply(s: Scale, comptime L: usize, px: @Vector(L, u32)) @Vector(L, u32) {
             const V = @Vector(L, u32);
             const v = (px & @as(V, @splat(s.mask))) >> @splat(s.drop);
-            return (v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(s.mul)) >> @splat(s.post);
+            return ((v * @as(V, @splat(255)) + @as(V, @splat(s.half))) * @as(V, @splat(s.mul))) >> @splat(s.post);
         }
     };
 
@@ -123,7 +123,8 @@ pub const Bitfields = struct {
             return Pixels.convertRow(.bgra, .bgr, src[0 .. width * 4], dst[0 .. width * 3]);
         }
         const n = @sizeOf(T);
-        const L = 16;
+        // pixels per step: two registers of u32 lanes (16 with AVX2)
+        const L = @import("../../Colors/misc.zig").N / 2;
         // by value: read through `self`, the constants would be reloaded after every store
         const b = self.b.scale;
         const g = self.g.scale;
@@ -132,7 +133,7 @@ pub const Bitfields = struct {
         var x: usize = 0;
         while (x + L <= width) : (x += L) {
             const px: @Vector(L, u32) = simd.loadLittle(L, T, src[x * n ..]);
-            var words = b.apply(L, px) | g.apply(L, px) << @splat(8) | r.apply(L, px) << @splat(16);
+            var words = b.apply(L, px) | (g.apply(L, px) << @splat(8)) | (r.apply(L, px) << @splat(16));
             if (out_bpp == 4) words |= a.apply(L, px) << @splat(24);
             dst[x * out_bpp ..][0 .. L * out_bpp].* = simd.pixelBytes(out_bpp, L, words);
         }
@@ -152,13 +153,13 @@ test "vector channel scaling equals the table" {
     for (1..33) |bits| for (0..33 - bits) |shift| {
         const mask: u32 = @intCast(((@as(u64, 1) << @intCast(bits)) - 1) << @intCast(shift));
         const c: Channel = try .init(mask);
-        const L = 16;
+        const L = @import("../../Colors/misc.zig").N / 2; // as decodeRowAs
         var px: [L]u32 = undefined;
         // every raw channel value up to 8 bits; a spread of values for wider ones
         const max = mask >> @intCast(shift);
         var v: u64 = 0;
         while (v <= max) : (v += if (bits <= 8) 1 else max / 997 + 1) {
-            for (&px, 0..) |*p, k| p.* = (@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | ~mask & 0x5A5A_5A5A;
+            for (&px, 0..) |*p, k| p.* = (@as(u32, @intCast(@min(v + k, max))) << @intCast(shift)) | (~mask & 0x5A5A_5A5A);
             const got: [L]u32 = c.scale.apply(L, px);
             for (px, got) |p, g| try std.testing.expectEqual(@as(u32, c.get(p)), g);
         }

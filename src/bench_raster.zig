@@ -119,7 +119,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
         defer gpa.free(pixels);
         for (0..n) |i| {
             const p = px(rgb, bmpIndex(w, h, i));
-            const v: u16 = @as(u16, p[0] >> 3) << 11 | @as(u16, p[1] >> 2) << 5 | p[2] >> 3;
+            const v: u16 = (@as(u16, p[0] >> 3) << 11) | (@as(u16, p[1] >> 2) << 5) | (p[2] >> 3);
             std.mem.writeInt(u16, pixels[i * 2 ..][0..2], v, .little);
         }
         var masks: [12]u8 = undefined;
@@ -203,7 +203,7 @@ pub fn run(io: std.Io, gpa: std.mem.Allocator) !void {
         defer gpa.free(p16);
         for (0..n) |i| {
             const p = px(rgb, i);
-            const v: u16 = @as(u16, p[0] >> 3) << 10 | @as(u16, p[1] >> 3) << 5 | p[2] >> 3;
+            const v: u16 = (@as(u16, p[0] >> 3) << 10) | (@as(u16, p[1] >> 3) << 5) | (p[2] >> 3);
             std.mem.writeInt(u16, p16[i * 2 ..][0..2], v, .little);
         }
         const file16 = try tgaFile(gpa, tw, th, 2, 16, 0x20, 0, "", p16);

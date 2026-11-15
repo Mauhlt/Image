@@ -138,22 +138,25 @@ const Converter = struct {
 
 /// A1R5G5B5 (little endian) -> BGR or BGRA, `expand5`ing each channel.
 fn rgb555(comptime out_bpp: usize, in: []const u8, o: []u8) void {
-    const L = 16;
+    const L = expand5_lanes;
     const n = in.len / 2;
     var i: usize = 0;
     while (i + L <= n) : (i += L) {
         const v: @Vector(L, u32) = simd.loadLittle(L, u16, in[i * 2 ..]);
-        var words = expand5V(v) | expand5V(v >> @splat(5)) << @splat(8) | expand5V(v >> @splat(10)) << @splat(16);
+        var words = expand5V(v) | (expand5V(v >> @splat(5)) << @splat(8)) | (expand5V(v >> @splat(10)) << @splat(16));
         // alpha: bit 15 -> 0 or 255
-        if (out_bpp == 4) words |= (v >> @splat(15)) * @as(@Vector(L, u32), @splat(255)) << @splat(24);
+        if (out_bpp == 4) words |= ((v >> @splat(15)) * @as(@Vector(L, u32), @splat(255))) << @splat(24);
         o[i * out_bpp ..][0 .. L * out_bpp].* = simd.pixelBytes(out_bpp, L, words);
     }
     for (i..n) |k| @memcpy(o[k * out_bpp ..][0..out_bpp], expand(16, false, in[k * 2 ..][0..2])[0..out_bpp]);
 }
 
+/// Pixels per step of `rgb555`: two registers of u32 lanes (16 with AVX2).
+const expand5_lanes = @import("../../Colors/misc.zig").N / 2;
+
 /// `expand5` of the low 5 bits of each lane.
-fn expand5V(v: @Vector(16, u32)) @Vector(16, u32) {
-    const c = v & @as(@Vector(16, u32), @splat(0x1F));
+fn expand5V(v: @Vector(expand5_lanes, u32)) @Vector(expand5_lanes, u32) {
+    const c = v & @as(@Vector(expand5_lanes, u32), @splat(0x1F));
     return (c << @splat(3)) | (c >> @splat(2));
 }
 
@@ -296,7 +299,7 @@ fn unpremultiply(out: []u8, bpp: usize) void {
 pub fn encode(img: *const Image, w: *std.Io.Writer, gpa: std.mem.Allocator) !void {
     if (img.width > 0xFFFF or img.height > 0xFFFF) return Error.InvalidDimensions;
     const tag: PixelTag = switch (img.pixels) {
-        .g => .g,
+        .g, .g16 => .g, // 8-bit only: 16-bit gray is rounded
         .ga => .ga,
         .rgb, .bgr, .ycbcr => .bgr,
         .rgba, .bgra, .ycbcra => .bgra,
@@ -457,7 +460,7 @@ fn store(depth: u8, gray: bool, p: [4]u8, out: *std.ArrayList(u8), gpa: std.mem.
     switch (depth) {
         8 => try out.append(gpa, p[0]),
         15, 16 => if (gray) try out.appendSlice(gpa, &.{ p[0], p[3] }) else {
-            const v: u16 = @as(u16, p[0] >> 3) | @as(u16, p[1] >> 3) << 5 | @as(u16, p[2] >> 3) << 10 |
+            const v: u16 = @as(u16, p[0] >> 3) | (@as(u16, p[1] >> 3) << 5) | (@as(u16, p[2] >> 3) << 10) |
                 @as(u16, if (depth == 15 or p[3] != 0) 0x8000 else 0);
             try out.appendSlice(gpa, &std.mem.toBytes(std.mem.nativeToLittle(u16, v)));
         },
@@ -887,4 +890,22 @@ test "tga span decoder matches the pixel-at-a-time reference" {
     }
     // most files must be valid, or this only compares error paths
     try testing.expect(decoded > 1500);
+}
+
+test "tga rgb555 at vector-edge widths vs per-pixel expand" {
+    const L = expand5_lanes;
+    var prng: std.Random.DefaultPrng = .init(555);
+    const rand = prng.random();
+    var in: [2 * (4 * L + 7)]u8 = undefined;
+    var out: [4 * (4 * L + 7)]u8 = undefined;
+    for ([_]usize{ 1, 2, 7, 15, 17, 33, L - 1, L, L + 1, 2 * L + 3, 4 * L + 7 }) |n| {
+        rand.bytes(in[0 .. 2 * n]);
+        inline for (.{ 3, 4 }) |bpp| {
+            @memset(&out, 0xAA);
+            rgb555(bpp, in[0 .. 2 * n], out[0 .. n * bpp]);
+            for (0..n) |k| try std.testing.expectEqualSlices(u8, expand(16, false, in[k * 2 ..][0..2])[0..bpp], out[k * bpp ..][0..bpp]);
+            // nothing written past the row
+            for (out[n * bpp ..]) |b| try std.testing.expectEqual(@as(u8, 0xAA), b);
+        }
+    }
 }

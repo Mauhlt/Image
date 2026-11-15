@@ -2,11 +2,14 @@
     .name = .Image,
     .version = "0.0.0",
     .fingerprint = 0x4fc2b5b4c083dd3,
-    .minimum_zig_version = "0.16.0-dev.2676+4e2cec265",
+    .minimum_zig_version = "0.18.0-dev.1005+75d48dfff",
     .dependencies = .{
+        // The Vulkan bindings. Renderer pins the same commit, so a program
+        // using Image and Renderer gets one shared "Vulkan" module. Local
+        // checkout: zig build --fork=../Vulkan
         .Vulkan = .{
-            .url = "git+https://github.com/Mauhlt/Vulkan.git#d6b61bcf1b3a7b0c7083c70ba4bed3ec1a38f862",
-            .hash = "Vulkan-0.1.0-9v7hoQnCFACMP_QA3o1DMQCiQRo2tPgmGRXVpoOr4jvk",
+            .url = "git+https://github.com/Mauhlt/Vulkan#b831b1e464db394c2ddb8da11d5dff93f1df4144",
+            .hash = "Vulkan-0.1.0-9v7hoY4bAACSpjlULEH56u3k6cYDDZa1hgBgVU-lkUuR",
         },
     },
     .paths = .{

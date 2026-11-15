@@ -33,8 +33,6 @@ layers: u32,
 faces: u32,
 fmt: vk.Format,
 data_offset: usize,
-/// file holds BC2 blocks; the Vulkan bindings lack bc2_*, so the loader decodes to RGBA8
-bc2: bool = false,
 
 fn fourcc(s: *const [4]u8) u32 {
     return std.mem.readInt(u32, s, .little);
@@ -45,9 +43,12 @@ pub fn dxgiToVk(dxgi: u32) ?vk.Format {
         28 => .r8g8b8a8_unorm,
         29 => .r8g8b8a8_srgb,
         49 => .r8g8_unorm,
+        56 => .r16_unorm,
         61 => .r8_unorm,
         70, 71 => .bc1_rgba_unorm_block,
         72 => .bc1_rgba_srgb_block,
+        73, 74 => .bc2_unorm_block,
+        75 => .bc2_srgb_block,
         76, 77 => .bc3_unorm_block,
         78 => .bc3_srgb_block,
         79, 80 => .bc4_unorm_block,
@@ -69,9 +70,12 @@ pub fn vkToDxgi(fmt: vk.Format) ?u32 {
         .r8g8b8a8_unorm => 28,
         .r8g8b8a8_srgb => 29,
         .r8g8_unorm => 49,
+        .r16_unorm => 56,
         .r8_unorm => 61,
         .bc1_rgb_unorm_block, .bc1_rgba_unorm_block => 71,
         .bc1_rgb_srgb_block, .bc1_rgba_srgb_block => 72,
+        .bc2_unorm_block => 74,
+        .bc2_srgb_block => 75,
         .bc3_unorm_block => 77,
         .bc3_srgb_block => 78,
         .bc4_unorm_block => 80,
@@ -121,10 +125,7 @@ pub fn decode(data: []const u8) Error!@This() {
             if (data.len < 4 + HEADER_SIZE + DX10_SIZE) return Error.UnexpectedEndOfData;
             const x = data[4 + HEADER_SIZE ..][0..DX10_SIZE];
             const dxgi = std.mem.readInt(u32, x[0..4], .little);
-            if (dxgi >= 73 and dxgi <= 75) {
-                hdr.bc2 = true;
-                hdr.fmt = if (dxgi == 75) .r8g8b8a8_srgb else .r8g8b8a8_unorm;
-            } else hdr.fmt = dxgiToVk(dxgi) orelse return Error.UnsupportedColorspace;
+            hdr.fmt = dxgiToVk(dxgi) orelse return Error.UnsupportedColorspace;
             const dim = std.mem.readInt(u32, x[4..8], .little);
             if (dim != 3) return Error.UnsupportedFeature; // only TEXTURE2D
             const misc = std.mem.readInt(u32, x[8..12], .little);
@@ -134,8 +135,7 @@ pub fn decode(data: []const u8) Error!@This() {
         } else if (cc == fourcc("DXT1")) {
             hdr.fmt = .bc1_rgba_unorm_block;
         } else if (cc == fourcc("DXT2") or cc == fourcc("DXT3")) {
-            hdr.bc2 = true;
-            hdr.fmt = .r8g8b8a8_unorm;
+            hdr.fmt = .bc2_unorm_block; // DXT2 = premultiplied alpha; Vulkan has one BC2 format
         } else if (cc == fourcc("DXT4") or cc == fourcc("DXT5")) {
             hdr.fmt = .bc3_unorm_block;
         } else if (cc == fourcc("ATI1") or cc == fourcc("BC4U")) {

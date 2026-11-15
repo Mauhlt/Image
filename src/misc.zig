@@ -5,6 +5,7 @@ pub const ImageTag = enum {
     gif,
     heic,
     jpg,
+    jls,
     pam,
     paint,
     pbm,
@@ -74,6 +75,7 @@ pub fn timer(
 
 test "tagFromExt" {
     try std.testing.expectEqual(ImageTag.jpg, try tagFromExt("a/b.JPEG"));
+    try std.testing.expectEqual(ImageTag.jls, try tagFromExt("ct.JLS"));
     try std.testing.expectEqual(ImageTag.png, try tagFromExt("x.png"));
     try std.testing.expectEqual(ImageTag.bmp, try tagFromExt("x.dib"));
     try std.testing.expectEqual(ImageTag.pbm, try tagFromExt("x.PBM"));

@@ -5,6 +5,7 @@ const Position = @import("position.zig");
 const OrderTag = @import("order.zig").OrderTag;
 
 const G = @import("g.zig").G;
+const G16 = @import("g16.zig").G16;
 const RGB = @import("rgb.zig").RGB;
 const BGR = @import("bgr.zig").BGR;
 const YCbCr = @import("ycbcr.zig").YCbCr;
@@ -30,11 +31,14 @@ pub const PixelTag = enum(u8) {
     rgba,
     bgra,
     ycbcra,
+    /// 16-bit gray, native endian (>8-bit gray sources: 16-bit PNG, PGM/PAM maxval > 255,
+    /// lossless JPEG / JPEG-LS). Converts to the 8-bit layouts as round(v / 257).
+    g16,
 
     pub fn bytesPerPixel(self: PixelTag) u16 {
         return switch (self) {
             .g => 1,
-            .ga => 2,
+            .ga, .g16 => 2,
             .rgb, .bgr, .ycbcr => 3,
             .rgba, .bgra, .ycbcra => 4,
         };
@@ -52,6 +56,8 @@ pub const Pixels = union(PixelTag) {
     bgra: []BGRA,
     ycbcra: []YCbCrA,
 
+    g16: []G16,
+
     /// Assumes data is:
     ///     - correct alignment (u24 vs u32)
     ///     - correct order (rgb vs bgr)
@@ -66,7 +72,7 @@ pub const Pixels = union(PixelTag) {
     }
 
     /// Reinterprets `bytes` as pixels of `tag` without copying.
-    /// Every pixel struct is an `extern struct` of u8s (align 1), so any byte slice
+    /// Every pixel struct is an `extern struct` of align-1 fields, so any byte slice
     /// whose length is a multiple of `tag.bytesPerPixel()` is valid.
     /// Ownership of `bytes` moves to the returned value (free with `deinit`).
     pub fn fromBytes(tag: PixelTag, bytes: []u8) Pixels {
@@ -99,7 +105,8 @@ pub const Pixels = union(PixelTag) {
     ) !Pixels {
         const bpp = comptime pixel_tag.bytesPerPixel();
         if (data.len == 0 or data.len % bpp != 0) return error.InvalidDataLength;
-        if (bpp == 1) return init(pixel_tag, gpa, data);
+        // one channel: nothing to reorder
+        if (bpp == 1 or pixel_tag == .g16) return init(pixel_tag, gpa, data);
         const Elem = std.meta.Elem(@FieldType(Pixels, @tagName(pixel_tag)));
         const Order = @typeInfo(@TypeOf(Elem.initOrder)).@"fn".params[1].type.?;
         const order = std.enums.fromInt(Order, @intFromEnum(data_order)) orelse //
@@ -194,7 +201,7 @@ pub const Pixels = union(PixelTag) {
         const dst_px: []DstElem = @ptrCast(dst);
         std.debug.assert(src_px.len == dst_px.len);
 
-        const kernel = @field(Pixels, methodVName(src_tag, dst_tag));
+        const kernel = comptime vectorKernel(src_tag, dst_tag);
         const src_step = comptime src_tag.bytesPerPixel() * misc.N;
         const dst_step = comptime dst_tag.bytesPerPixel() * misc.N;
         var k: usize = 0; // pixels done
@@ -203,6 +210,28 @@ pub const Pixels = union(PixelTag) {
         }
         const method = comptime methodName(dst_tag);
         for (src_px[k..], dst_px[k..]) |s, *d| d.* = @field(SrcElem, method)(s);
+    }
+
+    /// The `<dst>From<Src>` kernel; g16 goes through 8-bit gray (`misc.to8V` /
+    /// `misc.from8V`), so it matches the scalar `G16.toX` / `X.toG16` exactly.
+    fn vectorKernel(comptime src_tag: PixelTag, comptime dst_tag: PixelTag) fn (
+        *const [src_tag.bytesPerPixel() * misc.N]u8,
+    ) @Vector(dst_tag.bytesPerPixel() * misc.N, u8) {
+        const Src = [src_tag.bytesPerPixel() * misc.N]u8;
+        const Dst = @Vector(dst_tag.bytesPerPixel() * misc.N, u8);
+        if (src_tag == .g16) return struct {
+            fn k(src: *const Src) Dst {
+                const g: [misc.N]u8 = misc.to8V(simd.load(misc.N, u16, src));
+                return if (dst_tag == .g) g else @field(Pixels, methodVName(.g, dst_tag))(&g);
+            }
+        }.k;
+        if (dst_tag == .g16) return struct {
+            fn k(src: *const Src) Dst {
+                const g: U8_1 = if (src_tag == .g) src.* else @field(Pixels, methodVName(src_tag, .g))(src);
+                return @bitCast(misc.from8V(g));
+            }
+        }.k;
+        return @field(Pixels, methodVName(src_tag, dst_tag));
     }
 
     fn methodVName(comptime src: PixelTag, comptime dst: PixelTag) []const u8 {
@@ -231,7 +260,7 @@ pub const Pixels = union(PixelTag) {
 
     inline fn splitVecs(comptime M: usize, src: *const [misc.N * M]u8) [M]U8_1 {
         // M > 1
-        return std.simd.deinterlace(M, @as(@Vector(misc.N * M, u8), src.*));
+        return simd.deinterlace(M, @as(@Vector(misc.N * M, u8), src.*));
     }
 
     /// `simd.permute` for one chunk of the vector kernels: output byte c of a pixel is
@@ -255,7 +284,7 @@ pub const Pixels = union(PixelTag) {
             break :blk a;
         };
         const zero: U8_1 = @splat(0);
-        return std.simd.interlace(channels ++ .{zero}) | @as(@Vector(misc.N * bpp, u8), alpha);
+        return simd.interlace(channels ++ .{zero}) | @as(@Vector(misc.N * bpp, u8), alpha);
     }
 
     pub fn rgbFromG(src: *const [misc.N]u8) U8_3 {
@@ -293,7 +322,7 @@ pub const Pixels = union(PixelTag) {
 
     pub fn bgrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
         const rgb = splitVecs(3, src);
-        return std.simd.interlace(.{ rgb[2], rgb[1], rgb[0] });
+        return simd.interlace(.{ rgb[2], rgb[1], rgb[0] });
     }
 
     pub fn ycbcrFromRgb(src: *const [misc.N * 3]u8) U8_3 {
@@ -301,7 +330,7 @@ pub const Pixels = union(PixelTag) {
         const y = misc.lumV(rgb[0], rgb[1], rgb[2]);
         const cb = misc.blueChromaV(rgb[0], rgb[1], rgb[2]);
         const cr = misc.redChromaV(rgb[0], rgb[1], rgb[2]);
-        return std.simd.interlace(.{ y, cb, cr });
+        return simd.interlace(.{ y, cb, cr });
     }
 
     pub fn gaFromRgb(src: *const [misc.N * 3]u8) U8_2 {
@@ -332,7 +361,7 @@ pub const Pixels = union(PixelTag) {
 
     pub fn rgbFromBgr(src: *const [misc.N * 3]u8) U8_3 {
         const bgr = splitVecs(3, src);
-        return std.simd.interlace(.{ bgr[2], bgr[1], bgr[0] });
+        return simd.interlace(.{ bgr[2], bgr[1], bgr[0] });
     }
 
     pub fn ycbcrFromBgr(src: *const [misc.N * 3]u8) U8_3 {
@@ -340,7 +369,7 @@ pub const Pixels = union(PixelTag) {
         const y = misc.lumV(bgr[2], bgr[1], bgr[0]);
         const cb = misc.blueChromaV(bgr[2], bgr[1], bgr[0]);
         const cr = misc.redChromaV(bgr[2], bgr[1], bgr[0]);
-        return std.simd.interlace(.{ y, cb, cr });
+        return simd.interlace(.{ y, cb, cr });
     }
 
     pub fn gaFromBgr(src: *const [misc.N * 3]u8) U8_2 {
@@ -373,7 +402,7 @@ pub const Pixels = union(PixelTag) {
         const r = misc.redV(ycbcr[0], ycbcr[2]);
         const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
         const b = misc.blueV(ycbcr[0], ycbcr[1]);
-        return std.simd.interlace(.{ r, g, b });
+        return simd.interlace(.{ r, g, b });
     }
 
     pub fn bgrFromYcbcr(src: *const [misc.N * 3]u8) U8_3 {
@@ -381,7 +410,7 @@ pub const Pixels = union(PixelTag) {
         const b = misc.blueV(ycbcr[0], ycbcr[1]);
         const g = misc.greenV(ycbcr[0], ycbcr[1], ycbcr[2]);
         const r = misc.redV(ycbcr[0], ycbcr[2]);
-        return std.simd.interlace(.{ b, g, r });
+        return simd.interlace(.{ b, g, r });
     }
 
     pub fn gaFromYcbcr(src: *const [misc.N * 3]u8) U8_2 {
@@ -443,12 +472,12 @@ pub const Pixels = union(PixelTag) {
 
     pub fn rgbFromRgba(src: *const [misc.N * 4]u8) U8_3 {
         const rgba = splitVecs(4, src);
-        return std.simd.interlace(.{ rgba[0], rgba[1], rgba[2] });
+        return simd.interlace(.{ rgba[0], rgba[1], rgba[2] });
     }
 
     pub fn bgrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
         const rgba = splitVecs(4, src);
-        return std.simd.interlace(.{ rgba[2], rgba[1], rgba[0] });
+        return simd.interlace(.{ rgba[2], rgba[1], rgba[0] });
     }
 
     pub fn ycbcrFromRgba(src: *const [misc.N * 4]u8) U8_3 {
@@ -456,13 +485,13 @@ pub const Pixels = union(PixelTag) {
         const y = misc.lumV(rgba[0], rgba[1], rgba[2]);
         const cb = misc.blueChromaV(rgba[0], rgba[1], rgba[2]);
         const cr = misc.redChromaV(rgba[0], rgba[1], rgba[2]);
-        return std.simd.interlace(.{ y, cb, cr });
+        return simd.interlace(.{ y, cb, cr });
     }
 
     pub fn gaFromRgba(src: *const [misc.N * 4]u8) U8_2 {
         const rgba = splitVecs(4, src);
         const g = misc.lumV(rgba[0], rgba[1], rgba[2]);
-        return std.simd.interlace(.{ g, rgba[3] });
+        return simd.interlace(.{ g, rgba[3] });
     }
 
     pub fn bgraFromRgba(src: *const [misc.N * 4]u8) U8_4 {
@@ -474,7 +503,7 @@ pub const Pixels = union(PixelTag) {
         const y = misc.lumV(rgba[0], rgba[1], rgba[2]);
         const cb = misc.blueChromaV(rgba[0], rgba[1], rgba[2]);
         const cr = misc.redChromaV(rgba[0], rgba[1], rgba[2]);
-        return std.simd.interlace(.{ y, cb, cr, rgba[3] });
+        return simd.interlace(.{ y, cb, cr, rgba[3] });
     }
 
     pub fn gFromBgra(src: *const [misc.N * 4]u8) U8_1 {
@@ -484,12 +513,12 @@ pub const Pixels = union(PixelTag) {
 
     pub fn rgbFromBgra(src: *const [misc.N * 4]u8) U8_3 {
         const bgra = splitVecs(4, src);
-        return std.simd.interlace(.{ bgra[2], bgra[1], bgra[0] });
+        return simd.interlace(.{ bgra[2], bgra[1], bgra[0] });
     }
 
     pub fn bgrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
         const bgra = splitVecs(4, src);
-        return std.simd.interlace(.{ bgra[0], bgra[1], bgra[2] });
+        return simd.interlace(.{ bgra[0], bgra[1], bgra[2] });
     }
 
     pub fn ycbcrFromBgra(src: *const [misc.N * 4]u8) U8_3 {
@@ -497,13 +526,13 @@ pub const Pixels = union(PixelTag) {
         const y = misc.lumV(bgra[2], bgra[1], bgra[0]);
         const cb = misc.blueChromaV(bgra[2], bgra[1], bgra[0]);
         const cr = misc.redChromaV(bgra[2], bgra[1], bgra[0]);
-        return std.simd.interlace(.{ y, cb, cr });
+        return simd.interlace(.{ y, cb, cr });
     }
 
     pub fn gaFromBgra(src: *const [misc.N * 4]u8) U8_2 {
         const bgra = splitVecs(4, src);
         const g = misc.lumV(bgra[2], bgra[1], bgra[0]);
-        return std.simd.interlace(.{ g, bgra[3] });
+        return simd.interlace(.{ g, bgra[3] });
     }
 
     pub fn rgbaFromBgra(src: *const [misc.N * 4]u8) U8_4 {
@@ -515,7 +544,7 @@ pub const Pixels = union(PixelTag) {
         const y = misc.lumV(bgra[2], bgra[1], bgra[0]);
         const cb = misc.blueChromaV(bgra[2], bgra[1], bgra[0]);
         const cr = misc.redChromaV(bgra[2], bgra[1], bgra[0]);
-        return std.simd.interlace(.{ y, cb, cr, bgra[3] });
+        return simd.interlace(.{ y, cb, cr, bgra[3] });
     }
 
     pub fn gFromYcbcra(src: *const [misc.N * 4]u8) U8_1 {
@@ -527,7 +556,7 @@ pub const Pixels = union(PixelTag) {
         const r = misc.redV(ycbcra[0], ycbcra[2]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
         const b = misc.blueV(ycbcra[0], ycbcra[1]);
-        return std.simd.interlace(.{ r, g, b });
+        return simd.interlace(.{ r, g, b });
     }
 
     pub fn bgrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
@@ -535,17 +564,17 @@ pub const Pixels = union(PixelTag) {
         const b = misc.blueV(ycbcra[0], ycbcra[1]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
         const r = misc.redV(ycbcra[0], ycbcra[2]);
-        return std.simd.interlace(.{ b, g, r });
+        return simd.interlace(.{ b, g, r });
     }
 
     pub fn ycbcrFromYcbcra(src: *const [misc.N * 4]u8) U8_3 {
         const ycbcra = splitVecs(4, src);
-        return std.simd.interlace(.{ ycbcra[0], ycbcra[1], ycbcra[2] });
+        return simd.interlace(.{ ycbcra[0], ycbcra[1], ycbcra[2] });
     }
 
     pub fn gaFromYcbcra(src: *const [misc.N * 4]u8) U8_2 {
         const ycbcra = splitVecs(4, src);
-        return std.simd.interlace(.{ ycbcra[0], ycbcra[3] });
+        return simd.interlace(.{ ycbcra[0], ycbcra[3] });
     }
 
     pub fn rgbaFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
@@ -553,7 +582,7 @@ pub const Pixels = union(PixelTag) {
         const r = misc.redV(ycbcra[0], ycbcra[2]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
         const b = misc.blueV(ycbcra[0], ycbcra[1]);
-        return std.simd.interlace(.{ r, g, b, ycbcra[3] });
+        return simd.interlace(.{ r, g, b, ycbcra[3] });
     }
 
     pub fn bgraFromYcbcra(src: *const [misc.N * 4]u8) U8_4 {
@@ -561,7 +590,7 @@ pub const Pixels = union(PixelTag) {
         const b = misc.blueV(ycbcra[0], ycbcra[1]);
         const g = misc.greenV(ycbcra[0], ycbcra[1], ycbcra[2]);
         const r = misc.redV(ycbcra[0], ycbcra[2]);
-        return std.simd.interlace(.{ b, g, r, ycbcra[3] });
+        return simd.interlace(.{ b, g, r, ycbcra[3] });
     }
 };
 
@@ -1755,6 +1784,66 @@ test "convertV matches convert for every pair and pixel count" {
                     std.debug.print("convertV mismatch: {t} -> {t}, {} pixels\n", .{ from, to, n });
                     return err;
                 };
+            }
+        }
+    }
+}
+
+test "g16 <-> 8-bit layouts: vector kernels vs scalar reference at vector-edge widths" {
+    const gpa = std.testing.allocator;
+    const N = misc.N;
+    var prng = std.Random.DefaultPrng.init(0x616);
+    const rand = prng.random();
+    const widths = [_]usize{ 1, N - 1, N, N + 1, 2 * N + 3 };
+    for (widths) |n| {
+        // g16 -> every 8-bit layout: round(v / 257) = (v * 255 + 32767) / 65535 as gray
+        const wide = try gpa.alloc(u16, n);
+        defer gpa.free(wide);
+        for (wide, 0..) |*v, i| v.* = switch (i % 4) {
+            0 => 0,
+            1 => 65535,
+            2 => @intCast(128 + 257 * (i % 255)), // around the rounding edges
+            else => rand.int(u16),
+        };
+        const g16: Pixels = try .init(.g16, gpa, std.mem.sliceAsBytes(wide));
+        defer g16.deinit(gpa);
+        const want8 = try gpa.alloc(u8, n);
+        defer gpa.free(want8);
+        for (wide, want8) |v, *w| w.* = @intCast((@as(u32, v) * 255 + 32767) / 65535);
+        const g8: Pixels = try .init(.g, gpa, want8);
+        defer g8.deinit(gpa);
+        inline for (comptime std.enums.values(PixelTag)) |to| {
+            if (to == .g16) continue;
+            const ref = try g8.convert(to, gpa);
+            defer ref.deinit(gpa);
+            const v = try g16.convertV(to, gpa);
+            defer v.deinit(gpa);
+            const sc = try g16.convert(to, gpa);
+            defer sc.deinit(gpa);
+            std.testing.expectEqualSlices(u8, ref.asBytes(), v.asBytes()) catch |err| {
+                std.debug.print("g16 -> {t}, {} pixels\n", .{ to, n });
+                return err;
+            };
+            try std.testing.expectEqualSlices(u8, ref.asBytes(), sc.asBytes());
+        }
+
+        // g -> g16 is exact: v * 257; other layouts go through their gray
+        const narrow = try gpa.alloc(u8, n * 4);
+        defer gpa.free(narrow);
+        rand.bytes(narrow);
+        inline for (comptime std.enums.values(PixelTag)) |from| {
+            if (from == .g16) continue;
+            const src: Pixels = try .init(from, gpa, narrow[0 .. n * from.bytesPerPixel()]);
+            defer src.deinit(gpa);
+            const gray = try src.convert(.g, gpa);
+            defer gray.deinit(gpa);
+            const v = try src.convertV(.g16, gpa);
+            defer v.deinit(gpa);
+            const sc = try src.convert(.g16, gpa);
+            defer sc.deinit(gpa);
+            for (gray.g, v.g16, sc.g16) |px, a, b| {
+                try std.testing.expectEqual(@as(u16, px.g) * 257, a.g);
+                try std.testing.expectEqual(a.g, b.g);
             }
         }
     }
