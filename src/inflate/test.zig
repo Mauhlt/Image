@@ -797,11 +797,12 @@ test "inflate: bit-flip fuzz against std" {
     try testing.expect(ok > 0);
 }
 
+// Set `IMAGE_TEST_NII_GZ` to a real .nii.gz file to run this test; it is
+// skipped when the variable is unset or the file cannot be read.
 test "inflate: real .nii.gz (if present) matches std" {
-    const path = "~/code/zig/Segmentation/data/ds004696/sub-01/anat/sub-01_ses-mri01_T1w.nii.gz";
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
+    const path = std.process.Environ.getAlloc(testing.environ, gpa, "IMAGE_TEST_NII_GZ") catch return error.SkipZigTest;
+    defer gpa.free(path);
+    const io = testing.io;
     const gz = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30)) catch return error.SkipZigTest;
     defer gpa.free(gz);
     const want = (try stdDecompress(gz, .gzip)).?;
