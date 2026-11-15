@@ -4,9 +4,13 @@
     .fingerprint = 0x4fc2b5b4c083dd3,
     .minimum_zig_version = "0.18.0-dev.1005+75d48dfff",
     .dependencies = .{
-        // The de-facto Vulkan bindings: the sibling checkout, so Image,
-        // Renderer and everything built on them use the same one.
-        .Vulkan = .{ .path = "../Vulkan" },
+        // The Vulkan bindings. Renderer pins the same commit, so a program
+        // using Image and Renderer gets one shared "Vulkan" module. Local
+        // checkout: zig build --fork=../Vulkan
+        .Vulkan = .{
+            .url = "git+https://github.com/Mauhlt/Vulkan#b831b1e464db394c2ddb8da11d5dff93f1df4144",
+            .hash = "Vulkan-0.1.0-9v7hoY4bAACSpjlULEH56u3k6cYDDZa1hgBgVU-lkUuR",
+        },
     },
     .paths = .{
         "build.zig",
