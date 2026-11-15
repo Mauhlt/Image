@@ -19,7 +19,7 @@
 //! copies in whole SIMD chunks (overlap handled by offset class).
 //!
 //! `decompressSplit` writes the first `head.len` bytes to `head` and the rest to
-//! `out` (e.g. a NIfTI header and its voxels), with matches free to span the two.
+//! `out` (e.g. a file header and its data), with matches free to span the two.
 const std = @import("std");
 pub const crc32 = @import("crc32.zig");
 pub const adler32 = @import("adler32.zig");

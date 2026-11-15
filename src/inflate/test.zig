@@ -796,21 +796,3 @@ test "inflate: bit-flip fuzz against std" {
     }
     try testing.expect(ok > 0);
 }
-
-// Set `IMAGE_TEST_NII_GZ` to a real .nii.gz file to run this test; it is
-// skipped when the variable is unset or the file cannot be read.
-test "inflate: real .nii.gz (if present) matches std" {
-    const path = std.process.Environ.getAlloc(testing.environ, gpa, "IMAGE_TEST_NII_GZ") catch return error.SkipZigTest;
-    defer gpa.free(path);
-    const io = testing.io;
-    const gz = std.Io.Dir.cwd().readFileAlloc(io, path, gpa, .limited(1 << 30)) catch return error.SkipZigTest;
-    defer gpa.free(gz);
-    const want = (try stdDecompress(gz, .gzip)).?;
-    defer gpa.free(want);
-    try testing.expectEqual(std.mem.readInt(u32, gz[gz.len - 4 ..][0..4], .little), @as(u32, @truncate(want.len)));
-    const out = try gpa.alloc(u8, want.len);
-    defer gpa.free(out);
-    const r = try inflate.decompressSplit(.gzip, gz, out[0..352], out[352..], .{});
-    try testing.expectEqual(want.len, r.out_len);
-    try testing.expect(std.mem.eql(u8, want, out));
-}

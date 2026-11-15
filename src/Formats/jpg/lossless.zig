@@ -38,8 +38,8 @@ pub const Decoded = struct {
 ///
 /// Kept apart from jpg's bitreader.zig on purpose: this left-aligned layout
 /// (peek = one shift, no mask) and the 48-bit SWAR refill decode lossless
-/// streams ~20% faster than the shared right-aligned reader (Volume
-/// `zig build bench -- dicom`: 1.57 vs 1.93 ms per 512x512 16-bit slice).
+/// streams ~20% faster than the shared right-aligned reader (1.57 vs
+/// 1.93 ms per 512x512 16-bit image).
 const BitReader = struct {
     data: []const u8,
     pos: usize = 0,
