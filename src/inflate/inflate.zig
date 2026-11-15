@@ -21,7 +21,8 @@
 //! `decompressSplit` writes the first `head.len` bytes to `head` and the rest to
 //! `out` (e.g. a file header and its data), with matches free to span the two.
 const std = @import("std");
-pub const crc32 = @import("crc32.zig");
+/// CRC-32 lives in ImageCheck (one implementation for PNG and gzip).
+pub const crc32 = @import("ImageCheck").crc;
 pub const adler32 = @import("adler32.zig");
 
 /// Match-copy chunk width in bytes: the SIMD tuning width (Colors/misc.zig `N`).
@@ -820,7 +821,6 @@ const fixed: Tables = blk: {
 };
 
 test {
-    _ = crc32;
     _ = adler32;
     _ = @import("test.zig");
 }

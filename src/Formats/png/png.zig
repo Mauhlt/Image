@@ -373,7 +373,7 @@ fn writeChunk(w: *std.Io.Writer, c: RawChunk) !void {
     try w.writeInt(u32, @intCast(c.data.len), .big);
     try w.writeAll(c.name);
     try w.writeAll(c.data);
-    var h = std.hash.Crc32.init();
+    var h: @import("ImageCheck").crc.Crc32 = .{};
     h.update(c.name);
     h.update(c.data);
     try w.writeInt(u32, h.final(), .big);

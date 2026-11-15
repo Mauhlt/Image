@@ -1,7 +1,5 @@
 const std = @import("std");
 
-const Position = @import("position.zig");
-
 const OrderTag = @import("order.zig").OrderTag;
 
 const G = @import("g.zig").G;

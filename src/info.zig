@@ -23,10 +23,6 @@ pub fn byteLen(self: @This()) !usize {
     return n;
 }
 
-pub fn eqlShape(a: @This(), b: @This()) bool {
-    return a.width == b.width and a.height == b.height and a.tag == b.tag;
-}
-
 /// True for sRGB-encoded formats (`*_srgb`, `*_srgb_block`, `*_srgb_pack32`, ...).
 /// `vk.Format` is non-exhaustive: a value this vk.zig has no name for is not sRGB.
 pub fn isSrgb(fmt: vk.Format) bool {

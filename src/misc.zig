@@ -59,20 +59,6 @@ pub fn readFileInto(
     return buf.items;
 }
 
-pub fn timer(
-    io: std.Io,
-    n_iters: u64,
-    ctx: anytype,
-    comptime func: anytype,
-) !f64 {
-    const clock: std.Io.Clock = .awake;
-    const start = clock.now(io).toNanoseconds();
-    for (0..n_iters) |_| try func(ctx);
-    const end = clock.now(io).toNanoseconds();
-    const total: f64 = @floatFromInt(end - start);
-    return total / @as(f64, @floatFromInt(n_iters)) / std.time.ns_per_ms;
-}
-
 test "tagFromExt" {
     try std.testing.expectEqual(ImageTag.jpg, try tagFromExt("a/b.JPEG"));
     try std.testing.expectEqual(ImageTag.jls, try tagFromExt("ct.JLS"));
