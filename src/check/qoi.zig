@@ -27,7 +27,7 @@ pub fn check(data: []const u8, limits: root.Limits, depth: root.Depth) Error!Inf
         .height = h,
         .channels = channels,
         .bits = 8,
-        .decode_bytes = @as(u64, w) * h * channels,
+        .decode_bytes = @as(u64, w) * h *| channels,
     };
     if (depth == .header) return info;
     if (data.len < header_len + end_marker.len) return error.MissingImageData;

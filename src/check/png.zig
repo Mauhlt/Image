@@ -100,19 +100,23 @@ pub const Header = struct {
 
     /// Exact size of the inflated, filtered image data (all Adam7 passes
     /// for interlaced images): what a decoder must allocate for it.
+    /// Saturates at maxInt(u64): with `Limits.none` a 2^32-1 square 64-bit
+    /// image is larger than u64 (rows are below 2^35 bytes, so only the
+    /// products with the height and the total can overflow).
     pub fn rawBytes(h: Header) u64 {
         const bpp: u64 = h.bitsPerPixel();
-        if (!h.interlaced()) return @as(u64, h.height) * ((@as(u64, h.width) * bpp + 7) / 8 + 1);
+        if (!h.interlaced()) return @as(u64, h.height) *| ((@as(u64, h.width) * bpp + 7) / 8 + 1);
         const passes = [7][4]u8{
             .{ 0, 0, 8, 8 }, .{ 4, 0, 8, 8 }, .{ 0, 4, 4, 8 }, .{ 2, 0, 4, 4 },
             .{ 0, 2, 2, 4 }, .{ 1, 0, 2, 2 }, .{ 0, 1, 1, 2 },
         };
         var total: u64 = 0;
         for (passes) |p| {
-            const pw: u64 = if (h.width > p[0]) (h.width - p[0] + p[2] - 1) / p[2] else 0;
-            const ph: u64 = if (h.height > p[1]) (h.height - p[1] + p[3] - 1) / p[3] else 0;
+            // in u64: width - p[0] + p[2] - 1 can pass maxInt(u32)
+            const pw: u64 = if (h.width > p[0]) (@as(u64, h.width) - p[0] + p[2] - 1) / p[2] else 0;
+            const ph: u64 = if (h.height > p[1]) (@as(u64, h.height) - p[1] + p[3] - 1) / p[3] else 0;
             if (pw == 0) continue;
-            total += ph * ((pw * bpp + 7) / 8 + 1);
+            total +|= ph *| ((pw * bpp + 7) / 8 + 1);
         }
         return total;
     }
@@ -201,8 +205,9 @@ pub fn check(data: []const u8, limits: Limits, depth: root.Depth) Error!Info {
     };
     // Image's decoder: the inflated rows, the IDATs concatenated (when
     // there are several; bounded by the file), a zero row, the output.
-    const fixed = h.rawBytes() + (@as(u64, h.width) * 8 + 8) + root.mul(info.pixels(), h.decodedBytesPerPixel());
-    info.decode_bytes = fixed + data.len;
+    // Saturating: with `Limits.none` the terms can exceed u64.
+    const fixed = h.rawBytes() +| (@as(u64, h.width) * 8 + 8) +| root.mul(info.pixels(), h.decodedBytesPerPixel());
+    info.decode_bytes = fixed +| data.len;
     if (depth == .header) return info;
 
     var it: Chunks = .{ .data = data, .max_chunks = limits.max_chunks };
@@ -223,7 +228,7 @@ pub fn check(data: []const u8, limits: Limits, depth: root.Depth) Error!Info {
             idat_chunks += 1;
         } else if (c.is("IEND")) {
             if (idat == .before) return error.MissingImageData;
-            info.decode_bytes = fixed + if (idat_chunks > 1) idat_bytes else 0;
+            info.decode_bytes = fixed +| if (idat_chunks > 1) idat_bytes else 0;
             if (trns and h.color_type == .i) info.channels = 4;
             if (trns and (h.color_type == .g or h.color_type == .rgb)) info.channels += 1;
             return info;
@@ -462,6 +467,26 @@ test "chunk order" {
     try out.insertSlice(gpa, idat_at + idat.len, "\x00\x00\x00\x00teXt\x00\x00\x00\x00");
     fixtures.fixCrcs(out.items);
     try testing.expectError(error.InvalidChunkOrder, validate(out.items));
+}
+
+test "huge IHDR with Limits.none saturates instead of overflowing" {
+    const max = std.math.maxInt(u32);
+    for ([_]InterlaceMethod{ .none, .adam7 }) |im| {
+        const h: Header = .{ .width = max, .height = max, .bit_depth = .bit16, .color_type = .rgba, .interlace_method = im };
+        try testing.expectEqual(@as(u64, std.math.maxInt(u64)), h.rawBytes());
+    }
+    // Through the whole checker: a valid file whose IHDR says 2^32-1 square.
+    const gpa = testing.allocator;
+    const p = try fixtures.testImage(gpa, 2, 2);
+    defer gpa.free(p);
+    std.mem.writeInt(u32, p[16..20], max, .big);
+    std.mem.writeInt(u32, p[20..24], max, .big);
+    p[24] = 16;
+    fixtures.fixCrcs(p);
+    const info = try root.checkHeaderAs(.png, p, .none);
+    try testing.expectEqual(@as(u64, std.math.maxInt(u64)), info.decode_bytes);
+    // The default limits still refuse it.
+    try testing.expectError(error.ImageTooLarge, root.checkHeaderAs(.png, p, .{}));
 }
 
 test "interlaced raw size" {

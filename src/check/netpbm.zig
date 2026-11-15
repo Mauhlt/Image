@@ -141,12 +141,12 @@ pub fn check(data: []const u8, limits: root.Limits, depth: root.Depth, want: roo
         .height = h,
         .channels = @intCast(channels),
         .bits = bits,
-        .decode_bytes = px * channels * (if (channels == 1 and max > 255) @as(u64, 2) else 1),
+        .decode_bytes = px *| channels *| (if (channels == 1 and max > 255) @as(u64, 2) else 1),
     };
     if (depth == .header) return info;
     const raster: u64 = switch (magic) {
         '4' => ((@as(u64, w) + 7) / 8) * h,
-        '5', '6', '7' => px * channels * (if (max > 255) @as(u64, 2) else 1),
+        '5', '6', '7' => px *| channels *| (if (max > 255) @as(u64, 2) else 1),
         else => 1, // ASCII: at least one sample
     };
     if (raster > data.len - start) return error.Truncated;

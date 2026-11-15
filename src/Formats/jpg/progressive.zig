@@ -56,9 +56,14 @@ pub fn decode(scratch: std.mem.Allocator, data: []const u8, first: Header, plane
     var hdr = first;
     const mcus_x = ceilDiv(hdr.width, 8 * @as(usize, hdr.h_max));
     const mcus_y = ceilDiv(hdr.height, 8 * @as(usize, hdr.v_max));
+    // The grids and planes are sized by the first frame; everything below
+    // loops over its component count (a later SOF is rejected by Header).
+    const nc = first.n_components;
 
     var grids: [4]Grid = undefined;
-    for (hdr.components[0..hdr.n_components], 0..) |c, i| {
+    var n_grids: usize = 0;
+    defer for (grids[0..n_grids]) |g| scratch.free(g.blocks);
+    for (first.components[0..nc], 0..) |c, i| {
         const stride = mcus_x * c.h;
         grids[i] = .{
             .blocks = try scratch.alloc(Block, stride * mcus_y * c.v),
@@ -66,17 +71,18 @@ pub fn decode(scratch: std.mem.Allocator, data: []const u8, first: Header, plane
             .w = ceilDiv(planes[i].w, 8),
             .h = ceilDiv(planes[i].h, 8),
         };
+        n_grids += 1;
         @memset(grids[i].blocks, @splat(0));
     }
-    defer for (grids[0..hdr.n_components]) |g| scratch.free(g.blocks);
 
     while (true) {
         try decodeScan(&hdr, data, &grids, mcus_x, mcus_y);
         if (!try hdr.nextScan(data, Header.entropyEnd(data, hdr.scan_start))) break;
     }
+    if (hdr.n_components != nc) return Error.InvalidChunkOrder;
 
     // Dequantize with the tables in effect at the end, then IDCT into the planes.
-    for (hdr.components[0..hdr.n_components], 0..) |c, i| {
+    for (first.components[0..nc], 0..) |c, i| {
         const qt = &(hdr.qtables[c.tq] orelse return Error.MissingQuantTable);
         const g = grids[i];
         const p = planes[i];
@@ -164,8 +170,10 @@ fn decodeSequential(hdr: *const Header, c: Component, scan: *Scan, ci: usize, bl
 fn decodeDcFirst(hdr: *const Header, c: Component, scan: *Scan, ci: usize, block: *Block) !void {
     const s = try scan.br.decodeSymbol(&hdr.dc_tables[c.td].?);
     if (s > 15) return Error.InvalidHuffmanCode;
-    scan.pred[ci] += scan.br.receiveExtend(@intCast(s));
-    block[0] = @truncate(scan.pred[ci] << @intCast(hdr.al));
+    scan.pred[ci] = try jpg.addDc(scan.pred[ci], scan.br.receiveExtend(@intCast(s)));
+    // Shift in i64 (pred up to 2^31, al up to 13); the block keeps the low
+    // 16 bits, like libjpeg's JCOEF.
+    block[0] = @truncate(@as(i64, scan.pred[ci]) << @intCast(hdr.al));
 }
 
 fn decodeAcFirst(hdr: *const Header, c: Component, scan: *Scan, block: *Block) !void {
@@ -241,6 +249,28 @@ fn decodeAcRefine(hdr: *const Header, c: Component, scan: *Scan, block: *Block) 
         }
         scan.eobrun -= 1;
     }
+}
+
+test "progressive DC first: large predictor shifted by al, predictor overflow" {
+    const huffman = @import("huffman.zig");
+    var hdr: Header = .{};
+    hdr.progressive = true;
+    hdr.al = 13;
+    var bits: [16]u8 = @splat(0);
+    bits[0] = 1; // one 1-bit code "0": size category 15
+    hdr.dc_tables[0] = try huffman.DecTable.init(.{ .bits = bits, .values = &.{15} });
+    const c: Component = .{ .id = 1, .h = 1, .v = 1, .tq = 0 };
+    const stream = [_]u8{ 0x7F, 0xFF, 0x00, 0x00 }; // "0" + 15 one bits: +32767
+    var block: Block = @splat(0);
+
+    var scan: Scan = .{ .br = .{ .data = &stream } };
+    scan.pred[0] = 1 << 20; // (2^20 + 32767) << 13 does not fit i32
+    try decodeDcFirst(&hdr, c, &scan, 0, &block);
+    try std.testing.expectEqual(@as(i16, @truncate(@as(i64, (1 << 20) + 32767) << 13)), block[0]);
+
+    scan = .{ .br = .{ .data = &stream } };
+    scan.pred[0] = std.math.maxInt(i32);
+    try std.testing.expectError(Error.Overflow, decodeDcFirst(&hdr, c, &scan, 0, &block));
 }
 
 /// Adds the next lower bit to a nonzero coefficient, moving it away from zero.

@@ -65,11 +65,15 @@ pub fn decodeInto(scratch: std.mem.Allocator, data: []const u8, inf: Info, out: 
     const mcus_x = ceilDiv(hdr.width, 8 * @as(usize, hdr.h_max));
     const mcus_y = ceilDiv(hdr.height, 8 * @as(usize, hdr.v_max));
 
+    // Sized by this (the only) frame: Header rejects a second SOF, so the
+    // progressive path cannot change the component count under these planes.
     var planes: [4]Plane = undefined;
+    var n_planes: usize = 0;
+    defer for (planes[0..n_planes]) |p| scratch.free(p.data);
     for (hdr.components[0..hdr.n_components], 0..) |c, i| {
         planes[i] = try .alloc(scratch, hdr.width, hdr.height, mcus_x, mcus_y, c.h, hdr.h_max, c.v, hdr.v_max);
+        n_planes += 1;
     }
-    defer for (planes[0..hdr.n_components]) |p| scratch.free(p.data);
 
     // Progressive, or sequential with components spread over several scans.
     if (hdr.progressive or hdr.n_scan != hdr.n_components) {
@@ -138,8 +142,9 @@ fn decodeBlock(
     var coeffs: [64]f32 = @splat(0);
     const s = try br.decodeSymbol(dc);
     if (s > 15) return Error.InvalidHuffmanCode;
-    pred.* += br.receiveExtend(@intCast(s));
-    coeffs[0] = @floatFromInt(pred.* * @as(i32, qt[0]));
+    pred.* = try addDc(pred.*, br.receiveExtend(@intCast(s)));
+    // |pred| can reach 2^31 and qt[0] 65535: multiply in i64.
+    coeffs[0] = @floatFromInt(@as(i64, pred.*) * qt[0]);
 
     var k: usize = 1;
     var any_ac = false;
@@ -162,6 +167,13 @@ fn decodeBlock(
     if (!any_ac) return storeFlat(dct.inverseDc(coeffs[0]), dst, stride);
     const samples = dct.inverse(&coeffs);
     storeBlock(&samples, dst, stride);
+}
+
+/// The DC predictor plus the next difference (F.2.2.1). The predictor runs
+/// over every block of a restart interval, so a hostile stream can push it
+/// past i32; that is corrupt data (as in libjpeg-turbo), not a value to wrap.
+pub fn addDc(pred: i32, diff: i32) Error!i32 {
+    return std.math.add(i32, pred, diff) catch Error.Overflow;
 }
 
 /// Level-shifts, rounds and clamps an IDCT'd block into an 8x8 area of a plane.
@@ -404,6 +416,8 @@ test {
     _ = @import("ycbcr.zig");
     _ = @import("narrow.zig");
     _ = @import("lossless.zig");
+    _ = @import("header.zig");
+    _ = @import("progressive.zig");
 }
 
 test "zigzag is a permutation" {
@@ -591,6 +605,33 @@ test "encode/decode round trip at vector-edge widths" {
             try Image.expectSimilar(gpa, &img, &out, .rgb, 12);
         }
     };
+}
+
+test "DC predictor times quant table stays in range, predictor overflow is an error" {
+    var hdr: Header = .{};
+    var qt: [64]u16 = @splat(1);
+    qt[0] = 65535;
+    hdr.qtables[0] = qt;
+    var dc_bits: [16]u8 = @splat(0);
+    dc_bits[0] = 1; // one 1-bit code "0": size category 15
+    hdr.dc_tables[0] = try huffman.DecTable.init(.{ .bits = dc_bits, .values = &.{15} });
+    hdr.ac_tables[0] = try huffman.DecTable.init(.{ .bits = dc_bits, .values = &.{0x00} }); // "0": EOB
+    const c: Component = .{ .id = 1, .h = 1, .v = 1, .tq = 0, .td = 0, .ta = 0 };
+    // DC "0", 15 one bits (+32767; the 0xFF is stuffed), AC "0" (EOB)
+    const stream = [_]u8{ 0x7F, 0xFF, 0x00, 0x00 };
+    var dst: [64]u8 = undefined;
+
+    // pred * qt[0] = 132767 * 65535 > maxInt(i32): used to overflow.
+    var br: BitReader = .{ .data = &stream };
+    var pred: i32 = 100000;
+    try decodeBlock(&hdr, c, &br, &pred, &dst, 8);
+    try std.testing.expectEqual(@as(i32, 132767), pred);
+    try std.testing.expectEqual(@as(u8, 255), dst[0]);
+
+    // The predictor itself past maxInt(i32).
+    br = .{ .data = &stream };
+    pred = std.math.maxInt(i32) - 10;
+    try std.testing.expectError(Error.Overflow, decodeBlock(&hdr, c, &br, &pred, &dst, 8));
 }
 
 test "decode rejects bad data" {

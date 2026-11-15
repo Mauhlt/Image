@@ -49,7 +49,10 @@ const Params = struct {
     reset: i32,
 
     fn init(precision: u8, near: i32, preset: Preset) Error!Params {
-        const maxval: i32 = if (preset.maxval != 0) preset.maxval else (@as(i32, 1) << @intCast(precision)) - 1;
+        const full: i32 = (@as(i32, 1) << @intCast(precision)) - 1;
+        // C.2.4.1.1: MAXVAL in 1 .. 2^P - 1 (0 = default)
+        if (preset.maxval > full) return error.InvalidData;
+        const maxval: i32 = if (preset.maxval != 0) preset.maxval else full;
         if (near < 0 or near > @min(255, @divFloor(maxval, 2))) return error.InvalidData;
         const range = @divFloor(maxval + 2 * near, 2 * near + 1) + 1;
         const bpp = @max(2, ceilLog2(maxval + 1));
@@ -82,8 +85,20 @@ const Params = struct {
         p.t1 = if (preset.t1 != 0) preset.t1 else t1;
         p.t2 = if (preset.t2 != 0) preset.t2 else t2;
         p.t3 = if (preset.t3 != 0) preset.t3 else t3;
-        if (p.reset < 3) return error.InvalidData;
+        // C.2.4.1.1 limits: NEAR+1 <= T1 <= T2 <= T3 <= MAXVAL, 3 <= RESET <= max(255, MAXVAL)
+        if (p.t1 < near + 1 or p.t1 > maxval or p.t2 < p.t1 or p.t2 > maxval or p.t3 < p.t2 or p.t3 > maxval)
+            return error.InvalidData;
+        if (p.reset < 3 or p.reset > @max(255, maxval)) return error.InvalidData;
         return p;
+    }
+
+    /// The largest mapped error value a conforming stream carries: |Errval|
+    /// is reduced modulo RANGE (A.4.5), so MErrval stays within about RANGE,
+    /// and the limited-length escape yields at most 2^qbpp < 2 * RANGE.
+    /// Anything larger is corrupt, and bounding it keeps the context
+    /// statistics (A, B) and the reconstruction within i32.
+    fn maxMappedError(p: *const Params) i32 {
+        return 2 * p.range + 1;
     }
 
     fn clampT(i: i32, j: i32, maxval: i32) i32 {
@@ -191,9 +206,12 @@ const State = struct {
     }
 
     /// A.6.1 / A.6.2
+    /// `errval` is bounded by `Params.maxMappedError`, so B (kept in -N..0
+    /// below) cannot overflow; A grows by |errval| up to RESET (<= 65535)
+    /// times before it is halved, so it saturates rather than wrap.
     inline fn updateRegular(self: *State, p: *const Params, q: usize, errval: i32) void {
         self.b[q] += errval * (2 * p.near + 1);
-        self.a[q] += @intCast(@abs(errval));
+        self.a[q] +|= @intCast(@abs(errval));
         if (self.n[q] == p.reset) {
             self.a[q] >>= 1;
             self.b[q] = if (self.b[q] >= 0) self.b[q] >> 1 else -((1 - self.b[q]) >> 1);
@@ -221,7 +239,7 @@ const State = struct {
     inline fn updateRunInterruption(self: *State, p: *const Params, ritype: u1, errval: i32, emerr: i32) void {
         const q = 365 + @as(usize, ritype);
         if (errval < 0) self.nn[ritype] += 1;
-        self.a[q] += (emerr + 1 - @as(i32, ritype)) >> 1;
+        self.a[q] +|= (emerr + 1 - @as(i32, ritype)) >> 1;
         if (self.n[q] == p.reset) {
             self.a[q] >>= 1;
             self.n[q] >>= 1;
@@ -655,6 +673,7 @@ fn decodeLine(br: *BitReader, st: *State, p: *const Params, prev: []const i32, c
             const px = if (ritype == 1) ra else rb_i;
             const k = st.riK(ritype);
             const emerr = try br.golomb(k, p.limit - J[run_index.*] - 1, p.qbpp);
+            if (emerr > p.maxMappedError()) return error.InvalidData;
             const temp = emerr + ritype;
             const map = temp & 1;
             const abs_err = (temp + map) >> 1;
@@ -673,6 +692,7 @@ fn decodeLine(br: *BitReader, st: *State, p: *const Params, prev: []const i32, c
         const px = st.correctedPrediction(p, medPredict(ra, rb, rc), ctx);
         const k = State.golombK(st.n[ctx.q], st.a[ctx.q]);
         const merr = try br.golomb(k, p.limit, p.qbpp);
+        if (merr > p.maxMappedError()) return error.InvalidData;
         var errval: i32 = undefined;
         if (st.specialMap(p, k, ctx.q)) {
             errval = if (merr & 1 == 1) (merr - 1) >> 1 else -(merr >> 1) - 1;
@@ -937,6 +957,37 @@ test "golombK closed form matches the loop" {
         }
     }
     try testing.expectEqual(@as(u5, 24), State.golombK(1, std.math.maxInt(i32)));
+}
+
+test "context statistics stay in i32 on hostile streams" {
+    const p = try Params.init(8, 0, .{});
+    // A huge mapped error (k = 24 from an inflated A) is rejected, not used.
+    var st = State.init(&p);
+    st.a = @splat(1 << 28);
+    var prev = [_]i32{ 0, 0, 100, 100 }; // rd - rb = 100: regular mode
+    var cur = [_]i32{ 0, 0, 0, 0 };
+    // "1" (prefix 0), then 24 one bits (a byte after 0xFF carries 7 bits)
+    var br: BitReader = .{ .data = &.{ 0xFF, 0x7F, 0xFF, 0x7F, 0, 0, 0, 0 } };
+    var run_index: u8 = 0;
+    try testing.expectError(error.InvalidData, decodeLine(&br, &st, &p, &prev, &cur, 2, &run_index));
+
+    // A saturates instead of wrapping (RESET can be 65535 updates long).
+    st = State.init(&p);
+    st.a[0] = std.math.maxInt(i32) - 1;
+    st.updateRegular(&p, 0, 100);
+    try testing.expectEqual(@as(i32, std.math.maxInt(i32)), st.a[0]);
+    st.a[365] = std.math.maxInt(i32) - 1;
+    st.updateRunInterruption(&p, 0, 100, p.maxMappedError());
+    try testing.expectEqual(@as(i32, std.math.maxInt(i32)), st.a[365]);
+}
+
+test "LSE parameters outside the T.87 limits are rejected" {
+    try testing.expectError(error.InvalidData, Params.init(8, 0, .{ .maxval = 256 })); // > 2^P - 1
+    try testing.expectError(error.InvalidData, Params.init(8, 0, .{ .reset = 256 })); // > max(255, MAXVAL)
+    try testing.expectError(error.InvalidData, Params.init(8, 0, .{ .t1 = 300 })); // > MAXVAL
+    try testing.expectError(error.InvalidData, Params.init(8, 0, .{ .t1 = 9, .t2 = 5 })); // T2 < T1
+    try testing.expectError(error.InvalidData, Params.init(8, 2, .{ .t1 = 2 })); // T1 < NEAR + 1
+    _ = try Params.init(16, 0, .{ .reset = 65535 });
 }
 
 test "T.87 Annex H.3 example (4x4, 8 bit, lossless)" {

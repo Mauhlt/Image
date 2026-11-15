@@ -80,6 +80,9 @@ pub const DecTable = struct {
         var k: usize = 0;
         for (1..17) |len| {
             const count = spec.bits[len - 1];
+            // Overfull code space: reject before any entry is written, since
+            // `first + (1 << shift)` would run past `lookup` otherwise.
+            if (code + count > (@as(u32, 1) << @intCast(len))) return Error.InvalidHuffmanCode;
             if (count > 0) {
                 t.delta[len] = @as(i32, @intCast(k)) - @as(i32, @intCast(code));
                 for (0..count) |_| {
@@ -94,7 +97,6 @@ pub const DecTable = struct {
                 }
                 t.maxcode[len] = @as(i32, @intCast(code)) - 1;
             }
-            if (code > (@as(u32, 1) << @intCast(len))) return Error.InvalidHuffmanCode;
             code <<= 1;
         }
 
@@ -147,6 +149,27 @@ pub fn encTable(spec: Spec) [256]EncEntry {
         code <<= 1;
     }
     return t;
+}
+
+test "overfull huffman code is rejected before the lookup is filled" {
+    // Three 1-bit codes: the third would start at code 2 and fill
+    // lookup[512..768], past the 512-entry table.
+    var values: [256]u8 = @splat(0);
+    var bits: [16]u8 = @splat(0);
+    bits[0] = 3;
+    try std.testing.expectError(Error.InvalidHuffmanCode, DecTable.init(.{ .bits = bits, .values = &values }));
+    // 255 codes of length 1 (the old check only ran after filling).
+    bits[0] = 255;
+    try std.testing.expectError(Error.InvalidHuffmanCode, DecTable.init(.{ .bits = bits, .values = &values }));
+    // Overfull at a longer length after a full shorter one.
+    bits = @splat(0);
+    bits[0] = 2;
+    bits[1] = 1;
+    try std.testing.expectError(Error.InvalidHuffmanCode, DecTable.init(.{ .bits = bits, .values = &values }));
+    // Exactly full is still accepted.
+    bits = @splat(0);
+    bits[1] = 4;
+    _ = try DecTable.init(.{ .bits = bits, .values = &values });
 }
 
 test "huffman tables agree" {

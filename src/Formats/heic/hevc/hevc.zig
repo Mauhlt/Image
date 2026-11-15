@@ -30,20 +30,32 @@ pub fn decode(arena: Allocator, param_sets: []const []const u8, length_size: u8,
             continue;
         }
         if (sps_list.items.len == 0 or pps_list.items.len == 0) return Error.InvalidHeader;
-        var prev: ?*const params.SliceHeader = null;
         if (pic) |*p| {
+            // Later slice segments: H.265 7.4.7.1 requires the same PPS (so the
+            // same SPS) in every slice segment header of a picture. Parse them
+            // against the picture's own SPS and PPS only, so the slice address
+            // is checked against the CTB count the picture's tables were built
+            // for; a different pps_id is rejected by parseSliceHeader.
             const i = p.sliceStart(@intCast(p.slices.items.len - 1));
-            prev = &p.slices.items[i];
-        }
-        const pps_for = try findPps(pps_list.items, nal.rbsp);
-        const sps = try findSps(sps_list.items, pps_for.sps_id);
-        const hdr = try params.parseSliceHeader(arena, nal.rbsp, nal.type, sps, pps_list.items, prev);
-        if (pic == null) {
+            const prev = &p.slices.items[i];
+            const hdr = try params.parseSliceHeader(arena, nal.rbsp, nal.type, p.sps, @as(*const [1]params.Pps, p.pps), prev);
+            if (hdr.first_in_picture) return Error.InvalidHeader; // a second picture
+            try p.slices.append(arena, hdr);
+        } else {
+            const pps_for = try findPps(pps_list.items, nal.rbsp);
+            const sps = try findSps(sps_list.items, pps_for.sps_id);
+            const hdr = try params.parseSliceHeader(arena, nal.rbsp, nal.type, sps, pps_list.items, null);
             if (!hdr.first_in_picture) return Error.InvalidHeader;
-            pic = try .init(arena, sps, pps_for);
+            // The picture keeps its own copies: later parameter-set NAL units
+            // may grow (and move) the lists.
+            const sps_copy = try arena.create(params.Sps);
+            sps_copy.* = sps.*;
+            const pps_copy = try arena.create(params.Pps);
+            pps_copy.* = pps_for.*;
+            pic = try .init(arena, sps_copy, pps_copy);
+            try pic.?.slices.append(arena, hdr);
         }
         const p = &pic.?;
-        try p.slices.append(arena, hdr);
         try slice.decode(p, @intCast(p.slices.items.len - 1), nal, &carry);
     }
     var p = pic orelse return Error.InvalidHeader;
@@ -90,6 +102,51 @@ fn planeHashes(pic: *const Picture) [3]u64 {
         out[c] = h.final();
     }
     return out;
+}
+
+/// Test helper: a NAL unit from its 2-byte header and rbsp bits ("0"/"1"),
+/// with rbsp_trailing_bits appended.
+fn testNal(arena: Allocator, header: [2]u8, comptime rbsp_bits: []const u8) ![]u8 {
+    const all = rbsp_bits ++ "1";
+    const out = try arena.alloc(u8, 2 + (all.len + 7) / 8);
+    @memset(out, 0);
+    out[0..2].* = header;
+    for (all, 0..) |c, i| {
+        if (c == '1') out[2 + i / 8] |= @as(u8, 0x80) >> @intCast(i % 8);
+    }
+    return out;
+}
+
+test "later slice segments must use the picture's PPS and SPS" {
+    const heif = @import("../heif.zig");
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
+    defer threaded.deinit();
+    const data = try std.Io.Dir.cwd().readFileAlloc(threaded.io(), "src/Data/Read/heic/C002.heic", arena, .unlimited);
+    const t = (try heif.parse(arena, data)).tiles[0];
+
+    // A second PPS (id 1, on SPS 0): pps_id ue(1), sps_id ue(0), flags off,
+    // num_ref_idx ue(0) x2, init_qp se(0), cb / cr offsets se(0), ...,
+    // log2_parallel_merge_level ue(0).
+    const pps1 = try testNal(arena, .{ 34 << 1, 1 }, "010" ++ "1" ++ "00" ++ "000" ++ "00" ++ "11" ++ "1" ++ "000" ++ "11" ++ "0" ++ "00" ++ "000" ++ "0" ++ "0" ++ "0" ++ "0" ++ "1" ++ "0");
+    const sets = try std.mem.concat(arena, []const u8, &.{ t.param_sets, &.{pps1} });
+    // The picture still decodes with the extra PPS present ...
+    _ = try decode(arena, sets, t.length_size, t.data);
+
+    // ... but a later slice segment (IDR, not first in the picture) that
+    // names PPS 1 is rejected outright. Before the fix its header was
+    // parsed with PPS 1 and PPS 1's SPS (its address checked against that
+    // SPS's CTB count) while the picture's tables follow the first slice's.
+    const bad = try testNal(arena, .{ 19 << 1, 1 }, "0" ++ "0" ++ "010");
+    var stream: std.ArrayList(u8) = .empty;
+    try stream.appendSlice(arena, t.data);
+    var len_be: [4]u8 = undefined;
+    std.mem.writeInt(u32, &len_be, @intCast(bad.len), .big);
+    try stream.appendSlice(arena, len_be[4 - t.length_size ..]);
+    try stream.appendSlice(arena, bad);
+    try std.testing.expectError(Error.InvalidHeader, decode(arena, sets, t.length_size, stream.items));
 }
 
 test "decode the HEIC samples bit-exactly" {

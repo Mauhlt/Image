@@ -63,12 +63,16 @@ fn parse(self: *@This(), data: []const u8, start: usize, until: ParseUntil) Erro
         switch (s.marker) {
             .SOI, .TEM, .RST0, .RST1, .RST2, .RST3, .RST4, .RST5, .RST6, .RST7 => {},
             .EOI => return false,
+            // One frame per image: a second SOF (e.g. between scans) would change
+            // the component count after the planes / grids were sized.
             .SOF0, .SOF1, .SOF2 => {
+                if (self.n_components != 0) return Error.InvalidChunkOrder;
                 try self.decodeFrame(seg);
                 self.progressive = s.marker == .SOF2;
                 if (until == .frame) return true;
             },
             .SOF3 => {
+                if (self.n_components != 0) return Error.InvalidChunkOrder;
                 self.lossless = true;
                 return true;
             },
@@ -101,7 +105,6 @@ fn decodeFrame(self: *@This(), seg: []const u8) Error!void {
     const nc = seg[5];
     if (nc != 1 and nc != 3) return Error.InvalidComponentCount; // CMYK unsupported
     if (seg.len < 6 + @as(usize, nc) * 3) return Error.InvalidChunkLen;
-    self.n_components = nc;
     self.h_max = 1;
     self.v_max = 1;
     for (0..nc) |i| {
@@ -113,6 +116,24 @@ fn decodeFrame(self: *@This(), seg: []const u8) Error!void {
         self.h_max = @max(self.h_max, h);
         self.v_max = @max(self.v_max, v);
     }
+    // Set last: n_components != 0 marks a complete, valid frame.
+    self.n_components = nc;
+}
+
+test "a second SOF is rejected" {
+    // SOI, SOF0 (1x1, 1 component), SOF0 (1x1, 3 components), EOI
+    const sof1 = [_]u8{ 0xFF, 0xC0, 0x00, 0x0B, 8, 0, 1, 0, 1, 1, 1, 0x11, 0 };
+    const sof3 = [_]u8{ 0xFF, 0xC0, 0x00, 0x11, 8, 0, 1, 0, 1, 3, 1, 0x11, 0, 2, 0x11, 0, 3, 0x11, 0 };
+    const data = [_]u8{ 0xFF, 0xD8 } ++ sof1 ++ sof3 ++ [_]u8{ 0xFF, 0xD9 };
+    try std.testing.expectError(Error.InvalidChunkOrder, decode(&data, .scan));
+    // A second frame met while looking for the next scan (progressive path).
+    var hdr: @This() = .{};
+    try std.testing.expect(try hdr.parse(&([_]u8{ 0xFF, 0xD8 } ++ sof1), 2, .frame));
+    try std.testing.expectError(Error.InvalidChunkOrder, hdr.nextScan(&sof3, 0));
+    try std.testing.expectEqual(@as(u8, 1), hdr.n_components);
+    // ... and an SOF3 after an SOF0.
+    const lossless_sof = [_]u8{ 0xFF, 0xC3, 0x00, 0x0B, 8, 0, 1, 0, 1, 1, 1, 0x11, 0 };
+    try std.testing.expectError(Error.InvalidChunkOrder, hdr.nextScan(&lossless_sof, 0));
 }
 
 fn decodeQuant(self: *@This(), seg: []const u8) Error!void {

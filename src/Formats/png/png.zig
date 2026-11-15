@@ -235,7 +235,8 @@ const Pass = struct {
     }
 
     fn span(full: u32, start: u8, step: u8) usize {
-        return if (full > start) (full - start + step - 1) / step else 0;
+        // in u64: full - start + step - 1 passes maxInt(u32) for widths near it
+        return @intCast(if (full > start) (@as(u64, full) - start + step - 1) / step else 0);
     }
 };
 
@@ -601,6 +602,13 @@ fn randomPng(gpa: std.mem.Allocator, random: std.Random, hdr: *const Header, pal
     try writeChunk(w, .{ .name = "IDAT", .data = zlib.written() });
     try writeChunk(w, .{ .name = "IEND", .data = &.{} });
     return aw.toOwnedSlice();
+}
+
+test "adam7 pass size near maxInt(u32)" {
+    const max = std.math.maxInt(u32);
+    try std.testing.expectEqual(@as(usize, (max + 7) / 8), Pass.span(max, 0, 8));
+    try std.testing.expectEqual(@as(usize, (max - 1) / 2), Pass.span(max, 1, 2));
+    try std.testing.expectEqual(@as(usize, 0), Pass.span(4, 4, 8));
 }
 
 test "png adam7 matches non-interlaced twins" {

@@ -43,7 +43,7 @@ pub fn check(data: []const u8, limits: root.Limits, depth: root.Depth) Error!Inf
         .channels = 4,
         .bits = 8,
         // Every image of the base level decoded to RGBA8, plus the mip chain (4/3).
-        .decode_bytes = root.mul(root.mul(@as(u64, w) * h * 4, faces * layers), 4) / 3,
+        .decode_bytes = root.mul(root.mul(@as(u64, w) * h *| 4, faces * layers), 4) / 3,
     };
 }
 

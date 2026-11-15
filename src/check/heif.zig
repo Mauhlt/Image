@@ -151,7 +151,7 @@ pub fn check(data: []const u8, limits: root.Limits, depth: root.Depth) Error!Inf
         .bits = 8,
         // HEVC pictures (16-bit planes, colour and alpha), the assembled
         // image, then the RGB(A) output.
-        .decode_bytes = px * 12 + px * 4,
+        .decode_bytes = px *| 12 +| px *| 4,
     };
 }
 

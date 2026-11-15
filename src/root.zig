@@ -117,8 +117,27 @@ pub fn decodeInto(
     }
 }
 
+/// What `decode` and `read` accept: `decode` sizes its output from the header
+/// alone, so without a cap a 64-byte file could ask for 16 GiB or more.
+/// At most 2^28 pixels (`check.Limits`' default; 1 GiB as RGBA), any width
+/// or height within that. Use `decodeLimited` (or `ReadArgs.limits`) for
+/// other limits, `check.Limits.none` for none.
+pub const default_limits: check.Limits = .{
+    .max_width = std.math.maxInt(u32),
+    .max_height = std.math.maxInt(u32),
+};
+
 pub fn decode(tag: ImageTag, gpa: std.mem.Allocator, data: []const u8) !Image {
+    return decodeLimited(tag, gpa, data, default_limits);
+}
+
+/// `decode`, refusing (`ImageTooLarge`, `DecodeTooLarge`) an image whose
+/// header is past `limits` (dimensions, pixels, output bytes) before
+/// anything is allocated.
+pub fn decodeLimited(tag: ImageTag, gpa: std.mem.Allocator, data: []const u8, limits: check.Limits) !Image {
     const inf = try info(tag, data);
+    try limits.admit(inf.width, inf.height);
+    if (try inf.byteLen() > limits.max_decode_bytes) return error.DecodeTooLarge;
     const bytes = try gpa.alloc(u8, try inf.byteLen());
     errdefer gpa.free(bytes);
     var arena: std.heap.ArenaAllocator = .init(gpa);
@@ -192,6 +211,8 @@ pub const ReadArgs = struct {
     dir: std.Io.Dir = undefined,
     filepath: []const u8,
     path_type: PathType = .cwd,
+    /// Size limits applied to the header before decoding (see `default_limits`).
+    limits: check.Limits = default_limits,
 };
 
 pub fn openFile(io: std.Io, dir: std.Io.Dir, path: []const u8, path_type: PathType) !std.Io.File {
@@ -211,7 +232,7 @@ pub fn read(args: ReadArgs) !Image {
     var buf: std.ArrayList(u8) = .empty;
     defer buf.deinit(args.gpa);
     const data = try misc.readFileInto(args.io, args.gpa, file, &buf);
-    return decode(tag, args.gpa, data);
+    return decodeLimited(tag, args.gpa, data, args.limits);
 }
 
 /// Encodes + writes a file; format is chosen from the extension.
@@ -321,6 +342,26 @@ fn testRead(io: std.Io, gpa: std.mem.Allocator, path: []const u8) !Image {
         std.debug.print("failed reading {s}: {t}\n", .{ path, err });
         return err;
     };
+}
+
+test "decode refuses a huge header before allocating" {
+    const gpa = std.testing.allocator;
+    const p = try check.png.fixtures.testImage(gpa, 2, 2);
+    defer gpa.free(p);
+    // 20000 x 20000 RGBA: 1.6 GB from a ~100-byte file, past 2^28 pixels.
+    std.mem.writeInt(u32, p[16..20], 20000, .big);
+    std.mem.writeInt(u32, p[20..24], 20000, .big);
+    check.png.fixtures.fixCrcs(p);
+    try std.testing.expectError(error.ImageTooLarge, decode(.png, gpa, p));
+    try std.testing.expectError(error.ImageTooLarge, decodeLimited(.png, gpa, p, .{ .max_pixels = 3 }));
+    try std.testing.expectError(error.DecodeTooLarge, decodeLimited(.png, gpa, p, .{ .max_width = 1 << 16, .max_height = 1 << 16, .max_pixels = 1 << 30, .max_decode_bytes = 1 << 20 }));
+    // Within the limits it decodes as before.
+    const small = try check.png.fixtures.testImage(gpa, 3, 2);
+    defer gpa.free(small);
+    const img = try decode(.png, gpa, small);
+    defer img.deinit(gpa);
+    try std.testing.expectEqual(@as(u32, 3), img.width);
+    try std.testing.expectError(error.ImageTooLarge, decodeLimited(.png, gpa, small, .{ .max_pixels = 5 }));
 }
 
 test "QOI - Basics" {

@@ -38,7 +38,7 @@ pub fn check(data: []const u8, limits: root.Limits, depth: root.Depth) Error!Inf
         .height = h,
         .channels = 4,
         .bits = 8,
-        .decode_bytes = root.mul(root.mul(@as(u64, w) * h * 4, layers * faces), 4) / 3,
+        .decode_bytes = root.mul(root.mul(@as(u64, w) * h *| 4, layers * faces), 4) / 3,
     };
     if (depth == .header) return info;
     for (0..levels) |i| {

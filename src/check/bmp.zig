@@ -56,7 +56,7 @@ pub fn check(data: []const u8, limits: root.Limits, depth: root.Depth) Error!Inf
         .height = h,
         .channels = if (has_alpha) 4 else 3,
         .bits = @intCast(@min(bits, 8)),
-        .decode_bytes = root.mul(@as(u64, w) * h, if (rle) 6 else 4) + @as(u64, w) * 4,
+        .decode_bytes = root.mul(@as(u64, w) * h, if (rle) 6 else 4) +| @as(u64, w) * 4,
     };
     if (bits == 32 and compression == 0) info.channels = 3;
     if (depth == .header) return info;
