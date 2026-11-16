@@ -541,46 +541,56 @@ pub fn parseSliceHeader(arena: std.mem.Allocator, rbsp: []const u8, nal_type: Na
     return h;
 }
 
-test "parse parameter sets and slice headers of the HEIC samples" {
-    const heif = @import("../heif.zig");
+test "parse parameter sets and slice headers of generated streams" {
     const bits = @import("bits.zig");
+    const testgen = @import("../testgen.zig");
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    for ([_][]const u8{ "src/Data/Read/heic/C002.heic", "src/Data/Read/heic/C014.heic", "src/Data/Read/heic/C021.heic" }) |path| {
-        const data = try std.Io.Dir.cwd().readFileAlloc(io, path, arena, .unlimited);
-        const img = try heif.parse(arena, data);
-        for (img.tiles) |tile| {
-            var sps_list: std.ArrayList(Sps) = .empty;
-            var pps_list: std.ArrayList(Pps) = .empty;
-            for (tile.param_sets) |ps| {
-                const nal = try bits.parseNal(arena, ps);
-                switch (nal.type) {
-                    .sps => try sps_list.append(arena, try parseSps(nal.rbsp)),
-                    .pps => try pps_list.append(arena, try parsePps(arena, nal.rbsp, sps_list.items)),
-                    else => {},
-                }
+    var mono = try testgen.pcmPicture(arena, 48, 40, 3);
+    mono.crop = .{ 0, 0, 2, 6 };
+    const Case = struct { pic: testgen.Picture, starts: []const u32 };
+    const cases = [_]Case{
+        .{ .pic = (try testgen.sample(arena, true, false)).picture, .starts = &.{ 0, 3 } },
+        .{ .pic = mono, .starts = &.{0} },
+    };
+    for (cases) |c| {
+        const s = try testgen.encode(arena, c.pic);
+        var sps_list: std.ArrayList(Sps) = .empty;
+        var pps_list: std.ArrayList(Pps) = .empty;
+        for (s.param_sets) |ps| {
+            const nal = try bits.parseNal(arena, ps);
+            switch (nal.type) {
+                .sps => try sps_list.append(arena, try parseSps(nal.rbsp)),
+                .pps => try pps_list.append(arena, try parsePps(arena, nal.rbsp, sps_list.items)),
+                else => {},
             }
-            const sps = &sps_list.items[0];
-            try std.testing.expectEqual(tile.width, sps.width - sps.crop_left - sps.crop_right);
-            // walk the length-prefixed slice NAL units
-            var pos: usize = 0;
-            var slices: usize = 0;
-            while (pos + tile.length_size <= tile.data.len) {
-                var len: usize = 0;
-                for (tile.data[pos..][0..tile.length_size]) |b| len = (len << 8) | b;
-                pos += tile.length_size;
-                const nal = try bits.parseNal(arena, tile.data[pos..][0..len]);
-                pos += len;
-                if (!nal.type.isSlice()) continue;
-                const h = try parseSliceHeader(arena, nal.rbsp, nal.type, sps, pps_list.items, null);
-                try std.testing.expect(h.data_offset > 0 and h.data_offset / 8 < nal.rbsp.len);
-                slices += 1;
-            }
-            try std.testing.expect(slices >= 1);
+        }
+        const sps = &sps_list.items[0];
+        try std.testing.expectEqual(c.pic.width, sps.width);
+        try std.testing.expectEqual(c.pic.height, sps.height);
+        try std.testing.expectEqual(c.pic.chroma_format, sps.chroma_format_idc);
+        try std.testing.expectEqual(c.pic.crop, [4]u32{ sps.crop_left, sps.crop_right, sps.crop_top, sps.crop_bottom });
+        try std.testing.expectEqual(@as(u3, 3), sps.log2_min_cb);
+        try std.testing.expectEqual(@as(u3, 4), sps.log2_ctb);
+        try std.testing.expect(sps.pcm_enabled and sps.pcm_loop_filter_disabled and !sps.sao_enabled);
+        try std.testing.expectEqual(@as(u5, 8), sps.pcm_bit_depth_luma);
+        try std.testing.expectEqual(@as(u3, 3), sps.log2_min_pcm);
+        try std.testing.expectEqual(@as(u3, 4), sps.log2_max_pcm);
+        try std.testing.expect(sps.video_full_range);
+        try std.testing.expectEqual(@as(u8, 1), sps.matrix);
+        try std.testing.expect(pps_list.items[0].deblocking_disabled);
+        try std.testing.expectEqual(@as(i32, 26), pps_list.items[0].init_qp);
+
+        try std.testing.expectEqual(c.starts.len, s.slices.len);
+        for (s.slices, c.starts) |n, start| {
+            const nal = try bits.parseNal(arena, n);
+            try std.testing.expect(nal.type.isSlice());
+            const h = try parseSliceHeader(arena, nal.rbsp, nal.type, sps, pps_list.items, null);
+            try std.testing.expectEqual(start == 0, h.first_in_picture);
+            try std.testing.expectEqual(start, h.address);
+            try std.testing.expectEqual(c.pic.qp, h.qp);
+            try std.testing.expect(h.data_offset > 0 and h.data_offset % 8 == 0 and h.data_offset / 8 < nal.rbsp.len);
         }
     }
 }

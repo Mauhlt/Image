@@ -450,26 +450,39 @@ fn findAlpha(arena: Allocator, meta: *const Meta, file: []const u8, image_id: u3
     return null;
 }
 
-test "parse HEIF structure of the conformance samples" {
+test "parse the HEIF structure of a generated file" {
+    const testgen = @import("testgen.zig");
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    // sizes as reported by Windows' HEIF decoder
-    const cases = [_]struct { []const u8, u32, u32 }{
-        .{ "src/Data/Read/heic/C002.heic", 1280, 720 },
-        .{ "src/Data/Read/heic/C014.heic", 300, 300 },
-        .{ "src/Data/Read/heic/C021.heic", 1280, 720 },
-    };
-    for (cases) |c| {
-        const data = try std.Io.Dir.cwd().readFileAlloc(io, c[0], arena, .unlimited);
-        const img = try parse(arena, data);
+    // a 2x1 grid of 48x32 tiles with colr, clap and irot, and an alpha plane
+    const file = try testgen.sampleFile(arena);
+    const img = try parse(arena, file.data);
+    try std.testing.expectEqual(@as(u32, 2), img.columns);
+    try std.testing.expectEqual(@as(u32, 1), img.rows);
+    try std.testing.expectEqual(@as(u32, 96), img.width);
+    try std.testing.expectEqual(@as(u32, 32), img.height);
+    try std.testing.expectEqual(@as(usize, 2), img.tiles.len);
+    for (img.tiles) |t| {
         // every coded image carries its VPS, SPS and PPS
-        for (img.tiles) |t| try std.testing.expect(t.param_sets.len >= 3 and t.data.len > 0);
-        const w, const h = img.outputSize();
-        try std.testing.expectEqual(c[1], w);
-        try std.testing.expectEqual(c[2], h);
+        try std.testing.expect(t.param_sets.len == 3 and t.data.len > 0);
+        try std.testing.expectEqual(@as(u8, 4), t.length_size);
+        try std.testing.expectEqual(@as(u32, 48), t.width);
+        try std.testing.expectEqual(@as(u32, 32), t.height);
     }
+    try std.testing.expectEqual(Image.Crop{ .x = 3, .y = 1, .width = 90, .height = 30 }, img.crop.?);
+    try std.testing.expectEqual(@as(u2, 1), img.rotation);
+    try std.testing.expectEqual(@as(?Image.Mirror, null), img.mirror);
+    try std.testing.expect(img.color.explicit and img.color.full_range);
+    try std.testing.expectEqual(@as(u16, 1), img.color.matrix);
+    try std.testing.expectEqual(@as(usize, 1), img.alpha.?.len);
+    const w, const h = img.outputSize();
+    try std.testing.expectEqual(file.width, w);
+    try std.testing.expectEqual(file.height, h);
+
+    // not HEIF: no known brand
+    const bad = try arena.dupe(u8, file.data);
+    @memcpy(bad[8..12], "avif");
+    @memcpy(bad[16..24], "avifavif");
+    try std.testing.expectError(Error.UnexpectedSignature, parse(arena, bad));
 }

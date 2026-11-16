@@ -150,8 +150,14 @@ pub const Decoder = struct {
     /// codeword ends (its last bit is a 1, then zero bits to byte alignment).
     /// PCM samples start here.
     pub fn bytePosAfterTerminate(d: *const Decoder) usize {
-        // the 9 offset bits read so far end at `pos`; the codeword has one more bit
-        return (d.pos + 1 + 7) / 8;
+        // The decoder has read exactly the codeword: 9 bits at init plus one per
+        // renormalization shift, and the encoder's flush (EncodeFlush) ends the
+        // codeword at that same bit, its final 1. pcm_alignment_zero_bits then
+        // pad to the next byte boundary, none if the codeword ends on one.
+        // (This used (pos + 8) / 8, which skipped a whole byte of samples
+        // whenever the codeword ended byte-aligned; see "PCM samples after
+        // arithmetic codewords of every length" in hevc.zig.)
+        return (d.pos + 7) / 8;
     }
 };
 
@@ -163,14 +169,35 @@ test "context init matches the spec formula" {
     // pre = ((-5*26)>>4) + 72 = -9 + 72 = 63 -> valMps 0, pStateIdx 0
     try std.testing.expectEqual(@as(u8, 0), c.split_cu[0]);
 }
-/// Spec arithmetic encoder (H.265 9.3.4.x encoder side, as in HM), for round-trip tests.
-const TestEncoder = struct {
+/// Spec arithmetic encoder (H.265 9.3.4.x encoder side, as in HM), for
+/// round-trip tests and the test stream generator (`../testgen.zig`).
+pub const TestEncoder = struct {
     low: u32 = 0,
     range: u32 = 510,
     outstanding: u32 = 0,
     first: bool = true,
     bits: std.ArrayList(u1) = .empty,
     gpa: std.mem.Allocator,
+
+    /// 9.3.2.5: a fresh arithmetic codeword (after PCM samples); the
+    /// output written so far is kept.
+    pub fn restart(e: *TestEncoder) void {
+        e.low = 0;
+        e.range = 510;
+        e.outstanding = 0;
+        e.first = true;
+    }
+    /// Raw bits after the codeword (zero alignment, PCM samples), MSB first.
+    pub fn raw(e: *TestEncoder, v: u32, n: u6) !void {
+        var i = n;
+        while (i > 0) {
+            i -= 1;
+            try e.bits.append(e.gpa, @truncate(v >> @intCast(i)));
+        }
+    }
+    pub fn alignZero(e: *TestEncoder) !void {
+        while (e.bits.items.len % 8 != 0) try e.bits.append(e.gpa, 0);
+    }
 
     fn putBit(e: *TestEncoder, b: u1) !void {
         if (e.first) e.first = false else try e.bits.append(e.gpa, b);
@@ -191,7 +218,7 @@ const TestEncoder = struct {
             e.low <<= 1;
         }
     }
-    fn decision(e: *TestEncoder, ctx: *u8, bin: u1) !void {
+    pub fn decision(e: *TestEncoder, ctx: *u8, bin: u1) !void {
         const state = ctx.* >> 1;
         var mps: u1 = @truncate(ctx.*);
         const lps: u32 = tables.range_lps[state][(e.range >> 6) & 3];
@@ -206,7 +233,7 @@ const TestEncoder = struct {
         }
         try e.renorm();
     }
-    fn bypass(e: *TestEncoder, bin: u1) !void {
+    pub fn bypass(e: *TestEncoder, bin: u1) !void {
         e.low <<= 1;
         if (bin == 1) e.low += e.range;
         if (e.low >= 1024) {
@@ -219,16 +246,18 @@ const TestEncoder = struct {
             e.outstanding += 1;
         }
     }
-    fn terminate(e: *TestEncoder, bin: u1) !void {
+    pub fn terminate(e: *TestEncoder, bin: u1) !void {
         e.range -= 2;
         if (bin == 1) {
             e.low += e.range;
-            // flush
+            // flush (EncodeFlush)
             e.range = 2;
             try e.renorm();
             try e.putBit(@truncate(e.low >> 9));
             try e.bits.append(e.gpa, @truncate(e.low >> 8));
-            try e.bits.append(e.gpa, 1); // rbsp stop bit
+            // the codeword's last bit: the rbsp stop bit after
+            // end_of_slice_segment_flag, or followed by pcm_alignment_zero_bits
+            try e.bits.append(e.gpa, 1);
         } else {
             try e.renorm();
         }

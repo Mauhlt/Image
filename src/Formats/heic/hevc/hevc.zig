@@ -93,17 +93,6 @@ fn findSps(list: []const params.Sps, id: u32) !*const params.Sps {
     return Error.InvalidHeader;
 }
 
-/// Wyhash of the 8-bit planes, to compare against reference decodes.
-fn planeHashes(pic: *const Picture) [3]u64 {
-    var out: [3]u64 = @splat(0);
-    for (0..3) |c| {
-        var h: std.hash.Wyhash = .init(0);
-        for (pic.planes[c]) |v| h.update(&.{@as(u8, @intCast(v))});
-        out[c] = h.final();
-    }
-    return out;
-}
-
 /// Test helper: a NAL unit from its 2-byte header and rbsp bits ("0"/"1"),
 /// with rbsp_trailing_bits appended.
 fn testNal(arena: Allocator, header: [2]u8, comptime rbsp_bits: []const u8) ![]u8 {
@@ -117,23 +106,34 @@ fn testNal(arena: Allocator, header: [2]u8, comptime rbsp_bits: []const u8) ![]u
     return out;
 }
 
+// The tests decode pictures made by ../testgen.zig, whose decoded samples are
+// known exactly (PCM samples, and predictions worked out by hand).
+const testgen = @import("../testgen.zig");
+
+fn expectPlanes(pic: *const Picture, expected: [3][]const u8) !void {
+    for (0..3) |c| {
+        try std.testing.expectEqual(expected[c].len, pic.planes[c].len);
+        for (pic.planes[c], expected[c], 0..) |got, want, i| if (got != want) {
+            std.debug.print("plane {} at ({}, {}): got {}, expected {}\n", .{ c, i % pic.width[c], i / pic.width[c], got, want });
+            return error.TestExpectedEqual;
+        };
+    }
+}
+
 test "later slice segments must use the picture's PPS and SPS" {
-    const heif = @import("../heif.zig");
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const data = try std.Io.Dir.cwd().readFileAlloc(threaded.io(), "src/Data/Read/heic/C002.heic", arena, .unlimited);
-    const t = (try heif.parse(arena, data)).tiles[0];
+    const s = try testgen.encode(arena, (try testgen.sample(arena, false, false)).picture);
+    const data = try s.lengthPrefixed(arena);
 
     // A second PPS (id 1, on SPS 0): pps_id ue(1), sps_id ue(0), flags off,
     // num_ref_idx ue(0) x2, init_qp se(0), cb / cr offsets se(0), ...,
     // log2_parallel_merge_level ue(0).
     const pps1 = try testNal(arena, .{ 34 << 1, 1 }, "010" ++ "1" ++ "00" ++ "000" ++ "00" ++ "11" ++ "1" ++ "000" ++ "11" ++ "0" ++ "00" ++ "000" ++ "0" ++ "0" ++ "0" ++ "0" ++ "1" ++ "0");
-    const sets = try std.mem.concat(arena, []const u8, &.{ t.param_sets, &.{pps1} });
+    const sets = try std.mem.concat(arena, []const u8, &.{ s.param_sets, &.{pps1} });
     // The picture still decodes with the extra PPS present ...
-    _ = try decode(arena, sets, t.length_size, t.data);
+    _ = try decode(arena, sets, 4, data);
 
     // ... but a later slice segment (IDR, not first in the picture) that
     // names PPS 1 is rejected outright. Before the fix its header was
@@ -141,34 +141,71 @@ test "later slice segments must use the picture's PPS and SPS" {
     // SPS's CTB count) while the picture's tables follow the first slice's.
     const bad = try testNal(arena, .{ 19 << 1, 1 }, "0" ++ "0" ++ "010");
     var stream: std.ArrayList(u8) = .empty;
-    try stream.appendSlice(arena, t.data);
+    try stream.appendSlice(arena, data);
     var len_be: [4]u8 = undefined;
     std.mem.writeInt(u32, &len_be, @intCast(bad.len), .big);
-    try stream.appendSlice(arena, len_be[4 - t.length_size ..]);
+    try stream.appendSlice(arena, &len_be);
     try stream.appendSlice(arena, bad);
-    try std.testing.expectError(Error.InvalidHeader, decode(arena, sets, t.length_size, stream.items));
+    try std.testing.expectError(Error.InvalidHeader, decode(arena, sets, 4, stream.items));
 }
 
-test "decode the HEIC samples bit-exactly" {
-    // Wyhash of each 8-bit plane as decoded by libde265 (used offline as a reference).
-    const expected = [_]struct { []const u8, [3]u64 }{
-        .{ "C002", .{ 0xe04fe6c3498b58c7, 0x6f7ae8a226803502, 0xb3ae31f324667045 } },
-        .{ "C014", .{ 0x65467d6684132742, 0xf7c558a8a1e4e000, 0x47564d4903b7f327 } },
-        .{ "C021", .{ 0xe04fe6c3498b58c7, 0x6f7ae8a226803502, 0xb3ae31f324667045 } },
-    };
-    const heif = @import("../heif.zig");
+test "decode generated pictures: PCM, intra modes, a DC coefficient, two slices" {
     var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
     defer arena_state.deinit();
     const arena = arena_state.allocator();
-    var threaded: std.Io.Threaded = .init(std.testing.allocator, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    for (expected) |e| {
-        const path = try std.fmt.allocPrint(arena, "src/Data/Read/heic/{s}.heic", .{e[0]});
-        const data = try std.Io.Dir.cwd().readFileAlloc(io, path, arena, .unlimited);
-        const img = try heif.parse(arena, data);
-        const t = img.tiles[0];
-        const pic = try decode(arena, t.param_sets, t.length_size, t.data);
-        try std.testing.expectEqual(e[1], planeHashes(&pic));
+    for ([_]bool{ false, true }) |two_slices| {
+        const s = try testgen.sample(arena, two_slices, false);
+        const stream = try testgen.encode(arena, s.picture);
+        const pic = try decode(arena, stream.param_sets, 4, try stream.lengthPrefixed(arena));
+        try std.testing.expectEqual(@as(usize, if (two_slices) 2 else 1), pic.slices.items.len);
+        try expectPlanes(&pic, .{ s.expected[0], s.expected[1], s.expected[2] });
+    }
+}
+
+test "decode a generated monochrome picture split at the picture edge" {
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // 40 rows: the last CTU row is split implicitly into 8x8 coding units
+    const p = try testgen.pcmPicture(arena, 48, 40, 7);
+    const stream = try testgen.encode(arena, p);
+    const pic = try decode(arena, stream.param_sets, 4, try stream.lengthPrefixed(arena));
+    try std.testing.expectEqual(@as(u2, 0), pic.sps.chroma_format_idc);
+    try expectPlanes(&pic, .{ p.y, &.{}, &.{} });
+}
+
+test "PCM samples after arithmetic codewords of every length" {
+    // CTU 0 carries one DC coefficient of a different level each time, so
+    // the codeword before CTU 1's pcm_flag ends at every bit position
+    // (including on a byte boundary) and coeff_abs_level_remaining takes
+    // each of its prefix lengths.
+    var arena_state: std.heap.ArenaAllocator = .init(std.testing.allocator);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    const src = try testgen.source(arena, 32, 16, 1, false, 99);
+    var level: i32 = -70;
+    while (level <= 70) : (level += 1) {
+        if (level == 0) continue;
+        const p: testgen.Picture = .{
+            .width = 32,
+            .height = 16,
+            .ctus = &.{ .{ .intra = .{ .dc = level } }, .pcm },
+            .y = src[0],
+            .cb = src[1],
+            .cr = src[2],
+        };
+        const stream = try testgen.encode(arena, p);
+        const pic = decode(arena, stream.param_sets, 4, try stream.lengthPrefixed(arena)) catch |err| {
+            std.debug.print("DC level {}\n", .{level});
+            return err;
+        };
+        const expected: [3][]u8 = .{ try arena.dupe(u8, src[0]), try arena.dupe(u8, src[1]), try arena.dupe(u8, src[2]) };
+        const flat: u8 = @intCast(std.math.clamp(128 + testgen.dcResidual(level, 4, p.qp), 0, 255));
+        for (0..16) |y| @memset(expected[0][y * 32 ..][0..16], flat);
+        for (1..3) |c| for (0..8) |y| @memset(expected[c][y * 16 ..][0..8], 128);
+        expectPlanes(&pic, .{ expected[0], expected[1], expected[2] }) catch |err| {
+            std.debug.print("DC level {}\n", .{level});
+            return err;
+        };
     }
 }

@@ -232,37 +232,68 @@ fn transform(img: heif.Image, canvas: []const u8, cw: usize, channels: usize, ou
     };
 }
 
-test "HEIC samples vs. Windows' decoder (WIC)" {
+test "decode a generated HEIC: grid, colr, clean aperture, rotation, alpha" {
+    const testgen = @import("testgen.zig");
     const gpa = std.testing.allocator;
-    var threaded: std.Io.Threaded = .init(gpa, .{});
-    defer threaded.deinit();
-    const io = threaded.io();
-    for ([_][]const u8{ "C002", "C014", "C021" }) |name| {
-        var buf: [64]u8 = undefined;
-        const path = try std.fmt.bufPrint(&buf, "src/Data/Read/heic/{s}.heic", .{name});
-        const img = try Image.read(.{ .io = io, .gpa = gpa, .filepath = path });
-        defer img.deinit(gpa);
-        const ref_path = try std.fmt.bufPrint(&buf, "src/Data/Read/heic/{s}.heic.wic.png", .{name});
-        const ref = try Image.read(.{ .io = io, .gpa = gpa, .filepath = ref_path });
-        defer ref.deinit(gpa);
-        try std.testing.expectEqual(ref.width, img.width);
-        try std.testing.expectEqual(ref.height, img.height);
-        // WIC's chroma upsampling and rounding differ slightly (measured: mean
-        // 0.17 / 0.24, max 17 at sharp chroma edges)
-        const a = img.pixels.asBytes();
-        const b = ref.pixels.asBytes();
-        var sum: u64 = 0;
-        var max: u8 = 0;
-        const n = @as(usize, img.width) * img.height;
-        const sa = a.len / n;
-        const sb = b.len / n;
-        for (0..n) |i| for (0..3) |c| {
-            const d = @as(u8, @intCast(@abs(@as(i16, a[i * sa + c]) - b[i * sb + c])));
-            sum += d;
-            max = @max(max, d);
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    // gray tiles at full range: RGB is the decoded luma, known exactly
+    const file = try testgen.sampleFile(arena_state.allocator());
+    const img = try Image.decode(.heic, gpa, file.data);
+    defer img.deinit(gpa);
+    try std.testing.expectEqual(file.width, img.width);
+    try std.testing.expectEqual(file.height, img.height);
+    try std.testing.expectEqual(PixelTag.rgba, std.meta.activeTag(img.pixels));
+    try std.testing.expectEqualSlices(u8, file.rgba, img.pixels.asBytes());
+}
+test "decode generated HEICs: YCbCr to RGB with the colr box or the VUI" {
+    const testgen = @import("testgen.zig");
+    const gpa = std.testing.allocator;
+    var arena_state: std.heap.ArenaAllocator = .init(gpa);
+    defer arena_state.deinit();
+    const arena = arena_state.allocator();
+    // a flat colour, so chroma upsampling can't blur it: one 16x16 PCM CTU
+    const ycc = [3]u8{ 100, 90, 170 };
+    const Case = struct { colr: bool, matrix: u8, full: bool, kr: f64, kb: f64 };
+    const cases = [_]Case{
+        .{ .colr = true, .matrix = 1, .full = true, .kr = 0.2126, .kb = 0.0722 }, // BT.709 from colr
+        .{ .colr = false, .matrix = 6, .full = false, .kr = 0.299, .kb = 0.114 }, // BT.601 from the VUI
+        .{ .colr = false, .matrix = 9, .full = true, .kr = 0.2627, .kb = 0.0593 }, // BT.2020 from the VUI
+    };
+    for (cases) |c| {
+        const pic: testgen.Picture = .{
+            .width = 16,
+            .height = 16,
+            .matrix = c.matrix,
+            .full_range = c.full,
+            .ctus = &.{.pcm},
+            .y = &@as([256]u8, @splat(ycc[0])),
+            .cb = &@as([64]u8, @splat(ycc[1])),
+            .cr = &@as([64]u8, @splat(ycc[2])),
         };
-        const mean = @as(f64, @floatFromInt(sum)) / @as(f64, @floatFromInt(n * 3));
-        try std.testing.expect(mean < 0.3);
-        try std.testing.expect(max <= 20);
+        const s = try testgen.encode(arena, pic);
+        var props: std.ArrayList([]const u8) = .empty;
+        try props.appendSlice(arena, &.{ try testgen.hvcC(arena, s, 1), try testgen.ispe(arena, 16, 16) });
+        if (c.colr) try props.append(arena, try testgen.colrNclx(arena, 1, 13, c.matrix, c.full));
+        const item_props: []const u8 = if (c.colr) &.{ 1, 2, 3 } else &.{ 1, 2 };
+        const data = try testgen.heif(arena, 1, &.{.{ .id = 1, .type = "hvc1", .data = try s.lengthPrefixed(arena), .props = item_props }}, &.{}, props.items);
+        const img = try Image.decode(.heic, gpa, data);
+        defer img.deinit(gpa);
+        try std.testing.expectEqual(PixelTag.rgb, std.meta.activeTag(img.pixels));
+
+        const y: f64 = if (c.full) ycc[0] else (@as(f64, ycc[0]) - 16) * 255 / 219;
+        const cs: f64 = if (c.full) 1 else 255.0 / 224.0;
+        const cb = (@as(f64, ycc[1]) - 128) * cs;
+        const cr = (@as(f64, ycc[2]) - 128) * cs;
+        const kg = 1 - c.kr - c.kb;
+        const want = [3]f64{
+            y + 2 * (1 - c.kr) * cr,
+            y - 2 * (1 - c.kb) * c.kb / kg * cb - 2 * (1 - c.kr) * c.kr / kg * cr,
+            y + 2 * (1 - c.kb) * cb,
+        };
+        for (0..256) |i| for (0..3) |k| {
+            const got: f64 = @floatFromInt(img.pixels.asBytes()[i * 3 + k]);
+            try std.testing.expect(@abs(got - std.math.clamp(want[k], 0, 255)) <= 1);
+        };
     }
 }
