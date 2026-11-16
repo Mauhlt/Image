@@ -53,14 +53,42 @@ bit-exactness references; no code is copied from them.
 | --- | --- | --- |
 | `bmp/*.bmp` | BMP Suite 2.8, Jason Summers (https://entropymine.com/jason/bmpsuite/) | Public domain (the generator is GPL-3; the images it makes are not). See `bmp/README.md`. |
 | `png/*.png` except `*.wic.png` and `BasicArt16i.png` | PngSuite 2017-07-19, Willem van Schaik (http://www.schaik.com/pngsuite/) | "Permission to use, copy, modify and distribute these images for any purpose and without fee is hereby granted. (c) Willem van Schaik, 1996, 2011". See `png/README.md`. |
-| `tga/cbw8.tga`, `ccm8.tga`, `ctc24.tga`, `utc16.tga` | Truevision TGA 2.0 conformance samples, via image-rs | Copyright Truevision, Inc.; published free of charge with no specific licence. See `tga/README.md`. |
-| other `tga/*` (`b5-*`, `cmap_offset`, the four origins, `*.tga.png`) | image-rs test suite (https://github.com/image-rs/image) | MIT OR Apache-2.0. |
+| `tga/*` (`b5-*`, `cmap_offset`, the four origins, `*.tga.png`) | image-rs test suite (https://github.com/image-rs/image) | MIT OR Apache-2.0. See `tga/README.md`. |
 | `vp8/*` | golang.org/x/image testdata; the golden planes are libwebp's decodes | Go BSD-style licence (text above). See `vp8/README.md`. |
 | `IjgBaseline.jpg`, `IjgProgressive.jpg`, `IjgBaselineJpg.ref.ppm` | `testorig.jpg`, `testprog.jpg` and `testimg.ppm` from the Independent JPEG Group's libjpeg | IJG licence (libjpeg README, "LEGAL ISSUES"), copyright Thomas G. Lane and Guido Vollbeding. |
-| `heic/C002.heic`, `C014.heic`, `C021.heic` | HEIF conformance samples; the origin is not recorded in this repository, but the names match Nokia's HEIF conformance files (https://github.com/nokiatech/heif_conformance) | **To confirm.** If they are Nokia's, they are under Nokia's HEIF licence, which is not an open-source licence. |
 | `inflate/testdata/text1.gz`, `text9.gz` | gzip of `std/compress/flate/Decompress.zig` from the Zig standard library | MIT, Copyright (c) Zig contributors. |
 
 Everything else in `src/Data` (BasicArt, Gradient and their encodings,
 `*.wic.png` / `*.ref.*` decodes of the files above made with Windows' WIC or
 Pillow, the other `inflate/testdata` streams, which compress `BasicArt.jpg`,
 `Gradient.pgm` and generated pixels) is this project's own.
+
+### Generated test data
+
+HEIC and part of TGA are tested on data the tests generate in Zig, not on
+files:
+
+- `src/Formats/heic/testgen.zig` writes small valid HEVC still pictures
+  (PCM and intra-predicted coding units, one or two slices, 4:2:0 and
+  monochrome) and HEIF files around them (grid, `colr`, `clap`, `irot`, alpha
+  plane). The expected decodes are worked out by hand, not taken from another
+  decoder.
+- `tga 128x128 picture in four encodings` (`src/Formats/tga/tga.zig`) builds a
+  seeded picture and writes it with Image's own TGA encoder and the test's
+  file builder.
+
+### Removed test files
+
+These files had no recorded origin or no licence terms, so they were deleted
+and replaced by the generated data above:
+
+- `src/Data/Read/heic/C002.heic`, `C014.heic`, `C021.heic` (names matching
+  Nokia's HEIF conformance files) and their Windows WIC decodes
+  `C002.heic.wic.png`, `C014.heic.wic.png`, `C021.heic.wic.png`;
+- `src/Data/Read/tga/cbw8.tga`, `ccm8.tga`, `ctc24.tga`, `utc16.tga`
+  (Truevision's TGA 2.0 samples, published with no licence) and image-rs'
+  decodes of them, `cbw8.tga.png` and `ctc24.tga.png`.
+
+They are still in this repository's public git history. Only a rewrite of
+that history (and a force push) would remove them from GitHub; that is the
+owner's decision.

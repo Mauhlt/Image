@@ -682,10 +682,11 @@ test "tga rejects bad files" {
     try testing.expectError(Error.UnexpectedEndOfData, Image.decode(.tga, gpa, bytes[0 .. Header.SIZE - 1]));
 }
 
-// Real files: Truevision's TGA 2.0 sample images plus image-rs' 16-bit, color map
-// origin and orientation cases, checked against image-rs' PNG decodes of them and
-// against each other (see src/Data/Read/tga/README.md).
-test "tga conformance files" {
+// Real files: image-rs' 16-bit, color map origin and orientation cases, checked
+// against image-rs' PNG decodes of them and against each other (see
+// src/Data/Read/tga/README.md). Truevision's sample images are replaced by
+// "tga 128x128 picture in four encodings" below.
+test "tga image-rs files" {
     const gpa = testing.allocator;
     var threaded: std.Io.Threaded = .init(gpa, .{});
     defer threaded.deinit();
@@ -694,11 +695,6 @@ test "tga conformance files" {
 
     const Case = struct { a: []const u8, b: []const u8, tag: PixelTag, max_diff: u8 = 0 };
     const cases = [_]Case{
-        .{ .a = "cbw8.tga", .b = "cbw8.tga.png", .tag = .g },
-        .{ .a = "ctc24.tga", .b = "ctc24.tga.png", .tag = .rgb },
-        // the same picture as RLE 24-bit, RLE color-mapped and raw 16-bit
-        .{ .a = "ccm8.tga", .b = "ctc24.tga", .tag = .rgb },
-        .{ .a = "utc16.tga", .b = "ctc24.tga", .tag = .rgb },
         .{ .a = "cmap_offset.tga", .b = "cmap_offset.tga.png", .tag = .rgb },
         .{ .a = "bottom_left.tga", .b = "bottom_left.tga.png", .tag = .rgba },
         .{ .a = "bottom_right.tga", .b = "bottom_right.tga.png", .tag = .rgba },
@@ -729,16 +725,99 @@ test "tga conformance files" {
         };
     }
 
-    // utc16 counts 1 alpha bit but its extension area says the alpha data is undefined
-    // (every bit is 0), and b5-attrib really uses its alpha bit
-    const utc16 = try Image.read(.{ .io = io, .gpa = gpa, .filepath = dir ++ "utc16.tga" });
-    defer utc16.deinit(gpa);
-    try testing.expectEqual(PixelTag.bgr, std.meta.activeTag(utc16.pixels));
+    // b5-attrib really uses its alpha bit
     const b5 = try Image.read(.{ .io = io, .gpa = gpa, .filepath = dir ++ "b5-attrib.tga" });
     defer b5.deinit(gpa);
     var opaque_px: usize = 0;
     for (b5.pixels.bgra) |p| opaque_px += @intFromBool(p.a == 255);
     try testing.expect(opaque_px > 0 and opaque_px < b5.pixels.bgra.len);
+}
+
+// Replaces Truevision's TGA 2.0 samples (cbw8, ctc24, ccm8, utc16), whose terms
+// were never stated: one generated 128x128 picture written as RLE gray and RLE
+// 24-bit by this file's encoder, and as RLE color-mapped and raw 16-bit (with an
+// image ID and a TGA 2.0 extension area) by the test builder.
+test "tga 128x128 picture in four encodings" {
+    const gpa = testing.allocator;
+    const n = 128;
+    // 64 colors whose channels are 5-bit values scaled up, so 16-bit storage is lossless
+    var palette: [64][3]u8 = undefined; // BGR
+    for (&palette, 0..) |*p, i| p.* = .{ expand5(@intCast((i * 5) % 32)), expand5(@intCast((i * 11) % 32)), expand5(@intCast((i * 17) % 32)) };
+    // diagonal bands (runs for RLE) with seeded noise patches (raw packets)
+    var prng: std.Random.DefaultPrng = .init(0x7467_6131);
+    const rnd = prng.random();
+    var index: [n * n]u8 = undefined;
+    for (0..n) |y| for (0..n) |x| {
+        index[y * n + x] = if ((x / 16 + y / 16) % 3 == 0) rnd.uintLessThan(u8, 64) else @intCast((x / 8 + y / 8) % 64);
+    };
+    var bgr: [n * n * 3]u8 = undefined;
+    var gray: [n * n]u8 = undefined;
+    for (index, 0..) |i, k| {
+        bgr[k * 3 ..][0..3].* = palette[i];
+        gray[k] = i * 4 + 1;
+    }
+
+    const Case = struct { name: []const u8, bytes: []u8, tag: PixelTag, want: []const u8 };
+    var cases: [4]Case = undefined;
+    // this file's encoder: RLE 24-bit and RLE gray, packets within rows
+    for ([_]PixelTag{ .bgr, .g }, [_][]u8{ &bgr, &gray }, 0..) |tag, px, k| {
+        const img: Image = .{ .width = n, .height = n, .pixels = .fromBytes(tag, px), .fmt = Info.fmtFor(tag, true) };
+        var file: std.Io.Writer.Allocating = .init(gpa);
+        errdefer file.deinit();
+        try encode(&img, &file.writer, gpa);
+        cases[k] = .{ .name = if (tag == .g) "encoder gray" else "encoder 24-bit", .bytes = try file.toOwnedSlice(), .tag = tag, .want = px };
+    }
+    defer for (cases[0..2]) |c| gpa.free(c.bytes);
+    // RLE color-mapped: 8-bit indices into a 24-bit map, bottom-up, packets crossing rows
+    var cmap: [64 * 3]u8 = undefined;
+    for (palette, 0..) |p, i| cmap[i * 3 ..][0..3].* = p;
+    var bottom_up: [n * n]u8 = undefined;
+    for (0..n) |y| @memcpy(bottom_up[y * n ..][0..n], index[(n - 1 - y) * n ..][0..n]);
+    const packed_idx = try rle(gpa, &bottom_up, 1);
+    defer gpa.free(packed_idx);
+    cases[2] = .{ .name = "color-mapped", .tag = .bgr, .want = &bgr, .bytes = try (TestFile{
+        .image_type = .rle_color_mapped,
+        .width = n,
+        .height = n,
+        .depth = 8,
+        .descriptor = 0,
+        .id = "generated color-mapped",
+        .cmap_depth = 24,
+        .cmap = &cmap,
+        .pixels = packed_idx,
+        .attribute = .no_alpha,
+    }).build(gpa) };
+    defer gpa.free(cases[2].bytes);
+    // raw 16-bit, top-down: one alpha bit counted but always 0, and the
+    // extension area says the alpha data is undefined, so it is ignored
+    var raw16: std.ArrayList(u8) = .empty;
+    defer raw16.deinit(gpa);
+    for (index) |i| {
+        const p = palette[i];
+        try store(16, false, .{ p[0], p[1], p[2], 0 }, &raw16, gpa);
+    }
+    cases[3] = .{ .name = "raw 16-bit", .tag = .bgr, .want = &bgr, .bytes = try (TestFile{
+        .image_type = .true_color,
+        .width = n,
+        .height = n,
+        .depth = 16,
+        .descriptor = 0x20 | 1,
+        .id = "generated 16-bit",
+        .pixels = raw16.items,
+        .attribute = .undefined_ignore,
+    }).build(gpa) };
+    defer gpa.free(cases[3].bytes);
+
+    for (cases) |c| {
+        const img = try Image.decode(.tga, gpa, c.bytes);
+        defer img.deinit(gpa);
+        try testing.expectEqual(@as(u32, n), img.width);
+        try testing.expectEqual(@as(u32, n), img.height);
+        expectPixels(&img, c.tag, c.want) catch |err| {
+            std.debug.print("{s}\n", .{c.name});
+            return err;
+        };
+    }
 }
 
 /// The original pixel-at-a-time decoder, kept as the oracle for the span-based one.
