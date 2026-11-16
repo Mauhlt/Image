@@ -8,8 +8,8 @@
         // using Image and Renderer gets one shared "Vulkan" module. Local
         // checkout: zig build --fork=../Vulkan
         .Vulkan = .{
-            .url = "git+https://github.com/Mauhlt/Vulkan#b831b1e464db394c2ddb8da11d5dff93f1df4144",
-            .hash = "Vulkan-0.1.0-9v7hoY4bAACSpjlULEH56u3k6cYDDZa1hgBgVU-lkUuR",
+            .url = "git+https://github.com/Mauhlt/Vulkan#61aaf9f6ae0114b22ce42f72822991d549dcc055",
+            .hash = "Vulkan-0.1.0-9v7hoTYlAAAp50c3Eqxe-uaBkVPkgcgpB_5I1fWewcVs",
         },
     },
     .paths = .{
